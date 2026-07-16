@@ -15,7 +15,7 @@ import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { notifyIfUnfocused } from "../notify";
 
-const DISCOVERY_INTERVAL_MS = 20_000;
+const DISCOVERY_INTERVAL_MS = 2_000;
 
 function findContactByPeerId(peerId: string) {
   const contacts = Object.values(useRosterStore.getState().contactsById);
@@ -35,6 +35,10 @@ async function syncDmWith(self: Identity, contactId: string, peerId: string) {
   // while either side was offline converge on reconnect.
   const groupRooms = await roomMembersRepo.sharedGroupRoomIds(contactId);
   for (const gid of groupRooms) await chatService.requestRoomSync(gid, peerId);
+
+  // Tell this peer about any group rooms we share, so rooms created while they
+  // were offline still reach them (announce-on-create alone misses that case).
+  await roomService.announceRoomsToPeer(self, contactId, peerId);
 }
 
 /** Starts this device's PeerJS registration, wires its events into the roster
@@ -70,6 +74,11 @@ export function initNetworkBridge(self: Identity): () => void {
   registry.on("error", (err) => {
     console.warn("PeerRegistry error", err);
   });
+
+  // Dial everyone as soon as the broker connection is actually open. The
+  // initial discover() below fires before that and mostly no-ops; this is what
+  // makes presence appear promptly instead of waiting for the next interval.
+  registry.on("ready", () => discover());
 
   registry.start().catch((err) => {
     console.error("failed to register with the signaling broker", err);
@@ -160,20 +169,26 @@ export function initNetworkBridge(self: Identity): () => void {
       if (contact.revoked) continue;
       const peerId = derivePeerId(contact.identityId);
 
-      // Already connected — a contact can be added to the roster (e.g. via
-      // roster_sync) after the connection to them was already opened, so
-      // this reconciles presence for that case instead of only reacting to
-      // the "peer-connected" event, which may have fired before the roster
-      // row existed.
+      // Already connected (incoming or outgoing) — reconcile presence. A
+      // contact can also be added to the roster (via roster_sync) after the
+      // connection to them already opened, so this covers that case too.
       if (registry.isConnected(peerId)) {
         useRosterStore.getState().setPresence(contact.identityId, "online");
         continue;
       }
 
-      useRosterStore.getState().setPresence(contact.identityId, "connecting");
-      registry.connect(peerId).catch(() => {
+      // Only the lexicographically-smaller identity dials; the other waits for
+      // the incoming connection. This makes exactly one connection per pair,
+      // avoiding the glare where both dial and each side keeps a different
+      // physical connection (which silently breaks delivery in one direction).
+      if (self.identityId < contact.identityId) {
+        useRosterStore.getState().setPresence(contact.identityId, "connecting");
+        registry.connect(peerId).catch(() => {
+          useRosterStore.getState().setPresence(contact.identityId, "offline");
+        });
+      } else {
         useRosterStore.getState().setPresence(contact.identityId, "offline");
-      });
+      }
     }
   }
 

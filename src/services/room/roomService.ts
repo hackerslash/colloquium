@@ -30,29 +30,53 @@ export async function createGroupRoom(
   return roomId;
 }
 
+async function buildAnnounce(
+  self: Identity,
+  roomId: string,
+): Promise<{ message: RoomAnnounceMessage; memberIds: string[] } | null> {
+  const room = await roomRepo.getRoom(roomId);
+  if (!room || room.type !== "group") return null;
+  const memberIds = await roomMembersRepo.listMembers(roomId);
+  return {
+    memberIds,
+    message: {
+      type: "room_announce",
+      room: {
+        id: room.id,
+        name: room.name,
+        topic: room.topic,
+        createdBy: room.createdBy ?? self.identityId,
+        createdAt: room.createdAt,
+      },
+      memberIds,
+    },
+  };
+}
+
 /** Broadcasts room metadata + membership to every member we can reach, so
  * they materialize the same room locally. Called on create and on demand. */
 export async function announceRoom(self: Identity, roomId: string): Promise<void> {
-  const room = await roomRepo.getRoom(roomId);
-  if (!room || room.type !== "group") return;
-  const memberIds = await roomMembersRepo.listMembers(roomId);
-
-  const message: RoomAnnounceMessage = {
-    type: "room_announce",
-    room: {
-      id: room.id,
-      name: room.name,
-      topic: room.topic,
-      createdBy: room.createdBy ?? self.identityId,
-      createdAt: room.createdAt,
-    },
-    memberIds,
-  };
-
+  const built = await buildAnnounce(self, roomId);
+  if (!built) return;
   const registry = getPeerRegistry();
-  for (const memberId of memberIds) {
+  for (const memberId of built.memberIds) {
     if (memberId === self.identityId) continue;
-    registry.send(derivePeerId(memberId), message);
+    registry.send(derivePeerId(memberId), built.message);
+  }
+}
+
+/** Sends announcements for every group room we share with a specific peer —
+ * used on (re)connect so rooms created while they were offline still arrive. */
+export async function announceRoomsToPeer(
+  self: Identity,
+  contactId: string,
+  peerId: string,
+): Promise<void> {
+  const roomIds = await roomMembersRepo.sharedGroupRoomIds(contactId);
+  const registry = getPeerRegistry();
+  for (const roomId of roomIds) {
+    const built = await buildAnnounce(self, roomId);
+    if (built) registry.send(peerId, built.message);
   }
 }
 
