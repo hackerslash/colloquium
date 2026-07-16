@@ -238,7 +238,21 @@ async function handleInviteConsume(
   await sendAck(self, fromPeerId, msg.inviteToken, true, undefined, roster);
 }
 
-async function handleInviteAck(msg: InviteAckMessage): Promise<void> {
+/** Merges gossiped roster entries after verifying each identityId genuinely
+ * derives from its public key. Skips our own identity — peers include us in
+ * the snapshots they send (we're one of their contacts), but we track
+ * ourselves via the identity table, not the roster, so storing it would make
+ * us show up in our own contact list. */
+async function mergeRosterEntries(self: Identity, entries: RosterEntryWire[]): Promise<void> {
+  for (const entry of entries) {
+    if (entry.identityId === self.identityId) continue;
+    const derivedId = await computeIdentityId(entry.publicKey);
+    if (derivedId !== entry.identityId) continue;
+    await rosterRepo.upsertLww(entry);
+  }
+}
+
+async function handleInviteAck(self: Identity, msg: InviteAckMessage): Promise<void> {
   const pending = pendingAccepts.get(msg.inviteToken);
   if (!pending) return;
 
@@ -258,21 +272,12 @@ async function handleInviteAck(msg: InviteAckMessage): Promise<void> {
     return;
   }
 
-  for (const entry of msg.roster) {
-    const derivedId = await computeIdentityId(entry.publicKey);
-    if (derivedId !== entry.identityId) continue;
-    await rosterRepo.upsertLww(entry);
-  }
-
+  await mergeRosterEntries(self, msg.roster);
   pending.resolve();
 }
 
-async function handleRosterSync(msg: RosterSyncMessage): Promise<void> {
-  for (const entry of msg.entries) {
-    const derivedId = await computeIdentityId(entry.publicKey);
-    if (derivedId !== entry.identityId) continue;
-    await rosterRepo.upsertLww(entry);
-  }
+async function handleRosterSync(self: Identity, msg: RosterSyncMessage): Promise<void> {
+  await mergeRosterEntries(self, msg.entries);
 }
 
 export async function sendRosterSync(self: Identity, toPeerId: string): Promise<void> {
@@ -293,10 +298,10 @@ export async function handleIncomingMessage(
       await handleInviteConsume(self, fromPeerId, msg);
       break;
     case "invite_ack":
-      await handleInviteAck(msg);
+      await handleInviteAck(self, msg);
       break;
     case "roster_sync":
-      await handleRosterSync(msg);
+      await handleRosterSync(self, msg);
       break;
   }
 }

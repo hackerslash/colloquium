@@ -20,12 +20,25 @@ function requireSelf() {
   return self;
 }
 
+/** Loads contacts, defensively dropping any row matching our own identity —
+ * and cleaning it out of SQLite if found, to repair databases written before
+ * the roster-merge self-filter existed. */
+async function loadContactsExcludingSelf(): Promise<RosterContact[]> {
+  const selfId = useIdentityStore.getState().self?.identityId;
+  const contacts = await rosterRepo.listContacts();
+  if (selfId && contacts.some((c) => c.identityId === selfId)) {
+    await rosterRepo.deleteContact(selfId);
+    return contacts.filter((c) => c.identityId !== selfId);
+  }
+  return contacts;
+}
+
 export const useRosterStore = create<RosterState>((set) => ({
   contactsById: {},
   presenceById: {},
 
   loadRoster: async () => {
-    const contacts = await rosterRepo.listContacts();
+    const contacts = await loadContactsExcludingSelf();
     set({
       contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
     });
@@ -37,7 +50,7 @@ export const useRosterStore = create<RosterState>((set) => ({
 
   acceptInvite: async (inviteString: string) => {
     await rosterService.acceptInvite(requireSelf(), inviteString);
-    const contacts = await rosterRepo.listContacts();
+    const contacts = await loadContactsExcludingSelf();
     set({
       contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
     });

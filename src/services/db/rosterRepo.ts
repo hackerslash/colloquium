@@ -92,6 +92,11 @@ export async function upsertLww(entry: RosterEntryWire): Promise<void> {
   );
 }
 
+export async function deleteContact(identityId: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM roster WHERE identity_id = $1", [identityId]);
+}
+
 export async function markSeen(identityId: string, peerId: string, seenAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(
