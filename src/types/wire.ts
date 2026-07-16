@@ -87,10 +87,57 @@ export type RoomSyncResponseMessage = {
   messages: ChatMessageWire[];
 };
 
+// --- Call control (a layer above raw negotiation) ---
+
+export type CallInviteMessage = {
+  type: "call_invite";
+  roomId: string;
+  fromId: string;
+};
+
+export type CallAcceptMessage = {
+  type: "call_accept";
+  roomId: string;
+  fromId: string;
+};
+
+export type CallDeclineMessage = {
+  type: "call_decline";
+  roomId: string;
+  fromId: string;
+};
+
+export type CallHangupMessage = {
+  type: "call_hangup";
+  roomId: string;
+  fromId: string;
+};
+
+// --- Perfect-negotiation signaling (SDP + ICE), relayed over the PeerJS
+// data connection. `sdp` carries an RTCSessionDescriptionInit (offer/answer). ---
+
+export type RtcDescriptionMessage = {
+  type: "rtc_description";
+  fromId: string;
+  description: RTCSessionDescriptionInit;
+};
+
+export type RtcCandidateMessage = {
+  type: "rtc_candidate";
+  fromId: string;
+  candidate: RTCIceCandidateInit;
+};
+
 export type HavenMessage =
   | InviteConsumeMessage
   | InviteAckMessage
   | RosterSyncMessage
   | ChatMessageMessage
   | RoomSyncRequestMessage
-  | RoomSyncResponseMessage;
+  | RoomSyncResponseMessage
+  | CallInviteMessage
+  | CallAcceptMessage
+  | CallDeclineMessage
+  | CallHangupMessage
+  | RtcDescriptionMessage
+  | RtcCandidateMessage;

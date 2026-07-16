@@ -3,6 +3,7 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { useCallStore } from "../../stores/useCallStore";
 import { dmRoomId } from "../../services/room/chatService";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -27,6 +28,8 @@ export function ChatView({ contactId }: ChatViewProps) {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const setDraft = useChatStore((s) => s.setDraft);
   const setActiveRoom = useRoomStore((s) => s.setActiveRoom);
+  const startCall = useCallStore((s) => s.startCall);
+  const callInProgress = useCallStore((s) => s.activeCall !== null);
 
   const [roomId, setRoomId] = useState<string | null>(null);
 
@@ -65,6 +68,24 @@ export function ChatView({ contactId }: ChatViewProps) {
       <header className="flex items-center gap-2 border-b border-border px-4 py-3">
         <h1 className="font-semibold">{contact.displayName}</h1>
         <span className="text-xs text-text-secondary">{PRESENCE_LABEL[presence]}</span>
+        <div className="ml-auto flex gap-2">
+          <button
+            onClick={() => roomId && startCall(roomId, contactId, false)}
+            disabled={!roomId || callInProgress || presence !== "online"}
+            title="Start voice call"
+            className="rounded-lg border border-border px-3 py-1 text-xs font-medium hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Voice
+          </button>
+          <button
+            onClick={() => roomId && startCall(roomId, contactId, true)}
+            disabled={!roomId || callInProgress || presence !== "online"}
+            title="Start video call"
+            className="rounded-lg border border-border px-3 py-1 text-xs font-medium hover:bg-bg-tertiary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Video
+          </button>
+        </div>
       </header>
       <MessageList messages={messages} />
       <Composer

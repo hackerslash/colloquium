@@ -6,6 +6,7 @@ import * as rosterService from "../roster/rosterService";
 import * as rosterRepo from "../db/rosterRepo";
 import * as roomRepo from "../db/roomRepo";
 import * as chatService from "../room/chatService";
+import * as callService from "../call/callService";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
@@ -92,6 +93,24 @@ export function initNetworkBridge(self: Identity): () => void {
         for (const m of stored) useChatStore.getState().ingestMessage(m);
         break;
       }
+      case "call_invite":
+        callService.handleCallInvite(self, msg);
+        break;
+      case "call_accept":
+        callService.handleCallAccept(self, msg);
+        break;
+      case "call_decline":
+        callService.handleCallDecline(self, msg);
+        break;
+      case "call_hangup":
+        callService.handleCallHangup(self, msg);
+        break;
+      case "rtc_description":
+        await callService.handleRtcDescription(self, msg);
+        break;
+      case "rtc_candidate":
+        await callService.handleRtcCandidate(self, msg);
+        break;
     }
   }
 

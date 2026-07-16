@@ -6,6 +6,7 @@ import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
 import { ChatView } from "../chat/ChatView";
+import { CallOverlay } from "../call/CallOverlay";
 
 let bridgeStarted = false;
 
@@ -55,6 +56,7 @@ export function MainShell() {
           )}
         </div>
       </div>
+      <CallOverlay />
     </div>
   );
 }
