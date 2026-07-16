@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { useIdentityStore } from "./stores/useIdentityStore";
 import { WelcomeScreen } from "./components/onboarding/WelcomeScreen";
+import { MainShell } from "./components/layout/MainShell";
 
 function App() {
   const bootStatus = useIdentityStore((s) => s.bootStatus);
   const bootError = useIdentityStore((s) => s.bootError);
-  const self = useIdentityStore((s) => s.self);
   const loadIdentity = useIdentityStore((s) => s.loadIdentity);
 
   useEffect(() => {
@@ -38,14 +38,7 @@ function App() {
     return <WelcomeScreen />;
   }
 
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 bg-bg-primary">
-      <p className="text-lg text-text-primary">Welcome back, {self?.displayName}.</p>
-      <p className="font-mono text-xs text-text-secondary">
-        {self?.identityId}
-      </p>
-    </div>
-  );
+  return <MainShell />;
 }
 
 export default App;

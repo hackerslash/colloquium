@@ -1,11 +1,18 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring::Entry;
 
-const SERVICE: &str = "care.ayoo.haven";
+const DEFAULT_SERVICE: &str = "care.ayoo.haven";
 const ACCOUNT: &str = "identity-private-key";
 
+/// Overridable only via HAVEN_KEYCHAIN_SERVICE, so a second dev instance on
+/// the same machine can use an isolated keychain entry instead of colliding
+/// with the default one. Unset in normal/production use.
+fn service_name() -> String {
+    std::env::var("HAVEN_KEYCHAIN_SERVICE").unwrap_or_else(|_| DEFAULT_SERVICE.to_string())
+}
+
 fn entry() -> Result<Entry, String> {
-    Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())
+    Entry::new(&service_name(), ACCOUNT).map_err(|e| e.to_string())
 }
 
 /// Persists the raw private key seed bytes in the OS keychain (macOS Keychain /
