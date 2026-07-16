@@ -127,15 +127,7 @@ mod tests {
     // Exercises the exact command functions the onboarding UI calls, against
     // the real OS keychain, and always cleans up afterwards so it never
     // leaves a stray identity behind for a real dev run to trip over.
-    //
-    // Ignored by default: a `cargo test` binary run without a full login/Aqua
-    // session (e.g. headless CI, some sandboxed shells) can get a write that
-    // succeeds against one ephemeral default-keychain resolution and a fresh
-    // read that resolves to a different one and finds nothing — this reflects
-    // the process's keychain session, not a bug in save/load_private_key_bytes.
-    // Run with `cargo test -- --ignored` from a normal interactive terminal.
     #[test]
-    #[ignore]
     fn generate_sign_verify_roundtrip() {
         identity_delete_keypair().unwrap();
         assert!(!identity_has_keypair().unwrap());
