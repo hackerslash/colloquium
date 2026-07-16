@@ -9,6 +9,8 @@ import { ChatView } from "../chat/ChatView";
 import { GroupRoomView } from "../room/GroupRoomView";
 import { CreateGroupModal } from "../room/CreateGroupModal";
 import { CallOverlay } from "../call/CallOverlay";
+import { SettingsModal } from "../settings/SettingsModal";
+import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
 let bridgeStarted = false;
 
@@ -22,6 +24,9 @@ export function MainShell() {
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
   const [creatingGroup, setCreatingGroup] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  useGlobalShortcuts({ onOpenSettings: () => setSettingsOpen(true) });
 
   useEffect(() => {
     void loadRoster();
@@ -44,9 +49,17 @@ export function MainShell() {
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-border px-4 py-2">
           <span className="text-sm text-text-secondary">Haven</span>
-          <span className="flex items-center gap-2 text-xs text-text-secondary">
+          <span className="flex items-center gap-3 text-xs text-text-secondary">
             <span className="font-medium text-text-primary">{self?.displayName}</span>
             <span className="font-mono">{self ? shortId(self.identityId) : null}</span>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Open settings"
+              title="Settings"
+              className="rounded px-1.5 py-0.5 hover:bg-bg-tertiary hover:text-text-primary"
+            >
+              ⚙
+            </button>
           </span>
         </header>
         <div className="flex flex-1 overflow-hidden">
@@ -71,6 +84,7 @@ export function MainShell() {
           }}
         />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <CallOverlay />
     </div>
   );

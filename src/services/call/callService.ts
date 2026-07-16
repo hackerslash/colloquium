@@ -161,9 +161,20 @@ export function toggleMic() {
   if (!ctx?.localStream) return;
   const track = ctx.localStream.getAudioTracks()[0];
   if (!track) return;
-  track.enabled = !track.enabled;
+  setMic(!track.enabled);
+}
+
+export function setMic(enabled: boolean) {
+  if (!ctx?.localStream) return;
+  const track = ctx.localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = enabled;
   const store = useCallStore.getState();
-  store._setMediaFlags(track.enabled, store.camOn);
+  store._setMediaFlags(enabled, store.camOn);
+}
+
+export function isCallActive(): boolean {
+  return ctx !== null;
 }
 
 export function toggleCam() {

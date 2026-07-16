@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { motion } from "motion/react";
 import type { Message } from "../../types/domain";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
@@ -46,7 +47,13 @@ export function MessageList({ messages }: MessageListProps) {
       )}
       <ul className="space-y-3">
         {messages.map((message) => (
-          <li key={message.id} className="flex flex-col">
+          <motion.li
+            key={message.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", stiffness: 500, damping: 40 }}
+            className="flex flex-col"
+          >
             <div className="flex items-baseline gap-2">
               <span className="text-sm font-semibold">{authorName(message.authorId)}</span>
               <span className="text-xs text-text-secondary">{formatTime(message.sentAt)}</span>
@@ -54,7 +61,7 @@ export function MessageList({ messages }: MessageListProps) {
             <p className="whitespace-pre-wrap break-words text-sm text-text-primary">
               {message.body}
             </p>
-          </li>
+          </motion.li>
         ))}
       </ul>
       <div ref={bottomRef} />

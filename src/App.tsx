@@ -1,5 +1,7 @@
 import { useEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useIdentityStore } from "./stores/useIdentityStore";
+import { useSettingsStore } from "./stores/useSettingsStore";
 import { WelcomeScreen } from "./components/onboarding/WelcomeScreen";
 import { MainShell } from "./components/layout/MainShell";
 
@@ -7,10 +9,18 @@ function App() {
   const bootStatus = useIdentityStore((s) => s.bootStatus);
   const bootError = useIdentityStore((s) => s.bootError);
   const loadIdentity = useIdentityStore((s) => s.loadIdentity);
+  const loadSettings = useSettingsStore((s) => s.loadSettings);
 
   useEffect(() => {
-    loadIdentity();
-  }, [loadIdentity]);
+    // Load persisted settings (theme etc.) alongside identity so first paint
+    // is correct, then reveal the window (it starts hidden to avoid a flash).
+    void loadSettings();
+    void loadIdentity().finally(() => {
+      void getCurrentWindow()
+        .show()
+        .catch(() => {});
+    });
+  }, [loadIdentity, loadSettings]);
 
   if (bootStatus === "idle" || bootStatus === "loading") {
     return (

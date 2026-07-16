@@ -197,8 +197,19 @@ export function toggleMic() {
   if (!session) return;
   const track = session.localStream.getAudioTracks()[0];
   if (!track) return;
-  track.enabled = !track.enabled;
-  useRoomCallStore.getState()._setMicOn(track.enabled);
+  setMic(!track.enabled);
+}
+
+export function setMic(enabled: boolean) {
+  if (!session) return;
+  const track = session.localStream.getAudioTracks()[0];
+  if (!track) return;
+  track.enabled = enabled;
+  useRoomCallStore.getState()._setMicOn(enabled);
+}
+
+export function isInRoomCall(): boolean {
+  return session !== null;
 }
 
 export async function startPresenting() {

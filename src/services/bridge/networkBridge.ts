@@ -13,6 +13,7 @@ import * as roomCallService from "../call/roomCallService";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
+import { notifyIfUnfocused } from "../notify";
 
 const DISCOVERY_INTERVAL_MS = 20_000;
 
@@ -90,7 +91,14 @@ export function initNetworkBridge(self: Identity): () => void {
       }
       case "chat_message": {
         const stored = await chatService.handleChatMessage(self, msg, Date.now());
-        if (stored) useChatStore.getState().ingestMessage(stored);
+        if (stored) {
+          useChatStore.getState().ingestMessage(stored);
+          const author = useRosterStore.getState().contactsById[stored.authorId];
+          void notifyIfUnfocused(
+            author?.displayName ?? "New message",
+            stored.body ?? "",
+          );
+        }
         break;
       }
       case "room_sync_request":
