@@ -11,6 +11,7 @@ type RosterState = {
   loadRoster: () => Promise<void>;
   createInvite: () => Promise<string>;
   acceptInvite: (inviteString: string) => Promise<void>;
+  removeContact: (contactId: string) => Promise<void>;
   setPresence: (identityId: string, presence: Presence) => void;
 };
 
@@ -51,6 +52,14 @@ export const useRosterStore = create<RosterState>((set) => ({
   acceptInvite: async (inviteString: string) => {
     await rosterService.acceptInvite(requireSelf(), inviteString);
     const contacts = await loadContactsExcludingSelf();
+    set({
+      contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
+    });
+  },
+
+  removeContact: async (contactId: string) => {
+    await rosterService.removeContact(requireSelf(), contactId);
+    const contacts = await rosterRepo.listContacts();
     set({
       contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
     });

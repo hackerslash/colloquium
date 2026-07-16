@@ -97,6 +97,22 @@ export async function deleteContact(identityId: string): Promise<void> {
   await db.execute("DELETE FROM roster WHERE identity_id = $1", [identityId]);
 }
 
+/** Marks a contact revoked with a fresh updatedAt so the change wins the LWW
+ * merge and propagates to peers (who then stop dialing/showing it too). */
+export async function revokeContact(
+  identityId: string,
+  revokedBy: string,
+  now: number,
+): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    `UPDATE roster
+        SET revoked = 1, revoked_at = $1, revoked_by = $2, updated_at = $1
+      WHERE identity_id = $3`,
+    [now, revokedBy, identityId],
+  );
+}
+
 export async function markSeen(identityId: string, peerId: string, seenAt: number): Promise<void> {
   const db = await getDb();
   await db.execute(

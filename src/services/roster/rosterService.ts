@@ -12,6 +12,7 @@ import * as identityService from "../identity/identity";
 import * as rosterRepo from "../db/rosterRepo";
 import * as pendingInvitesRepo from "../db/pendingInvitesRepo";
 import { getPeerRegistry } from "../peer/registry";
+import { derivePeerId } from "../peer/derivePeerId";
 import { computeIdentityId } from "../../lib/crypto";
 import { base64ToUtf8, utf8ToBase64 } from "../../lib/base64";
 
@@ -285,6 +286,26 @@ export async function sendRosterSync(self: Identity, toPeerId: string): Promise<
   const entries = [buildSelfEntry(self), ...contacts.map(toWire)];
   const message: RosterSyncMessage = { type: "roster_sync", entries };
   getPeerRegistry().send(toPeerId, message);
+}
+
+/** Broadcasts our full roster (including revocations) to every connected
+ * trusted peer — used right after a local change so it converges quickly
+ * instead of waiting for the next reconnect. */
+async function broadcastRosterSync(self: Identity): Promise<void> {
+  const contacts = await rosterRepo.listContacts();
+  const entries = [buildSelfEntry(self), ...contacts.map(toWire)];
+  const message: RosterSyncMessage = { type: "roster_sync", entries };
+  const registry = getPeerRegistry();
+  for (const contact of contacts) {
+    if (!contact.revoked) registry.send(derivePeerId(contact.identityId), message);
+  }
+}
+
+/** Removes a contact by revoking it locally, then gossiping the change so it
+ * doesn't get resurrected by a peer's next roster sync. */
+export async function removeContact(self: Identity, contactId: string): Promise<void> {
+  await rosterRepo.revokeContact(contactId, self.identityId, Date.now());
+  await broadcastRosterSync(self);
 }
 
 export async function handleIncomingMessage(

@@ -28,7 +28,15 @@ type SidebarProps = {
 export function Sidebar({ selection, onSelect, onCreateGroup }: SidebarProps) {
   const contactsById = useRosterStore((s) => s.contactsById);
   const presenceById = useRosterStore((s) => s.presenceById);
+  const removeContact = useRosterStore((s) => s.removeContact);
   const roomsById = useRoomStore((s) => s.roomsById);
+
+  function handleRemove(e: React.MouseEvent, contactId: string, name: string) {
+    e.stopPropagation();
+    if (confirm(`Remove ${name}? They'll be dropped from your contacts.`)) {
+      void removeContact(contactId);
+    }
+  }
 
   const contacts = Object.values(contactsById).filter((c) => !c.revoked);
   const groupRooms = Object.values(roomsById).filter((r) => r.type === "group");
@@ -86,11 +94,11 @@ export function Sidebar({ selection, onSelect, onCreateGroup }: SidebarProps) {
           const presence = presenceById[contact.identityId] ?? "offline";
           const active = selection.kind === "dm" && selection.contactId === contact.identityId;
           return (
-            <li key={contact.identityId}>
+            <li key={contact.identityId} className="group relative">
               <button
                 onClick={() => onSelect({ kind: "dm", contactId: contact.identityId })}
                 aria-current={active ? "true" : undefined}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors ${
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 pr-8 text-left transition-colors ${
                   active ? "bg-bg-tertiary" : "hover:bg-bg-tertiary"
                 }`}
               >
@@ -104,6 +112,14 @@ export function Sidebar({ selection, onSelect, onCreateGroup }: SidebarProps) {
                     {PRESENCE_LABEL[presence]}
                   </span>
                 </span>
+              </button>
+              <button
+                onClick={(e) => handleRemove(e, contact.identityId, contact.displayName)}
+                aria-label={`Remove ${contact.displayName}`}
+                title="Remove contact"
+                className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded px-1.5 text-text-secondary hover:bg-danger hover:text-white group-hover:block"
+              >
+                ✕
               </button>
             </li>
           );
