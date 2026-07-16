@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import type { Presence } from "../../types/domain";
@@ -30,13 +31,8 @@ export function Sidebar({ selection, onSelect, onCreateGroup }: SidebarProps) {
   const presenceById = useRosterStore((s) => s.presenceById);
   const removeContact = useRosterStore((s) => s.removeContact);
   const roomsById = useRoomStore((s) => s.roomsById);
-
-  function handleRemove(e: React.MouseEvent, contactId: string, name: string) {
-    e.stopPropagation();
-    if (confirm(`Remove ${name}? They'll be dropped from your contacts.`)) {
-      void removeContact(contactId);
-    }
-  }
+  // Inline confirm (window.confirm() is a no-op in the macOS webview).
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   const contacts = Object.values(contactsById).filter((c) => !c.revoked);
   const groupRooms = Object.values(roomsById).filter((r) => r.type === "group");
@@ -113,14 +109,45 @@ export function Sidebar({ selection, onSelect, onCreateGroup }: SidebarProps) {
                   </span>
                 </span>
               </button>
-              <button
-                onClick={(e) => handleRemove(e, contact.identityId, contact.displayName)}
-                aria-label={`Remove ${contact.displayName}`}
-                title="Remove contact"
-                className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded px-1.5 text-text-secondary hover:bg-danger hover:text-white group-hover:block"
-              >
-                ✕
-              </button>
+              {confirmingId === contact.identityId ? (
+                <span className="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void removeContact(contact.identityId);
+                      setConfirmingId(null);
+                    }}
+                    aria-label={`Confirm remove ${contact.displayName}`}
+                    title="Remove"
+                    className="rounded bg-danger px-1.5 text-xs text-white"
+                  >
+                    Remove
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmingId(null);
+                    }}
+                    aria-label="Cancel"
+                    title="Cancel"
+                    className="rounded px-1 text-text-secondary hover:text-text-primary"
+                  >
+                    ✕
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmingId(contact.identityId);
+                  }}
+                  aria-label={`Remove ${contact.displayName}`}
+                  title="Remove contact"
+                  className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded px-1.5 text-text-secondary hover:bg-danger hover:text-white group-hover:block"
+                >
+                  ✕
+                </button>
+              )}
             </li>
           );
         })}
