@@ -51,3 +51,11 @@ export async function updateDisplayName(displayName: string): Promise<void> {
     displayName,
   ]);
 }
+
+/** Clears the local profile row. Only valid once the matching private key is
+ * confirmed gone from the keychain — this device can no longer act as that
+ * identity, so the stale row would otherwise block re-onboarding. */
+export async function deleteIdentity(): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM identity WHERE id = 1");
+}
