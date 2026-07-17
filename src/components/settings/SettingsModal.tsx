@@ -18,6 +18,121 @@ type SettingsModalProps = {
   onClose: () => void;
 };
 
+/** Whether the browser supports routing audio output to a specific device. */
+const SINK_ID_SUPPORTED = "setSinkId" in HTMLMediaElement.prototype;
+
+type DeviceInfo = { deviceId: string; label: string };
+
+function useMediaDevices() {
+  const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([]);
+  const [videoInputs, setVideoInputs] = useState<DeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<DeviceInfo[]>([]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function refresh() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!active) return;
+        // Labels are empty until the user has granted mic/camera permission.
+        // We show what we have — at minimum the device kind + index.
+        const toInfo = (d: MediaDeviceInfo, i: number): DeviceInfo => ({
+          deviceId: d.deviceId,
+          label: d.label || `Device ${i + 1}`,
+        });
+        setAudioInputs(devices.filter((d) => d.kind === "audioinput").map(toInfo));
+        setVideoInputs(devices.filter((d) => d.kind === "videoinput").map(toInfo));
+        setAudioOutputs(devices.filter((d) => d.kind === "audiooutput").map(toInfo));
+      } catch (err) {
+        console.warn("enumerateDevices failed:", err);
+      }
+    }
+
+    void refresh();
+    navigator.mediaDevices.addEventListener("devicechange", refresh);
+    return () => {
+      active = false;
+      navigator.mediaDevices.removeEventListener("devicechange", refresh);
+    };
+  }, []);
+
+  return { audioInputs, videoInputs, audioOutputs };
+}
+
+function DevicesSection() {
+  const audioInputDeviceId = useSettingsStore((s) => s.audioInputDeviceId);
+  const videoInputDeviceId = useSettingsStore((s) => s.videoInputDeviceId);
+  const audioOutputDeviceId = useSettingsStore((s) => s.audioOutputDeviceId);
+  const setAudioInputDeviceId = useSettingsStore((s) => s.setAudioInputDeviceId);
+  const setVideoInputDeviceId = useSettingsStore((s) => s.setVideoInputDeviceId);
+  const setAudioOutputDeviceId = useSettingsStore((s) => s.setAudioOutputDeviceId);
+  const { audioInputs, videoInputs, audioOutputs } = useMediaDevices();
+
+  const selectClass =
+    "border border-border bg-bg-base px-3 py-1.5 text-sm text-text-primary rounded-md w-full outline-none focus:border-accent transition-colors";
+
+  return (
+    <div className="mt-6">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Devices</p>
+      <div className="mt-2 space-y-3">
+        <div>
+          <label className="mb-1 block text-sm text-text-primary">Microphone</label>
+          <select
+            className={selectClass}
+            value={audioInputDeviceId ?? ""}
+            onChange={(e) => void setAudioInputDeviceId(e.target.value || null)}
+          >
+            <option value="">Default</option>
+            {audioInputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm text-text-primary">Camera</label>
+          <select
+            className={selectClass}
+            value={videoInputDeviceId ?? ""}
+            onChange={(e) => void setVideoInputDeviceId(e.target.value || null)}
+          >
+            <option value="">Default</option>
+            {videoInputs.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {SINK_ID_SUPPORTED && (
+          <div>
+            <label className="mb-1 block text-sm text-text-primary">Speaker</label>
+            <select
+              className={selectClass}
+              value={audioOutputDeviceId ?? ""}
+              onChange={(e) => void setAudioOutputDeviceId(e.target.value || null)}
+            >
+              <option value="">Default</option>
+              {audioOutputs.map((d) => (
+                <option key={d.deviceId} value={d.deviceId}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-text-muted">
+              Speaker selection may not be available on all platforms.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ProfileSection() {
   const displayName = useIdentityStore((s) => s.self?.displayName ?? "");
   const updateDisplayName = useIdentityStore((s) => s.updateDisplayName);
@@ -174,6 +289,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
           </div>
         </div>
       </div>
+
+      <DevicesSection />
     </Modal>
   );
 }

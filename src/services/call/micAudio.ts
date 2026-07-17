@@ -13,11 +13,12 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
  */
 
 export function buildMicConstraints(): MediaTrackConstraints {
-  const { noiseSuppression } = useSettingsStore.getState();
+  const { noiseSuppression, audioInputDeviceId } = useSettingsStore.getState();
   return {
     echoCancellation: true,
     autoGainControl: true,
     noiseSuppression,
+    ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {}),
   };
 }
 
@@ -34,9 +35,9 @@ export function markVoiceTracks(stream: MediaStream): void {
 }
 
 /** Re-applies the current voice settings to a live mic stream, so toggling
- * noise suppression / voice isolation mid-call takes effect immediately.
- * Best-effort: platforms that can't reconfigure a live track keep the settings
- * the track was captured with (they still apply on the next call). */
+ * noise suppression or switching input device mid-call takes effect
+ * immediately. Best-effort: platforms that can't reconfigure a live track keep
+ * the settings the track was captured with (they still apply on the next call). */
 export async function applyMicProcessing(stream: MediaStream | null | undefined): Promise<void> {
   if (!stream) return;
   const constraints = buildMicConstraints();

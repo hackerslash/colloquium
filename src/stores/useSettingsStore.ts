@@ -35,6 +35,12 @@ type SettingsState = {
   /** Mic noise reduction: the built-in DSP plus ML (RNNoise) suppression,
    * gated together by this one toggle. */
   noiseSuppression: boolean;
+  /** Selected audio input device (microphone). null = browser default. */
+  audioInputDeviceId: string | null;
+  /** Selected video input device (camera). null = browser default. */
+  videoInputDeviceId: string | null;
+  /** Selected audio output device (speaker/headphones). null = browser default. */
+  audioOutputDeviceId: string | null;
   loaded: boolean;
 
   loadSettings: () => Promise<void>;
@@ -43,6 +49,9 @@ type SettingsState = {
   setPushToTalk: (on: boolean) => Promise<void>;
   setCloseToTray: (on: boolean) => Promise<void>;
   setNoiseSuppression: (on: boolean) => Promise<void>;
+  setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
+  setVideoInputDeviceId: (deviceId: string | null) => Promise<void>;
+  setAudioOutputDeviceId: (deviceId: string | null) => Promise<void>;
 };
 
 function systemPrefersDark(): boolean {
@@ -100,6 +109,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   pushToTalk: false,
   closeToTray: true,
   noiseSuppression: true,
+  audioInputDeviceId: null,
+  videoInputDeviceId: null,
+  audioOutputDeviceId: null,
   loaded: false,
 
   loadSettings: async () => {
@@ -109,9 +121,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const pushToTalk = (all.pushToTalk as boolean) ?? false;
     const closeToTray = (all.closeToTray as boolean) ?? true;
     const noiseSuppression = (all.noiseSuppression as boolean) ?? true;
+    const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
+    const videoInputDeviceId = (all.videoInputDeviceId as string | null) ?? null;
+    const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
     applyTheme(theme);
     applyAccent(accent);
-    set({ theme, accent, pushToTalk, closeToTray, noiseSuppression, loaded: true });
+    set({
+      theme,
+      accent,
+      pushToTalk,
+      closeToTray,
+      noiseSuppression,
+      audioInputDeviceId,
+      videoInputDeviceId,
+      audioOutputDeviceId,
+      loaded: true,
+    });
     void syncCloseToTray(closeToTray);
   },
 
@@ -186,6 +211,49 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
+  setAudioInputDeviceId: async (deviceId) => {
+    const previous = get().audioInputDeviceId;
+    set({ audioInputDeviceId: deviceId });
+    // Switch the live mic track in both call types (no-op when not in a call).
+    void callService.switchMicDevice();
+    void roomCallService.switchMicDevice();
+    try {
+      await settingsRepo.set("audioInputDeviceId", deviceId);
+    } catch (err) {
+      console.error("Failed to save audio input device setting:", err);
+      set({ audioInputDeviceId: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setVideoInputDeviceId: async (deviceId) => {
+    const previous = get().videoInputDeviceId;
+    set({ videoInputDeviceId: deviceId });
+    // Re-open the camera with the new device if camera is currently on.
+    void callService.switchCameraDevice();
+    void roomCallService.switchCameraDevice();
+    try {
+      await settingsRepo.set("videoInputDeviceId", deviceId);
+    } catch (err) {
+      console.error("Failed to save video input device setting:", err);
+      set({ videoInputDeviceId: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setAudioOutputDeviceId: async (deviceId) => {
+    const previous = get().audioOutputDeviceId;
+    set({ audioOutputDeviceId: deviceId });
+    // VideoTile components subscribe to audioOutputDeviceId from the store
+    // and call setSinkId on their <video> elements automatically.
+    try {
+      await settingsRepo.set("audioOutputDeviceId", deviceId);
+    } catch (err) {
+      console.error("Failed to save audio output device setting:", err);
+      set({ audioOutputDeviceId: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
 }));
 
 /** Voice-processing toggles take effect mid-call: re-apply constraints to

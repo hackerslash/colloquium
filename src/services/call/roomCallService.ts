@@ -30,18 +30,22 @@ import {
 import { toast } from "../../stores/useToastStore";
 import { applyMicProcessing, buildMicConstraints, markVoiceTracks } from "./micAudio";
 import { createMicProcessor, type MicProcessor } from "./noiseSuppressor";
-import { useSettingsStore } from "../../stores/useSettingsStore";
 import { resolveScreenTierSpec, type ScreenShareQualityOption } from "./screenShareConfig";
 import type { TierSpec } from "./PeerConnectionWrapper";
 import { emitCallEvent } from "./callEvents";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useCallStore } from "../../stores/useCallStore";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 
-const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  width: { ideal: 1920 },
-  height: { ideal: 1080 },
-  frameRate: { ideal: 30 },
-};
+function buildVideoConstraints(): MediaTrackConstraints {
+  const { videoInputDeviceId } = useSettingsStore.getState();
+  return {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30 },
+    ...(videoInputDeviceId ? { deviceId: { exact: videoInputDeviceId } } : {}),
+  };
+}
 
 /** A peer that neither sends anything (beacons flow every 3s) nor has working
  * media for this long is gone — crashed or hard-disconnected. Explicit leaves
@@ -549,6 +553,150 @@ export async function applyMicSettings(): Promise<void> {
   await applyMicProcessing(session?.localStream);
 }
 
+/** Switches the live microphone to the device currently selected in settings.
+ * Replaces the audio tracks on all peer connection senders and restarts the
+ * speaking monitor so it analyses the new input stream. No-op when not in a
+ * room call or when the mic cannot be re-acquired. */
+export async function switchMicDevice(): Promise<void> {
+  const call = session;
+  if (!call) return;
+  let newStream: MediaStream;
+  try {
+    newStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
+  } catch (err) {
+    console.warn("roomCallService.switchMicDevice: getUserMedia failed", err);
+    return;
+  }
+  if (session !== call) {
+    // Left the room call while the permission prompt was open.
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  markVoiceTracks(newStream);
+  const newTrack = newStream.getAudioTracks()[0];
+  if (!newTrack) {
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  // Preserve mute state across the swap so switching device doesn't unmute.
+  if (call.localStream.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
+
+  // Rebuild RNNoise around the new mic and transmit the processed track (raw
+  // fallback), so noise suppression survives a device change instead of the
+  // senders reverting to the unprocessed mic.
+  const oldProcessor = call.micProcessor;
+  const newProcessor = await createMicProcessor(
+    newTrack,
+    useSettingsStore.getState().noiseSuppression,
+  );
+  if (session !== call) {
+    void newProcessor?.dispose();
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  call.micProcessor = newProcessor;
+  const outgoing = newProcessor?.track ?? newTrack;
+
+  // Replace the audio sender track on every peer connection in the mesh.
+  for (const wrapper of call.wrappers.values()) {
+    const sender = wrapper.pc.getSenders().find((s) => s.track?.kind === "audio");
+    if (sender) {
+      try {
+        await sender.replaceTrack(outgoing);
+      } catch (err) {
+        console.warn("roomCallService.switchMicDevice: replaceTrack failed", err);
+      }
+    }
+  }
+  if (session !== call) {
+    void newProcessor?.dispose();
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  // The old processor's processed track is no longer sent — tear it down.
+  void oldProcessor?.dispose();
+
+  // Stop old audio tracks and swap them out of localStream.
+  const oldAudioTracks = call.localStream.getAudioTracks();
+  for (const old of oldAudioTracks) {
+    call.localStream.removeTrack(old);
+    old.stop();
+  }
+  call.localStream.addTrack(newTrack);
+
+  // Restart the speaking monitor on the new stream.
+  if (call.speakingMonitor) {
+    call.speakingMonitor.stop();
+    call.speakingMonitor = null;
+  }
+  // Re-create the monitor with the new stream, mirroring joinRoomCall.
+  const self = call.self;
+  const speakingMonitor = new SpeakingMonitor(
+    self.identityId,
+    call.localStream,
+    () => {
+      const receivers = new Map<string, RTCRtpReceiver[]>();
+      if (!session) return receivers;
+      for (const [remoteId, wrapper] of session.wrappers) {
+        const audioReceivers = wrapper.pc
+          .getReceivers()
+          .filter((r) => r.track && r.track.kind === "audio");
+        if (audioReceivers.length > 0) receivers.set(remoteId, audioReceivers);
+      }
+      return receivers;
+    },
+    (ids) => useRoomCallStore.getState()._setSpeaking(ids),
+  );
+  speakingMonitor.start();
+  if (session === call) {
+    call.speakingMonitor = speakingMonitor;
+  } else {
+    speakingMonitor.stop();
+  }
+}
+
+/** Re-opens the camera with the device currently selected in settings and
+ * replaces the existing video track on all peer connection senders in the mesh.
+ * No-op when the camera is not currently on or there is no active room call. */
+export async function switchCameraDevice(): Promise<void> {
+  const call = session;
+  if (!call) return;
+  if (!call.cameraTrack) return; // camera is off — nothing to switch
+
+  let newTrack: MediaStreamTrack;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: buildVideoConstraints() });
+    newTrack = stream.getVideoTracks()[0];
+  } catch (err) {
+    console.warn("roomCallService.switchCameraDevice: getUserMedia failed", err);
+    return;
+  }
+  if (session !== call) {
+    newTrack?.stop();
+    return;
+  }
+  if (!newTrack) return;
+
+  // Stop old camera track and replace in localStream.
+  call.localStream.removeTrack(call.cameraTrack);
+  call.cameraTrack.stop();
+  call.localStream.addTrack(newTrack);
+  call.cameraTrack = newTrack;
+  newTrack.onended = () => stopCameraLocal();
+
+  // Replace on every wrapper in the mesh.
+  for (const wrapper of call.wrappers.values()) {
+    if (wrapper.hasVideoSender("camera")) {
+      void wrapper.replaceVideoTrack(newTrack, "camera");
+    }
+  }
+  if (session !== call) {
+    newTrack.stop();
+  }
+}
+
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---
 
 export async function toggleCam() {
@@ -561,7 +709,7 @@ export async function toggleCam() {
 
   let track: MediaStreamTrack;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+    const stream = await navigator.mediaDevices.getUserMedia({ video: buildVideoConstraints() });
     track = stream.getVideoTracks()[0];
   } catch {
     useRoomCallStore.getState()._setPresentError("Couldn't access the camera.");
