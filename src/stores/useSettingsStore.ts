@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import * as settingsRepo from "../services/db/settingsRepo";
+import * as callService from "../services/call/callService";
+import * as roomCallService from "../services/call/roomCallService";
 
 export type ThemePref = "system" | "light" | "dark";
 
@@ -28,6 +30,11 @@ type SettingsState = {
   accent: string;
   pushToTalk: boolean;
   closeToTray: boolean;
+  /** Standard mic noise reduction (platform DSP). */
+  noiseSuppression: boolean;
+  /** Stronger ML-based isolation that mutes everything that isn't speech.
+   * Best-effort — silently ignored on platforms without support. */
+  voiceIsolation: boolean;
   loaded: boolean;
 
   loadSettings: () => Promise<void>;
@@ -35,6 +42,8 @@ type SettingsState = {
   setAccent: (key: string) => Promise<void>;
   setPushToTalk: (on: boolean) => Promise<void>;
   setCloseToTray: (on: boolean) => Promise<void>;
+  setNoiseSuppression: (on: boolean) => Promise<void>;
+  setVoiceIsolation: (on: boolean) => Promise<void>;
 };
 
 function systemPrefersDark(): boolean {
@@ -91,6 +100,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   accent: "indigo",
   pushToTalk: false,
   closeToTray: true,
+  noiseSuppression: true,
+  voiceIsolation: false,
   loaded: false,
 
   loadSettings: async () => {
@@ -99,9 +110,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const accent = (all.accent as string) ?? "indigo";
     const pushToTalk = (all.pushToTalk as boolean) ?? false;
     const closeToTray = (all.closeToTray as boolean) ?? true;
+    const noiseSuppression = (all.noiseSuppression as boolean) ?? true;
+    const voiceIsolation = (all.voiceIsolation as boolean) ?? false;
     applyTheme(theme);
     applyAccent(accent);
-    set({ theme, accent, pushToTalk, closeToTray, loaded: true });
+    set({ theme, accent, pushToTalk, closeToTray, noiseSuppression, voiceIsolation, loaded: true });
   },
 
   setTheme: async (theme) => {
@@ -127,4 +140,23 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ closeToTray: on });
     await settingsRepo.set("closeToTray", on);
   },
+
+  setNoiseSuppression: async (on) => {
+    set({ noiseSuppression: on });
+    applyVoiceSettingsToLiveCalls();
+    await settingsRepo.set("noiseSuppression", on);
+  },
+
+  setVoiceIsolation: async (on) => {
+    set({ voiceIsolation: on });
+    applyVoiceSettingsToLiveCalls();
+    await settingsRepo.set("voiceIsolation", on);
+  },
 }));
+
+/** Voice-processing toggles take effect mid-call: re-apply constraints to
+ * whichever call type (1:1 or room) currently holds a live mic. */
+function applyVoiceSettingsToLiveCalls() {
+  void callService.applyMicSettings();
+  void roomCallService.applyMicSettings();
+}

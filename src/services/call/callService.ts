@@ -13,17 +13,12 @@ import { derivePeerId } from "../peer/derivePeerId";
 import { PeerConnectionWrapper } from "./PeerConnectionWrapper";
 import { SpeakingMonitor } from "./speakingMonitor";
 import { captureDisplay, releaseDisplayAudio, type DisplayCapture } from "./displayMedia";
+import { applyMicProcessing, buildMicConstraints, markVoiceTracks } from "./micAudio";
 import { resolveScreenTier, type ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { notifyIfUnfocused } from "../notify";
-
-const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-};
 
 const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   width: { ideal: 1920 },
@@ -63,15 +58,24 @@ function clearIncomingTimer() {
 }
 
 async function acquireLocalMedia(withVideo: boolean): Promise<MediaStream> {
+  let stream: MediaStream;
   try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: AUDIO_CONSTRAINTS,
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: buildMicConstraints(),
       video: withVideo ? VIDEO_CONSTRAINTS : false,
     });
   } catch {
     // Fall back to audio-only if the camera is unavailable/denied.
-    return navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
   }
+  markVoiceTracks(stream);
+  return stream;
+}
+
+/** Re-applies the current voice settings (noise suppression / voice isolation)
+ * to the live mic. Called by the settings store when the user toggles them. */
+export async function applyMicSettings(): Promise<void> {
+  await applyMicProcessing(ctx?.localStream);
 }
 
 function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {

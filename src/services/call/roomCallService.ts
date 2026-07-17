@@ -21,16 +21,12 @@ import {
   SLOT_COUNT,
 } from "./PresenterSlotManager";
 import { captureDisplay, releaseDisplayAudio } from "./displayMedia";
+import { applyMicProcessing, buildMicConstraints, markVoiceTracks } from "./micAudio";
 import { resolveScreenTier, type ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useCallStore } from "../../stores/useCallStore";
 
-const AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
-};
 const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   width: { ideal: 1920 },
   height: { ideal: 1080 },
@@ -251,9 +247,10 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
     return;
   }
   const localStream = await navigator.mediaDevices.getUserMedia({
-    audio: AUDIO_CONSTRAINTS,
+    audio: buildMicConstraints(),
     video: false,
   });
+  markVoiceTracks(localStream);
 
   session = {
     self,
@@ -372,6 +369,12 @@ export function setMic(enabled: boolean) {
 
 export function isInRoomCall(): boolean {
   return session !== null;
+}
+
+/** Re-applies the current voice settings (noise suppression / voice isolation)
+ * to the live mic. Called by the settings store when the user toggles them. */
+export async function applyMicSettings(): Promise<void> {
+  await applyMicProcessing(session?.localStream);
 }
 
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---

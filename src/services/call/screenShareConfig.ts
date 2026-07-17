@@ -9,15 +9,24 @@ export type ScreenShareQualityOption = {
   maxBitrate?: number;
 };
 
+// Bitrate caps rise monotonically with pixels×fps so stepping "up" a tier is
+// always a real quality increase (4K at 1080p bitrates looks *worse* than
+// 1080p — fewer bits per pixel).
 export const SCREEN_SHARE_OPTIONS: ScreenShareQualityOption[] = [
   { id: "auto", label: "Auto", short: "Auto" },
-  { id: "720p_30_low", label: "720p · 30fps · Low", short: "720p", width: 1280, height: 720, frameRate: 30, maxBitrate: 1_000_000 },
-  { id: "720p_60_med", label: "720p · 60fps · Med", short: "720p60", width: 1280, height: 720, frameRate: 60, maxBitrate: 2_500_000 },
-  { id: "1080p_30_med", label: "1080p · 30fps · Med", short: "1080p", width: 1920, height: 1080, frameRate: 30, maxBitrate: 3_000_000 },
-  { id: "1080p_60_high", label: "1080p · 60fps · High", short: "1080p60", width: 1920, height: 1080, frameRate: 60, maxBitrate: 8_000_000 },
-  { id: "4k_30_low", label: "4K · 30fps · Low", short: "4K", width: 3840, height: 2160, frameRate: 30, maxBitrate: 5_000_000 },
-  { id: "4k_60_med", label: "4K · 60fps · Med", short: "4K60", width: 3840, height: 2160, frameRate: 60, maxBitrate: 15_000_000 },
+  { id: "720p_30", label: "720p · 30fps", short: "720p", width: 1280, height: 720, frameRate: 30, maxBitrate: 1_500_000 },
+  { id: "720p_60", label: "720p · 60fps", short: "720p60", width: 1280, height: 720, frameRate: 60, maxBitrate: 2_500_000 },
+  { id: "1080p_30", label: "1080p · 30fps", short: "1080p", width: 1920, height: 1080, frameRate: 30, maxBitrate: 4_000_000 },
+  { id: "1080p_60", label: "1080p · 60fps", short: "1080p60", width: 1920, height: 1080, frameRate: 60, maxBitrate: 8_000_000 },
+  { id: "4k_30", label: "4K · 30fps", short: "4K", width: 3840, height: 2160, frameRate: 30, maxBitrate: 12_000_000 },
+  { id: "4k_60", label: "4K · 60fps", short: "4K60", width: 3840, height: 2160, frameRate: 60, maxBitrate: 20_000_000 },
 ];
+
+/** The largest capture we ever ask the OS for — getDisplayMedia clamps this to
+ * the display's real size, so it's a "give me full physical pixels" request,
+ * not an upscale. Matches the top of SCREEN_SHARE_OPTIONS. */
+export const MAX_CAPTURE_WIDTH = 3840;
+export const MAX_CAPTURE_HEIGHT = 2160;
 
 /** Encoding tier resolved for a live screen sender. Structurally matches the
  * PeerConnectionWrapper `Tier` shape so it can be handed straight to

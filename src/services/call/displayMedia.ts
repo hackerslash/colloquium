@@ -16,7 +16,11 @@
  * so "only system audio is shared" holds by construction.
  */
 import { isMacOS, startSystemAudioTrack, stopSystemAudioTrack } from "./systemAudio";
-import type { ScreenShareQualityOption } from "./screenShareConfig";
+import {
+  MAX_CAPTURE_HEIGHT,
+  MAX_CAPTURE_WIDTH,
+  type ScreenShareQualityOption,
+} from "./screenShareConfig";
 
 export type DisplayCapture = {
   stream: MediaStream;
@@ -35,14 +39,23 @@ const SYSTEM_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 };
 
 export async function captureDisplay(config?: ScreenShareQualityOption): Promise<DisplayCapture> {
-  // Always capture at the display's native resolution. Quality is then applied
-  // in the encoder (downscale via scaleResolutionDownBy + bitrate/framerate
-  // caps), so the user can switch resolution live — down AND back up to native
-  // — without re-prompting the OS picker. Only frame rate is hinted here.
+  // Always capture at the display's FULL PHYSICAL resolution. Without explicit
+  // width/height, HiDPI screens are captured at their logical size (e.g. a
+  // Retina Mac yields ~1728×1117, a 4K monitor at 150% scaling yields
+  // 2560×1440), which silently caps every quality tier at ~1080p — selecting
+  // 4K then changes nothing. Asking for 4K "ideal" unlocks physical pixels;
+  // the browser clamps to the real screen size, never upscales. Quality is
+  // then applied in the encoder (downscale via scaleResolutionDownBy +
+  // bitrate/framerate caps), so the user can switch resolution live — down
+  // AND back up to native — without re-prompting the OS picker.
   const frameRate = config && config.id !== "auto" && config.frameRate ? config.frameRate : 30;
 
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: { ideal: frameRate } },
+    video: {
+      width: { ideal: MAX_CAPTURE_WIDTH },
+      height: { ideal: MAX_CAPTURE_HEIGHT },
+      frameRate: { ideal: frameRate },
+    },
     audio: SYSTEM_AUDIO_CONSTRAINTS,
   });
 

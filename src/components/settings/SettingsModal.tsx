@@ -23,6 +23,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setPushToTalk = useSettingsStore((s) => s.setPushToTalk);
   const closeToTray = useSettingsStore((s) => s.closeToTray);
   const setCloseToTray = useSettingsStore((s) => s.setCloseToTray);
+  const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
+  const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
+  const voiceIsolation = useSettingsStore((s) => s.voiceIsolation);
+  const setVoiceIsolation = useSettingsStore((s) => s.setVoiceIsolation);
 
   return (
     <Modal open={open} onClose={onClose} title="Settings" size="md">
@@ -95,6 +99,39 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               </p>
             </div>
             <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Voice</p>
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Noise suppression</p>
+              <p className="text-xs text-text-secondary">
+                Reduce background noise picked up by your microphone
+              </p>
+            </div>
+            <Switch
+              checked={noiseSuppression}
+              onChange={setNoiseSuppression}
+              aria-label="Noise suppression"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Voice isolation</p>
+              <p className="text-xs text-text-secondary">
+                Stronger filtering that mutes everything except your voice, like keyboard and
+                room sounds (where supported)
+              </p>
+            </div>
+            <Switch
+              checked={voiceIsolation}
+              onChange={setVoiceIsolation}
+              aria-label="Voice isolation"
+            />
           </div>
         </div>
       </div>

@@ -8,8 +8,11 @@ class HavenSysAudioProcessor extends AudioWorkletProcessor {
     this.queue = [];
     this.current = null;
     this.offset = 0;
-    // Bound latency: if we ever fall this far behind, drop the backlog.
+    // Bound latency: if we ever fall this far behind, drop the backlog down
+    // to a small cushion instead of shifting one chunk per arrival — that
+    // would keep playback pegged at max latency (~640 ms behind) forever.
     this.maxChunks = 32;
+    this.resyncChunks = 6;
     this.port.onmessage = (e) => {
       if (e.data === "flush") {
         this.queue = [];
@@ -17,7 +20,9 @@ class HavenSysAudioProcessor extends AudioWorkletProcessor {
         this.offset = 0;
         return;
       }
-      if (this.queue.length >= this.maxChunks) this.queue.shift();
+      if (this.queue.length >= this.maxChunks) {
+        this.queue.splice(0, this.queue.length - this.resyncChunks);
+      }
       this.queue.push(e.data);
     };
   }

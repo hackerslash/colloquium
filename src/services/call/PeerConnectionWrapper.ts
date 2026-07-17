@@ -39,7 +39,7 @@ const CAMERA_TIERS: Tier[] = [
   { maxBitrate: 300_000, scaleResolutionDownBy: 3, maxFramerate: 15 },
 ];
 const SCREEN_TIERS: Tier[] = [
-  { maxBitrate: 5_000_000, scaleResolutionDownBy: 1, maxFramerate: 30 },
+  { maxBitrate: 8_000_000, scaleResolutionDownBy: 1, maxFramerate: 30 },
   { maxBitrate: 2_500_000, scaleResolutionDownBy: 1, maxFramerate: 15 },
   { maxBitrate: 1_200_000, scaleResolutionDownBy: 1, maxFramerate: 8 },
   { maxBitrate: 600_000, scaleResolutionDownBy: 1.5, maxFramerate: 5 },
@@ -47,6 +47,56 @@ const SCREEN_TIERS: Tier[] = [
 const TIERS: Record<VideoKind, Tier[]> = { camera: CAMERA_TIERS, screen: SCREEN_TIERS };
 
 const CODEC_PREFERENCE = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
+
+// Opus fmtp upgrades applied to every SDP that passes through this wrapper.
+// WebRTC's Opus default is ~32 kbps forced-mono — fine for a phone call,
+// terrible for shared system audio (music/video). stereo + a higher bitrate
+// ceiling fix that; in-band FEC adds packet-loss resilience for voice at
+// negligible cost. fmtp lines describe what the *receiver* wants, so we tune
+// the local description we send out (asks the remote encoder for quality) AND
+// the remote description we apply (activates it in our own encoder even if
+// the peer runs an older build — an Opus decoder handles stereo/high-bitrate
+// unconditionally).
+const OPUS_PARAMS: Record<string, string> = {
+  stereo: "1",
+  "sprop-stereo": "1",
+  maxaveragebitrate: "128000",
+  useinbandfec: "1",
+};
+
+export function tuneOpusSdp(sdp: string): string {
+  const lines = sdp.split("\r\n");
+  const opusPts = new Set<string>();
+  for (const line of lines) {
+    const m = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+    if (m) opusPts.add(m[1]);
+  }
+  if (opusPts.size === 0) return sdp;
+
+  const extra = Object.entries(OPUS_PARAMS)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(";");
+  const hadFmtp = new Set<string>();
+  const upgraded = lines.map((line) => {
+    const m = /^a=fmtp:(\d+) (.+)$/.exec(line);
+    if (!m || !opusPts.has(m[1])) return line;
+    hadFmtp.add(m[1]);
+    const kept = m[2]
+      .split(";")
+      .map((p) => p.trim())
+      .filter((p) => p && !(p.split("=")[0] in OPUS_PARAMS));
+    return `a=fmtp:${m[1]} ${[...kept, extra].join(";")}`;
+  });
+
+  // An Opus rtpmap with no fmtp line at all gets one inserted right after it.
+  const out: string[] = [];
+  for (const line of upgraded) {
+    out.push(line);
+    const m = /^a=rtpmap:(\d+) opus\/48000/i.exec(line);
+    if (m && !hadFmtp.has(m[1])) out.push(`a=fmtp:${m[1]} ${extra}`);
+  }
+  return out.join("\r\n");
+}
 
 const STATS_INTERVAL_MS = 2_000;
 const ICE_DISCONNECT_GRACE_MS = 3_000;
@@ -98,9 +148,7 @@ export class PeerConnectionWrapper {
       try {
         this.makingOffer = true;
         await this.pc.setLocalDescription();
-        if (this.pc.localDescription) {
-          this.callbacks.onDescription(this.pc.localDescription.toJSON());
-        }
+        this.sendLocalDescription();
       } catch (err) {
         console.error("negotiation failed", err);
       } finally {
@@ -270,15 +318,26 @@ export class PeerConnectionWrapper {
     if (this.ignoreOffer) return;
 
     this.isSettingRemoteAnswerPending = description.type === "answer";
-    await this.pc.setRemoteDescription(description);
+    const tuned = description.sdp
+      ? { ...description, sdp: tuneOpusSdp(description.sdp) }
+      : description;
+    await this.pc.setRemoteDescription(tuned);
     this.isSettingRemoteAnswerPending = false;
 
     if (description.type === "offer") {
       await this.pc.setLocalDescription();
-      if (this.pc.localDescription) {
-        this.callbacks.onDescription(this.pc.localDescription.toJSON());
-      }
+      this.sendLocalDescription();
     }
+  }
+
+  /** Ships the current local description through signaling with the Opus
+   * receive preferences (stereo, bitrate, FEC) stamped in. */
+  private sendLocalDescription() {
+    const description = this.pc.localDescription;
+    if (!description) return;
+    const json = description.toJSON();
+    if (json.sdp) json.sdp = tuneOpusSdp(json.sdp);
+    this.callbacks.onDescription(json);
   }
 
   async handleCandidate(candidate: RTCIceCandidateInit) {
