@@ -199,7 +199,15 @@ export class PeerConnectionWrapper {
       }
       this.remoteStream.addTrack(track);
       this.callbacks.onRemoteStream?.(this.remoteStream);
-      track.onended = () => this.remoteStream.removeTrack(track);
+      // Refire on mute/unmute so the UI can drop a frozen last frame when the
+      // remote's RTP stops (crash, network death) instead of displaying it.
+      const refire = () => this.callbacks.onRemoteStream?.(this.remoteStream);
+      track.onmute = refire;
+      track.onunmute = refire;
+      track.onended = () => {
+        this.remoteStream.removeTrack(track);
+        refire();
+      };
     };
 
     this.pc.onconnectionstatechange = () => {

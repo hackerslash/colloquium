@@ -6,6 +6,7 @@ export type CallEvent =
   | { kind: "call-declined"; remoteId: string }
   | { kind: "call-busy"; remoteId: string }
   | { kind: "call-ended"; remoteId: string }
+  | { kind: "call-lost"; remoteId: string }
   | { kind: "call-no-answer"; remoteId: string }
   | { kind: "call-missed"; remoteId: string }
   | { kind: "call-unreachable"; remoteId: string }

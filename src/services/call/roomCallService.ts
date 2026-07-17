@@ -34,6 +34,11 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   frameRate: { ideal: 30 },
 };
 
+/** A peer that neither sends anything (beacons flow every 3s) nor has working
+ * media for this long is gone — crashed or hard-disconnected. Explicit leaves
+ * are handled by messages; this catches the ones that never say goodbye. */
+const PEER_TIMEOUT_MS = 15_000;
+
 type Session = {
   self: Identity;
   roomId: string;
@@ -53,6 +58,11 @@ type Session = {
   /** Remote streams by their wire (msid) id, per participant — classified
    * into main vs screen using the slot's streamId. */
   remoteStreams: Map<string, Map<string, MediaStream>>;
+  /** Last time each peer proved it's alive (any message received). */
+  lastSeenAt: Map<string, number>;
+  /** Effective-slot fingerprint from the previous tick, so a lease expiring
+   * silently (crashed presenter) still triggers stream reclassification. */
+  slotFingerprint: string;
   slots: PresenterSlotManager;
   tickTimer: ReturnType<typeof setInterval> | null;
   tickCount: number;
@@ -167,6 +177,19 @@ function reclassifyAll() {
   for (const remoteId of session.remoteStreams.keys()) reclassifyStreams(remoteId);
 }
 
+/** Records proof of life for a peer (any message received from it). */
+function touchPeer(remoteId: string) {
+  session?.lastSeenAt.set(remoteId, Date.now());
+}
+
+function slotFingerprintNow(now: number): string {
+  if (!session) return "";
+  return session.slots
+    .effective(now)
+    .map((s) => `${s.slotIndex}:${s.holderId}:${s.streamId}`)
+    .join("|");
+}
+
 function routeRemoteTrack(remoteId: string, track: MediaStreamTrack, streams: readonly MediaStream[]) {
   if (!session) return;
   const stream = streams[0];
@@ -249,6 +272,7 @@ function ensureWrapper(remoteId: string): PeerConnectionWrapper {
   }
 
   session.wrappers.set(remoteId, wrapper);
+  touchPeer(remoteId); // liveness clock starts now, not at epoch 0
   updateCeilings();
   pushParticipantsToStore();
   return wrapper;
@@ -267,6 +291,7 @@ function removePeer(remoteId: string) {
     });
   }
   session.remoteStreams.delete(remoteId);
+  session.lastSeenAt.delete(remoteId);
   session.screenLinkBps.delete(remoteId);
   pushScreenLinkToStore();
   useRoomCallStore.getState()._removeParticipant(remoteId);
@@ -297,6 +322,8 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
     screenLinkBps: new Map(),
     wrappers: new Map(),
     remoteStreams: new Map(),
+    lastSeenAt: new Map(),
+    slotFingerprint: "",
     slots: new PresenterSlotManager(),
     tickTimer: null,
     tickCount: 0,
@@ -353,6 +380,27 @@ function onTick() {
   // Occupancy beacon at the slot-heartbeat cadence (every 3rd 1s tick).
   if (session.tickCount % Math.max(1, Math.round(HEARTBEAT_MS / 1_000)) === 0) {
     broadcastBeacon(false);
+  }
+
+  // Reap crashed/vanished peers: no message in PEER_TIMEOUT_MS (they beacon
+  // every 3s when alive) AND no working media. Requiring both means a peer
+  // with healthy media but a broken data path is never kicked.
+  for (const [remoteId, wrapper] of [...session.wrappers]) {
+    const lastSeen = session.lastSeenAt.get(remoteId) ?? now;
+    if (now - lastSeen > PEER_TIMEOUT_MS && wrapper.pc.connectionState !== "connected") {
+      removePeer(remoteId);
+    }
+  }
+  if (!session) return; // removePeer can never end the session today, but be safe
+
+  // A presenter that crashed stops heartbeating and its slot lease expires
+  // silently — no message arrives to trigger reclassification, so watch the
+  // effective slot state ourselves and re-derive streams when it shifts.
+  // (This is what unsticks the frozen screen tile.)
+  const fingerprint = slotFingerprintNow(now);
+  if (fingerprint !== session.slotFingerprint) {
+    session.slotFingerprint = fingerprint;
+    reclassifyAll();
   }
 
   pushSlotsToStore();
@@ -565,6 +613,7 @@ export function handleRoomCallJoin(self: Identity, msg: RoomCallJoinMessage) {
   if (!session || session.roomId !== msg.roomId || msg.fromId === self.identityId) return;
   const isNew = !session.wrappers.has(msg.fromId);
   ensureWrapper(msg.fromId);
+  touchPeer(msg.fromId);
   if (isNew) {
     emitCallEvent({
       kind: "room-participant-joined",
@@ -583,6 +632,7 @@ export function handleRoomCallJoin(self: Identity, msg: RoomCallJoinMessage) {
 
 export function handleRoomCallPresence(_self: Identity, msg: RoomCallPresenceMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  touchPeer(msg.fromId);
   session.slots.replaceAll(msg.slots);
   for (const participant of [msg.fromId, ...msg.participants]) {
     if (participant !== session.self.identityId) ensureWrapper(participant);
@@ -600,6 +650,7 @@ export function handleRoomCallLeave(_self: Identity, msg: RoomCallLeaveMessage) 
  * wire up any we missed (e.g. both joined before the data conn was open). */
 export function handleRoomCallBeacon(self: Identity, msg: RoomCallBeaconMessage) {
   if (!session || session.roomId !== msg.roomId || msg.leaving) return;
+  touchPeer(msg.fromId);
   for (const participant of [msg.fromId, ...msg.participants]) {
     if (participant !== self.identityId && !session.wrappers.has(participant)) {
       ensureWrapper(participant);
@@ -609,6 +660,7 @@ export function handleRoomCallBeacon(self: Identity, msg: RoomCallBeaconMessage)
 
 export function handleSlotClaim(_self: Identity, msg: SlotClaimMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  touchPeer(msg.claimantId);
   session.slots.applyClaim(msg);
   reconcileOwnScreenShare();
   reclassifyAll();
@@ -617,6 +669,7 @@ export function handleSlotClaim(_self: Identity, msg: SlotClaimMessage) {
 
 export function handleSlotHeartbeat(_self: Identity, msg: SlotHeartbeatMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  touchPeer(msg.holderId);
   session.slots.applyHeartbeat(msg);
   reconcileOwnScreenShare();
   reclassifyAll();
@@ -625,6 +678,7 @@ export function handleSlotHeartbeat(_self: Identity, msg: SlotHeartbeatMessage) 
 
 export function handleSlotRelease(_self: Identity, msg: SlotReleaseMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  touchPeer(msg.holderId);
   session.slots.applyRelease(msg);
   reclassifyAll();
   pushSlotsToStore();
@@ -639,12 +693,14 @@ function reconcileOwnScreenShare() {
 
 export async function handleRtcDescription(_self: Identity, msg: RtcDescriptionMessage) {
   if (!session || msg.channel !== session.roomId) return;
+  touchPeer(msg.fromId);
   const wrapper = ensureWrapper(msg.fromId);
   await wrapper.handleDescription(msg.description);
 }
 
 export async function handleRtcCandidate(_self: Identity, msg: RtcCandidateMessage) {
   if (!session || msg.channel !== session.roomId) return;
+  touchPeer(msg.fromId);
   const wrapper = session.wrappers.get(msg.fromId);
   if (wrapper) await wrapper.handleCandidate(msg.candidate);
 }

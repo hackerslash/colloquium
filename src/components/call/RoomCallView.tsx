@@ -8,18 +8,13 @@ import { ScreenShareButton } from "./ScreenShareButton";
 import { ScreenQualityBadge } from "./ScreenQualityBadge";
 import { IconButton } from "../ui/IconButton";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
+import { hasLiveVideo } from "../../lib/mediaTracks";
 
 function useNameLookup() {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   return (id: string) =>
     id === self?.identityId ? "You" : (contactsById[id]?.displayName ?? "Unknown");
-}
-
-function liveVideo(stream: MediaStream | null): boolean {
-  return (
-    stream?.getVideoTracks().some((t) => t.readyState === "live" && !t.muted) ?? false
-  );
 }
 
 export function RoomCallView() {
@@ -101,7 +96,7 @@ export function RoomCallView() {
                   stream={stream}
                   muted={id === self?.identityId}
                   label={`${nameOf(id)} (screen)`}
-                  hasVideo={liveVideo(stream)}
+                  hasVideo={hasLiveVideo(stream)}
                   fit="fill"
                   speaking={speakingIds.has(id)}
                 />
@@ -121,7 +116,7 @@ export function RoomCallView() {
                     label={nameOf(id)}
                     participantId={id}
                     quality={qualityFor(id)}
-                    hasVideo={id === self?.identityId ? camOn : liveVideo(stream)}
+                    hasVideo={id === self?.identityId ? camOn : hasLiveVideo(stream)}
                     speaking={speakingIds.has(id)}
                   />
                 </div>
@@ -142,7 +137,7 @@ export function RoomCallView() {
                 label={nameOf(id)}
                 participantId={id}
                 quality={qualityFor(id)}
-                hasVideo={id === self?.identityId ? camOn : liveVideo(stream)}
+                hasVideo={id === self?.identityId ? camOn : hasLiveVideo(stream)}
                 speaking={speakingIds.has(id)}
               />
             );

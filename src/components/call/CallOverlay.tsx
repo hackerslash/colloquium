@@ -10,6 +10,7 @@ import { ScreenQualityBadge } from "./ScreenQualityBadge";
 import { IconButton } from "../ui/IconButton";
 import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
+import { hasLiveVideo } from "../../lib/mediaTracks";
 import { useRingtone } from "../../hooks/useRingtone";
 
 function useRemoteName(remoteId: string | undefined): string {
@@ -170,7 +171,7 @@ export function CallOverlay() {
             stream={remoteStream}
             label={remoteName}
             participantId={activeCall.remoteId}
-            hasVideo={(remoteStream?.getVideoTracks().length ?? 0) > 0}
+            hasVideo={hasLiveVideo(remoteStream)}
             quality={quality}
             fit="fill"
             speaking={speakingIds.has(activeCall.remoteId)}

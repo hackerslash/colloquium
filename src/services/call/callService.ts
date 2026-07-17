@@ -31,6 +31,10 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
 const INVITE_TTL_MS = 10_000;
 /** Ring timeout on both sides. */
 const RING_TIMEOUT_MS = 30_000;
+/** How long a call may sit disconnected/failed (ICE restarts still trying)
+ * before we declare the peer gone — crashed apps never say goodbye, so
+ * without this the call shows "Reconnecting…" forever. */
+const CALL_DROP_TIMEOUT_MS = 20_000;
 
 type CallContext = {
   self: Identity;
@@ -41,6 +45,7 @@ type CallContext = {
   localStream: MediaStream | null;
   screenStream: MediaStream | null;
   ringTimer: ReturnType<typeof setTimeout> | null;
+  dropTimer: ReturnType<typeof setTimeout> | null;
   speakingMonitor: SpeakingMonitor | null;
 };
 
@@ -55,6 +60,13 @@ function sendToRemote(remoteId: string, data: unknown) {
 function clearIncomingTimer() {
   if (incomingTimer) clearTimeout(incomingTimer);
   incomingTimer = null;
+}
+
+function clearDropTimer() {
+  if (ctx?.dropTimer) {
+    clearTimeout(ctx.dropTimer);
+    ctx.dropTimer = null;
+  }
 }
 
 async function acquireLocalMedia(withVideo: boolean): Promise<MediaStream> {
@@ -103,9 +115,20 @@ function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {
     onConnectionStateChange: (state) => {
       useCallStore.getState()._setConnectionState(state);
       if (state === "connected") useCallStore.getState()._setStatus("active");
-      // Don't hang up on "disconnected"/"failed" — the wrapper's ICE-restart
-      // layer tries to recover, and the UI shows a reconnecting state. Only a
-      // fully closed connection (explicit teardown) ends the call here.
+      // Don't hang up on "disconnected"/"failed" immediately — the wrapper's
+      // ICE-restart layer tries to recover and the UI shows a reconnecting
+      // state. But a crashed peer never sends a hangup, so if the outage
+      // outlives the drop timeout, declare the call lost and end it.
+      if (state === "connected") {
+        clearDropTimer();
+      } else if ((state === "disconnected" || state === "failed") && ctx && !ctx.dropTimer) {
+        ctx.dropTimer = setTimeout(() => {
+          if (!ctx) return;
+          const lostRemoteId = ctx.remoteId;
+          endCallLocal();
+          emitCallEvent({ kind: "call-lost", remoteId: lostRemoteId });
+        }, CALL_DROP_TIMEOUT_MS);
+      }
       if (state === "closed" && ctx) endCallLocal();
     },
   });
@@ -160,6 +183,7 @@ export async function startCall(self: Identity, roomId: string, remoteId: string
     localStream,
     screenStream: null,
     ringTimer: null,
+    dropTimer: null,
     speakingMonitor: null,
   };
 
@@ -220,6 +244,7 @@ export async function acceptCall(self: Identity) {
     localStream,
     screenStream: null,
     ringTimer: null,
+    dropTimer: null,
     speakingMonitor: null,
   };
   ctx.wrapper = buildWrapper(self, active.remoteId);
@@ -268,6 +293,7 @@ export function hangUp() {
 
 function endCallLocal() {
   if (ctx?.ringTimer) clearTimeout(ctx.ringTimer);
+  clearDropTimer();
   clearIncomingTimer();
   if (ctx?.speakingMonitor) {
     ctx.speakingMonitor.stop();

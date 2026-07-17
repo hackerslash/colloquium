@@ -23,6 +23,9 @@ function handle(event: CallEvent) {
     case "call-ended":
       toast.info("Call ended");
       break;
+    case "call-lost":
+      toast.warning(`Lost connection to ${nameOf(event.remoteId)}`, "The call ended.");
+      break;
     case "call-no-answer":
       toast.info(`${nameOf(event.remoteId)} didn't answer`);
       break;
