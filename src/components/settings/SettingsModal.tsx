@@ -23,6 +23,28 @@ const SINK_ID_SUPPORTED = "setSinkId" in HTMLMediaElement.prototype;
 
 type DeviceInfo = { deviceId: string; label: string };
 
+/** Briefly opens the mic + camera, then releases them immediately. This is the
+ * only way to unlock labeled device enumeration: until getUserMedia has run
+ * once in the document, enumerateDevices() returns an EMPTY list (WKWebView) or
+ * entries with blank labels — so every picker comes up empty. Falls back to
+ * audio-only if the camera is unavailable/denied, so the mic/speaker lists
+ * still populate. */
+async function primeDevicePermission(): Promise<void> {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    stream.getTracks().forEach((t) => t.stop());
+    return;
+  } catch {
+    // Camera may be unavailable/denied — still try to unlock the mic list.
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+  } catch {
+    // Permission denied outright — nothing more we can do; lists stay limited.
+  }
+}
+
 function useMediaDevices() {
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([]);
   const [videoInputs, setVideoInputs] = useState<DeviceInfo[]>([]);
@@ -30,20 +52,39 @@ function useMediaDevices() {
 
   useEffect(() => {
     let active = true;
+    let primed = false;
 
     async function refresh() {
       try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        // No usable inputs, or all labels blank → permission hasn't been granted
+        // in this document yet. Prime it once, then re-read.
+        const noInputs = !devices.some(
+          (d) => d.kind === "audioinput" || d.kind === "videoinput",
+        );
+        const unlabeled = devices.length > 0 && devices.every((d) => d.label === "");
+        if (!primed && (noInputs || unlabeled)) {
+          primed = true;
+          await primeDevicePermission();
+          if (!active) return;
+          devices = await navigator.mediaDevices.enumerateDevices();
+        }
         if (!active) return;
-        // Labels are empty until the user has granted mic/camera permission.
-        // We show what we have — at minimum the device kind + index.
+        // Only keep entries with a real deviceId; label falls back to a generic
+        // name if the platform still withholds it.
         const toInfo = (d: MediaDeviceInfo, i: number): DeviceInfo => ({
           deviceId: d.deviceId,
           label: d.label || `Device ${i + 1}`,
         });
-        setAudioInputs(devices.filter((d) => d.kind === "audioinput").map(toInfo));
-        setVideoInputs(devices.filter((d) => d.kind === "videoinput").map(toInfo));
-        setAudioOutputs(devices.filter((d) => d.kind === "audiooutput").map(toInfo));
+        setAudioInputs(
+          devices.filter((d) => d.kind === "audioinput" && d.deviceId).map(toInfo),
+        );
+        setVideoInputs(
+          devices.filter((d) => d.kind === "videoinput" && d.deviceId).map(toInfo),
+        );
+        setAudioOutputs(
+          devices.filter((d) => d.kind === "audiooutput" && d.deviceId).map(toInfo),
+        );
       } catch (err) {
         console.warn("enumerateDevices failed:", err);
       }
