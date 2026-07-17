@@ -82,6 +82,16 @@ function broadcast(data: unknown) {
   }
 }
 
+/** Room membership at join time is the authorization boundary for every
+ * inbound room-call message: without this, any peer who can open a PeerJS
+ * data connection to you (e.g. a removed contact who cached your peer id)
+ * and knows the room's UUID could puppet its way into a live media
+ * negotiation. Every handler below checks the message's claimed sender
+ * against this before creating a wrapper or touching slot state. */
+function isMember(remoteId: string): boolean {
+  return session?.memberIds.includes(remoteId) ?? false;
+}
+
 /** Occupancy beacon to ALL room members (in-call or not) so the room shows as
  * active in everyone's sidebar. Lease-based: silence expires us automatically. */
 function broadcastBeacon(leaving: boolean) {
@@ -611,6 +621,7 @@ export function stopScreenShare() {
 
 export function handleRoomCallJoin(self: Identity, msg: RoomCallJoinMessage) {
   if (!session || session.roomId !== msg.roomId || msg.fromId === self.identityId) return;
+  if (!isMember(msg.fromId)) return;
   const isNew = !session.wrappers.has(msg.fromId);
   ensureWrapper(msg.fromId);
   touchPeer(msg.fromId);
@@ -632,10 +643,11 @@ export function handleRoomCallJoin(self: Identity, msg: RoomCallJoinMessage) {
 
 export function handleRoomCallPresence(_self: Identity, msg: RoomCallPresenceMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.fromId)) return;
   touchPeer(msg.fromId);
   session.slots.replaceAll(msg.slots);
   for (const participant of [msg.fromId, ...msg.participants]) {
-    if (participant !== session.self.identityId) ensureWrapper(participant);
+    if (participant !== session.self.identityId && isMember(participant)) ensureWrapper(participant);
   }
   reclassifyAll();
   pushSlotsToStore();
@@ -643,6 +655,7 @@ export function handleRoomCallPresence(_self: Identity, msg: RoomCallPresenceMes
 
 export function handleRoomCallLeave(_self: Identity, msg: RoomCallLeaveMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.fromId)) return;
   removePeer(msg.fromId);
 }
 
@@ -650,9 +663,10 @@ export function handleRoomCallLeave(_self: Identity, msg: RoomCallLeaveMessage) 
  * wire up any we missed (e.g. both joined before the data conn was open). */
 export function handleRoomCallBeacon(self: Identity, msg: RoomCallBeaconMessage) {
   if (!session || session.roomId !== msg.roomId || msg.leaving) return;
+  if (!isMember(msg.fromId)) return;
   touchPeer(msg.fromId);
   for (const participant of [msg.fromId, ...msg.participants]) {
-    if (participant !== self.identityId && !session.wrappers.has(participant)) {
+    if (participant !== self.identityId && isMember(participant) && !session.wrappers.has(participant)) {
       ensureWrapper(participant);
     }
   }
@@ -660,6 +674,7 @@ export function handleRoomCallBeacon(self: Identity, msg: RoomCallBeaconMessage)
 
 export function handleSlotClaim(_self: Identity, msg: SlotClaimMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.claimantId)) return;
   touchPeer(msg.claimantId);
   session.slots.applyClaim(msg);
   reconcileOwnScreenShare();
@@ -669,6 +684,7 @@ export function handleSlotClaim(_self: Identity, msg: SlotClaimMessage) {
 
 export function handleSlotHeartbeat(_self: Identity, msg: SlotHeartbeatMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.holderId)) return;
   touchPeer(msg.holderId);
   session.slots.applyHeartbeat(msg);
   reconcileOwnScreenShare();
@@ -678,6 +694,7 @@ export function handleSlotHeartbeat(_self: Identity, msg: SlotHeartbeatMessage) 
 
 export function handleSlotRelease(_self: Identity, msg: SlotReleaseMessage) {
   if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.holderId)) return;
   touchPeer(msg.holderId);
   session.slots.applyRelease(msg);
   reclassifyAll();
@@ -693,6 +710,7 @@ function reconcileOwnScreenShare() {
 
 export async function handleRtcDescription(_self: Identity, msg: RtcDescriptionMessage) {
   if (!session || msg.channel !== session.roomId) return;
+  if (!isMember(msg.fromId)) return;
   touchPeer(msg.fromId);
   const wrapper = ensureWrapper(msg.fromId);
   await wrapper.handleDescription(msg.description);
@@ -700,6 +718,7 @@ export async function handleRtcDescription(_self: Identity, msg: RtcDescriptionM
 
 export async function handleRtcCandidate(_self: Identity, msg: RtcCandidateMessage) {
   if (!session || msg.channel !== session.roomId) return;
+  if (!isMember(msg.fromId)) return;
   touchPeer(msg.fromId);
   const wrapper = session.wrappers.get(msg.fromId);
   if (wrapper) await wrapper.handleCandidate(msg.candidate);
