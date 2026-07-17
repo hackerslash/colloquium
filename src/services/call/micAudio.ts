@@ -4,23 +4,20 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
  * Shared microphone acquisition/processing config for the 1:1 and room call
  * services, driven by the user's voice settings:
  *   - noiseSuppression: the platform's standard noise reduction (default on).
- *   - voiceIsolation: stronger, ML-based isolation that suppresses everything
- *     that isn't speech (keyboard, music, room noise). A newer constraint —
- *     browsers that don't know it simply ignore it, so it's always safe to ask.
+ *     Strong ML suppression is layered on top by the RNNoise processor (see
+ *     noiseSuppressor.ts) and gated by this same setting; the built-in
+ *     constraint stays as a baseline and as the fallback when RNNoise can't
+ *     load.
  * Echo cancellation and auto gain stay unconditionally on: turning either off
  * audibly breaks calls, so they're not user-facing knobs.
  */
 
-/** `voiceIsolation` isn't in TypeScript's lib.dom yet. */
-type MicConstraints = MediaTrackConstraints & { voiceIsolation?: boolean };
-
-export function buildMicConstraints(): MicConstraints {
-  const { noiseSuppression, voiceIsolation, audioInputDeviceId } = useSettingsStore.getState();
+export function buildMicConstraints(): MediaTrackConstraints {
+  const { noiseSuppression, audioInputDeviceId } = useSettingsStore.getState();
   return {
     echoCancellation: true,
     autoGainControl: true,
     noiseSuppression,
-    voiceIsolation,
     ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {}),
   };
 }
@@ -38,9 +35,9 @@ export function markVoiceTracks(stream: MediaStream): void {
 }
 
 /** Re-applies the current voice settings to a live mic stream, so toggling
- * noise suppression / voice isolation mid-call takes effect immediately.
- * Best-effort: platforms that can't reconfigure a live track keep the settings
- * the track was captured with (they still apply on the next call). */
+ * noise suppression or switching input device mid-call takes effect
+ * immediately. Best-effort: platforms that can't reconfigure a live track keep
+ * the settings the track was captured with (they still apply on the next call). */
 export async function applyMicProcessing(stream: MediaStream | null | undefined): Promise<void> {
   if (!stream) return;
   const constraints = buildMicConstraints();

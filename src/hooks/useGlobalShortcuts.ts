@@ -6,6 +6,7 @@ import { useRoomCallStore } from "../stores/useRoomCallStore";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
 import { toast } from "../stores/useToastStore";
+import { isMacOS, MACOS_QUARANTINE_HINT } from "../services/call/systemAudio";
 
 const PTT_SHORTCUT = "CommandOrControl+Shift+Space";
 
@@ -71,7 +72,8 @@ export function useGlobalShortcuts({ onOpenSettings }: Options) {
         console.warn("failed to register push-to-talk shortcut", err);
         toast.warning(
           "Push-to-talk unavailable",
-          "Your OS or desktop environment blocked the global shortcut. Mic will only toggle from in-app controls.",
+          "Your OS or desktop environment blocked the global shortcut. Mic will only toggle from in-app controls." +
+            (isMacOS() ? MACOS_QUARANTINE_HINT : ""),
         );
       });
 

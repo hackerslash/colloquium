@@ -32,11 +32,9 @@ type SettingsState = {
   accent: string;
   pushToTalk: boolean;
   closeToTray: boolean;
-  /** Standard mic noise reduction (platform DSP). */
+  /** Mic noise reduction: the built-in DSP plus ML (RNNoise) suppression,
+   * gated together by this one toggle. */
   noiseSuppression: boolean;
-  /** Stronger ML-based isolation that mutes everything that isn't speech.
-   * Best-effort — silently ignored on platforms without support. */
-  voiceIsolation: boolean;
   /** Selected audio input device (microphone). null = browser default. */
   audioInputDeviceId: string | null;
   /** Selected video input device (camera). null = browser default. */
@@ -51,7 +49,6 @@ type SettingsState = {
   setPushToTalk: (on: boolean) => Promise<void>;
   setCloseToTray: (on: boolean) => Promise<void>;
   setNoiseSuppression: (on: boolean) => Promise<void>;
-  setVoiceIsolation: (on: boolean) => Promise<void>;
   setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
   setVideoInputDeviceId: (deviceId: string | null) => Promise<void>;
   setAudioOutputDeviceId: (deviceId: string | null) => Promise<void>;
@@ -112,7 +109,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   pushToTalk: false,
   closeToTray: true,
   noiseSuppression: true,
-  voiceIsolation: false,
   audioInputDeviceId: null,
   videoInputDeviceId: null,
   audioOutputDeviceId: null,
@@ -125,7 +121,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const pushToTalk = (all.pushToTalk as boolean) ?? false;
     const closeToTray = (all.closeToTray as boolean) ?? true;
     const noiseSuppression = (all.noiseSuppression as boolean) ?? true;
-    const voiceIsolation = (all.voiceIsolation as boolean) ?? false;
     const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
     const videoInputDeviceId = (all.videoInputDeviceId as string | null) ?? null;
     const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
@@ -137,7 +132,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       pushToTalk,
       closeToTray,
       noiseSuppression,
-      voiceIsolation,
       audioInputDeviceId,
       videoInputDeviceId,
       audioOutputDeviceId,
@@ -212,20 +206,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch (err) {
       console.error("Failed to save noise suppression setting:", err);
       set({ noiseSuppression: previous });
-      applyVoiceSettingsToLiveCalls();
-      toast.error("Setting not saved", "Please try again.");
-    }
-  },
-
-  setVoiceIsolation: async (on) => {
-    const previous = get().voiceIsolation;
-    set({ voiceIsolation: on });
-    applyVoiceSettingsToLiveCalls();
-    try {
-      await settingsRepo.set("voiceIsolation", on);
-    } catch (err) {
-      console.error("Failed to save voice isolation setting:", err);
-      set({ voiceIsolation: previous });
       applyVoiceSettingsToLiveCalls();
       toast.error("Setting not saved", "Please try again.");
     }

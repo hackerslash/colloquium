@@ -12,14 +12,23 @@ import { getOutbox, getPeerRegistry } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
 import { PeerConnectionWrapper } from "./PeerConnectionWrapper";
 import { SpeakingMonitor } from "./speakingMonitor";
-import { captureDisplay, releaseDisplayAudio, type DisplayCapture } from "./displayMedia";
+import {
+  captureDisplay,
+  describeScreenShareError,
+  logScreenShare,
+  releaseDisplayAudio,
+  type DisplayCapture,
+  type ScreenStopSource,
+} from "./displayMedia";
 import { applyMicProcessing, buildMicConstraints, markVoiceTracks } from "./micAudio";
+import { createMicProcessor, type MicProcessor } from "./noiseSuppressor";
 import { resolveScreenTierSpec, type ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
+import { toast } from "../../stores/useToastStore";
 
 function buildVideoConstraints(): MediaTrackConstraints {
   const { videoInputDeviceId } = useSettingsStore.getState();
@@ -57,6 +66,9 @@ type CallContext = {
   ringTimer: ReturnType<typeof setTimeout> | null;
   dropTimer: ReturnType<typeof setTimeout> | null;
   speakingMonitor: SpeakingMonitor | null;
+  /** RNNoise processor wrapping the raw mic; null if unavailable (we then
+   * transmit the raw mic track). */
+  micProcessor: MicProcessor | null;
 };
 
 let ctx: CallContext | null = null;
@@ -94,9 +106,34 @@ async function acquireLocalMedia(withVideo: boolean): Promise<MediaStream> {
   return stream;
 }
 
-/** Re-applies the current voice settings (noise suppression / voice isolation)
- * to the live mic. Called by the settings store when the user toggles them. */
+/** Builds the RNNoise processor around the current raw mic. Best-effort — on
+ * failure ctx.micProcessor stays null and we transmit the raw mic track. */
+async function initMicProcessing(): Promise<void> {
+  if (!ctx?.localStream) return;
+  const rawAudio = ctx.localStream.getAudioTracks()[0];
+  if (!rawAudio) return;
+  const enabled = useSettingsStore.getState().noiseSuppression;
+  const call = ctx;
+  const processor = await createMicProcessor(rawAudio, enabled);
+  // The call may have ended while the wasm/worklet loaded — don't leak the
+  // AudioContext into a dead call.
+  if (ctx !== call) {
+    void processor?.dispose();
+    return;
+  }
+  call.micProcessor = processor;
+}
+
+/** The audio track we transmit: the RNNoise-processed track when available,
+ * otherwise the raw mic. */
+function outgoingAudioTrack(): MediaStreamTrack | null {
+  return ctx?.micProcessor?.track ?? ctx?.localStream?.getAudioTracks()[0] ?? null;
+}
+
+/** Re-applies the current voice settings to the live mic. Called by the
+ * settings store when the user toggles noise suppression. */
 export async function applyMicSettings(): Promise<void> {
+  ctx?.micProcessor?.setEnabled(useSettingsStore.getState().noiseSuppression);
   await applyMicProcessing(ctx?.localStream);
 }
 
@@ -126,19 +163,42 @@ export async function switchMicDevice(): Promise<void> {
     return;
   }
 
+  // Preserve mute state across the swap so switching device doesn't unmute.
+  if (call.localStream?.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
+
+  // Rebuild RNNoise around the new mic and transmit the processed track (raw
+  // fallback), so noise suppression survives a device change instead of the
+  // sender reverting to the unprocessed mic.
+  const oldProcessor = call.micProcessor;
+  const newProcessor = await createMicProcessor(
+    newTrack,
+    useSettingsStore.getState().noiseSuppression,
+  );
+  if (ctx !== call) {
+    void newProcessor?.dispose();
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  call.micProcessor = newProcessor;
+  const outgoing = newProcessor?.track ?? newTrack;
+
   // Replace the audio sender's track on the peer connection.
   const sender = call.wrapper?.pc.getSenders().find((s) => s.track?.kind === "audio");
   if (sender) {
     try {
-      await sender.replaceTrack(newTrack);
+      await sender.replaceTrack(outgoing);
     } catch (err) {
       console.warn("switchMicDevice: replaceTrack failed", err);
     }
   }
   if (ctx !== call) {
+    void newProcessor?.dispose();
     newStream.getTracks().forEach((t) => t.stop());
     return;
   }
+
+  // The old processor's processed track is no longer sent — tear it down.
+  void oldProcessor?.dispose();
 
   // Stop old audio tracks and swap them out of localStream.
   const oldAudioTracks = call.localStream?.getAudioTracks() ?? [];
@@ -246,9 +306,10 @@ function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {
 
 function attachLocalTracks() {
   if (!ctx?.wrapper || !ctx.localStream) return;
-  for (const track of ctx.localStream.getAudioTracks()) {
-    ctx.wrapper.addTrack(track, ctx.localStream);
-  }
+  // Transmit the RNNoise-processed track (falls back to the raw mic). The raw
+  // stream is still the msid group so the receiver pairs audio with the camera.
+  const audioTrack = outgoingAudioTrack();
+  if (audioTrack) ctx.wrapper.addTrack(audioTrack, ctx.localStream);
   for (const track of ctx.localStream.getVideoTracks()) {
     ctx.wrapper.addVideoTrack(track, ctx.localStream, "camera");
   }
@@ -295,7 +356,9 @@ export async function startCall(self: Identity, roomId: string, remoteId: string
     ringTimer: null,
     dropTimer: null,
     speakingMonitor: null,
+    micProcessor: null,
   };
+  await initMicProcessing();
 
   const registry = getPeerRegistry();
   const store = useCallStore.getState();
@@ -383,7 +446,10 @@ export async function acceptCall(self: Identity) {
     ringTimer: null,
     dropTimer: null,
     speakingMonitor: null,
+    micProcessor: null,
   };
+  await initMicProcessing();
+  if (ctx === null) return; // call ended while RNNoise loaded
   ctx.wrapper = buildWrapper(self, active.remoteId);
   attachLocalTracks();
 
@@ -436,6 +502,10 @@ function endCallLocal() {
     ctx.speakingMonitor.stop();
     ctx.speakingMonitor = null;
   }
+  if (ctx?.micProcessor) {
+    void ctx.micProcessor.dispose();
+    ctx.micProcessor = null;
+  }
   ctx?.localStream?.getTracks().forEach((t) => t.stop());
   ctx?.screenStream?.getTracks().forEach((t) => t.stop());
   releaseDisplayAudio();
@@ -451,14 +521,8 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   try {
     capture = await captureDisplay(config);
   } catch (err) {
-    const name = (err as Error)?.name;
-    useCallStore
-      .getState()
-      ._setScreenError(
-        name === "NotAllowedError"
-          ? "Screen share was cancelled or blocked. On macOS, grant Screen Recording to Haven in System Settings ▸ Privacy & Security."
-          : `Screen share isn't available: ${name ?? "unknown error"}.`,
-      );
+    logScreenShare("capture failed", { name: (err as Error)?.name });
+    useCallStore.getState()._setScreenError(describeScreenShareError(err));
     return;
   }
   const { stream } = capture;
@@ -504,16 +568,24 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
     call.wrapper.addTrack(audioTrack, stream);
   }
 
-  track.onended = () => void stopScreenShare();
+  // Fires for the OS "Stop sharing" bar AND for captures the system drops on
+  // its own (common on Windows/WebView2). `stopScreenShare("ended")` tells the
+  // teardown this wasn't the in-app Stop button so it can inform the user.
+  track.onended = () => {
+    logScreenShare("video track ended (teardown)", { readyState: track.readyState });
+    void stopScreenShare("ended");
+  };
   const store = useCallStore.getState();
   store._setScreenError(null);
   store._setScreenOn(true);
   store._setLocalStream(stream); // preview the shared screen locally
 }
 
-export async function stopScreenShare() {
+export async function stopScreenShare(source: ScreenStopSource = "user") {
   const call = ctx;
   if (!call) return;
+  logScreenShare("stopping screen share", { source });
+  const wasSharing = useCallStore.getState().screenOn;
   const tracks = call.screenStream?.getTracks() ?? [];
   for (const track of tracks) {
     await call.wrapper?.detachTrack(track);
@@ -527,6 +599,13 @@ export async function stopScreenShare() {
   store._setScreenOn(false);
   store._setScreenLinkBps(null);
   store._setLocalStream(call.localStream); // back to the camera/mic stream
+
+  // A stop we didn't start from the in-app control means the OS/WebView ended
+  // the capture (the "Stop sharing" bar, or a dropped surface on Windows).
+  // Surface it so the share vanishing isn't a silent mystery.
+  if (source === "ended" && wasSharing) {
+    toast.info("Screen sharing ended", "Your system stopped the screen capture.");
+  }
 }
 
 export function toggleMic() {

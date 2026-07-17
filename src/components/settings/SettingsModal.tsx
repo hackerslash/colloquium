@@ -192,8 +192,6 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setCloseToTray = useSettingsStore((s) => s.setCloseToTray);
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
-  const voiceIsolation = useSettingsStore((s) => s.voiceIsolation);
-  const setVoiceIsolation = useSettingsStore((s) => s.setVoiceIsolation);
 
   return (
     <Modal open={open} onClose={onClose} title="Settings" size="md">
@@ -279,27 +277,14 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <div>
               <p className="text-sm text-text-primary">Noise suppression</p>
               <p className="text-xs text-text-secondary">
-                Reduce background noise picked up by your microphone
+                Uses AI (RNNoise) to remove background noise like fans, keyboards, and room
+                sounds from your microphone
               </p>
             </div>
             <Switch
               checked={noiseSuppression}
               onChange={setNoiseSuppression}
               aria-label="Noise suppression"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Voice isolation</p>
-              <p className="text-xs text-text-secondary">
-                Stronger filtering that mutes everything except your voice, like keyboard and
-                room sounds (where supported)
-              </p>
-            </div>
-            <Switch
-              checked={voiceIsolation}
-              onChange={setVoiceIsolation}
-              aria-label="Voice isolation"
             />
           </div>
         </div>

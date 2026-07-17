@@ -1,12 +1,17 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 /**
- * macOS-only bridge for native system-audio capture. WKWebView can't provide
- * display audio through getDisplayMedia, so the Rust side taps it with
- * ScreenCaptureKit (excluding Haven's own output, so the call doesn't echo)
- * and streams PCM here; we replay it into a MediaStream track that gets added
- * to the screen share. Everything degrades to null on failure — screen share
- * then just proceeds video-only.
+ * Bridge for native system-audio capture on macOS and Windows.
+ *
+ * getDisplayMedia's own audio path is unusable for a call: on macOS WKWebView
+ * returns no audio at all, and on Windows it taps a whole-system loopback that
+ * recaptures Haven's own playback of the other participants — sending their
+ * voices back to them (echo). So the Rust side taps system audio natively,
+ * EXCLUDING Haven's own process (ScreenCaptureKit's `excludesCurrentProcessAudio`
+ * on macOS, WASAPI process-loopback exclude on Windows), and streams PCM here;
+ * we replay it into a MediaStream track that gets added to the screen share.
+ * Everything degrades to null on failure — screen share then proceeds
+ * video-only.
  */
 
 let audioCtx: AudioContext | null = null;
@@ -18,6 +23,25 @@ export function isMacOS(): boolean {
   const ua = navigator.userAgent;
   return ua.includes("Macintosh") || ua.includes("Mac OS");
 }
+
+export function isWindows(): boolean {
+  return navigator.userAgent.includes("Windows");
+}
+
+/** Platforms where display audio is captured natively (Rust `sysaudio_*`)
+ * instead of via getDisplayMedia, so the app's own output is excluded and a
+ * call doesn't echo its own participants back. */
+export function usesNativeSystemAudio(): boolean {
+  return isMacOS() || isWindows();
+}
+
+/** macOS re-prompts for Accessibility/Screen Recording on every launch when the
+ * .app is still quarantined (App Translocation runs it from a random path each
+ * time, so a TCC grant never matches). The one-time fix is to un-quarantine it.
+ * Appended wherever a macOS permission wall is hit so users aren't stuck
+ * re-granting. */
+export const MACOS_QUARANTINE_HINT =
+  " If macOS keeps re-asking after you grant it, the app is quarantined: move Haven to /Applications and run `xattr -cr /Applications/Haven.app` once.";
 
 function base64ToFloat32(b64: string): Float32Array {
   const bin = atob(b64);
@@ -33,7 +57,7 @@ function base64ToFloat32(b64: string): Float32Array {
 /** Starts native capture and returns a live system-audio track, or null if
  * unsupported / unavailable. */
 export async function startSystemAudioTrack(): Promise<MediaStreamTrack | null> {
-  if (!isMacOS()) return null;
+  if (!usesNativeSystemAudio()) return null;
   try {
     const ctx = new AudioContext({ sampleRate: 48_000 });
     await ctx.audioWorklet.addModule("/sysaudio-worklet.js");
