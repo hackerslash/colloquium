@@ -18,13 +18,18 @@ import { resolveScreenTierSpec, type ScreenShareQualityOption } from "./screenSh
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 
-const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  width: { ideal: 1920 },
-  height: { ideal: 1080 },
-  frameRate: { ideal: 30 },
-};
+function buildVideoConstraints(): MediaTrackConstraints {
+  const { videoInputDeviceId } = useSettingsStore.getState();
+  return {
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+    frameRate: { ideal: 30 },
+    ...(videoInputDeviceId ? { deviceId: { exact: videoInputDeviceId } } : {}),
+  };
+}
 
 /** Ring timeout on both sides. */
 const RING_TIMEOUT_MS = 30_000;
@@ -79,7 +84,7 @@ async function acquireLocalMedia(withVideo: boolean): Promise<MediaStream> {
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: buildMicConstraints(),
-      video: withVideo ? VIDEO_CONSTRAINTS : false,
+      video: withVideo ? buildVideoConstraints() : false,
     });
   } catch {
     // Fall back to audio-only if the camera is unavailable/denied.
@@ -93,6 +98,106 @@ async function acquireLocalMedia(withVideo: boolean): Promise<MediaStream> {
  * to the live mic. Called by the settings store when the user toggles them. */
 export async function applyMicSettings(): Promise<void> {
   await applyMicProcessing(ctx?.localStream);
+}
+
+/** Switches the live microphone to the device currently selected in settings.
+ * Replaces the audio track on the peer connection sender and restarts the
+ * speaking monitor so it analyses the new input stream. No-op when not in a
+ * call or when the mic cannot be re-acquired. */
+export async function switchMicDevice(): Promise<void> {
+  const call = ctx;
+  if (!call) return;
+  let newStream: MediaStream;
+  try {
+    newStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
+  } catch (err) {
+    console.warn("switchMicDevice: getUserMedia failed", err);
+    return;
+  }
+  if (ctx !== call) {
+    // Call ended while the permission prompt was open.
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  markVoiceTracks(newStream);
+  const newTrack = newStream.getAudioTracks()[0];
+  if (!newTrack) {
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  // Replace the audio sender's track on the peer connection.
+  const sender = call.wrapper?.pc.getSenders().find((s) => s.track?.kind === "audio");
+  if (sender) {
+    try {
+      await sender.replaceTrack(newTrack);
+    } catch (err) {
+      console.warn("switchMicDevice: replaceTrack failed", err);
+    }
+  }
+  if (ctx !== call) {
+    newStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  // Stop old audio tracks and swap them out of localStream.
+  const oldAudioTracks = call.localStream?.getAudioTracks() ?? [];
+  for (const old of oldAudioTracks) {
+    call.localStream?.removeTrack(old);
+    old.stop();
+  }
+  if (!call.localStream) call.localStream = new MediaStream();
+  call.localStream.addTrack(newTrack);
+
+  // Restart the speaking monitor on the new stream.
+  if (call.speakingMonitor) {
+    call.speakingMonitor.stop();
+    call.speakingMonitor = null;
+  }
+  startSpeakingMonitor();
+}
+
+/** Re-opens the camera with the device currently selected in settings and
+ * replaces the existing video track on all peer connection senders. No-op
+ * when the camera is not currently on or there is no active call. */
+export async function switchCameraDevice(): Promise<void> {
+  const call = ctx;
+  if (!call) return;
+  const store = useCallStore.getState();
+  if (!store.camOn) return; // camera is off — nothing to switch
+
+  let cameraStream: MediaStream;
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: buildVideoConstraints() });
+  } catch (err) {
+    console.warn("switchCameraDevice: getUserMedia failed", err);
+    return;
+  }
+  if (ctx !== call) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+  const newTrack = cameraStream.getVideoTracks()[0];
+  if (!newTrack) {
+    cameraStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
+  // Stop old camera track.
+  const oldTrack = call.localStream?.getVideoTracks()[0];
+  if (oldTrack) {
+    call.localStream?.removeTrack(oldTrack);
+    oldTrack.stop();
+  }
+  if (!call.localStream) call.localStream = new MediaStream();
+  call.localStream.addTrack(newTrack);
+
+  if (call.wrapper) {
+    await call.wrapper.replaceVideoTrack(newTrack, "camera");
+  }
+  if (ctx !== call) {
+    newTrack.stop();
+  }
 }
 
 function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {
@@ -460,7 +565,7 @@ export async function toggleCam() {
     return;
   }
 
-  const cameraStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+  const cameraStream = await navigator.mediaDevices.getUserMedia({ video: buildVideoConstraints() });
   if (ctx !== call) {
     // Call ended while the camera prompt was open — release it instead of
     // leaving the camera light on for a call that's no longer live.

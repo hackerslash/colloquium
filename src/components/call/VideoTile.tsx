@@ -3,8 +3,17 @@ import { createPortal } from "react-dom";
 import { motion } from "motion/react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
+
+/** setSinkId exists in Chromium-based browsers but is not yet in TypeScript's
+ * lib.dom — extend the interface so we can call it without `any` casts. */
+declare global {
+  interface HTMLMediaElement {
+    setSinkId?(sinkId: string): Promise<void>;
+  }
+}
 
 type VideoTileProps = {
   stream: MediaStream | null;
@@ -31,11 +40,24 @@ const QUALITY_DOT: Record<ConnectionQuality, string> = {
 
 function VideoInner({ stream, muted, mirror, label, hasVideo, participantId }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioOutputDeviceId = useSettingsStore((s) => s.audioOutputDeviceId);
 
   useEffect(() => {
     const el = videoRef.current;
     if (el && el.srcObject !== stream) el.srcObject = stream;
   }, [stream]);
+
+  // Apply the selected audio output device (speaker/headphone routing).
+  // setSinkId is only available in Chromium-based browsers; guard before calling.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el || !el.setSinkId) return;
+    const id = audioOutputDeviceId ?? "";
+    el.setSinkId(id).catch((err) => {
+      // Device may have been unplugged or the id is stale — fail silently.
+      console.warn("VideoTile: setSinkId failed", err);
+    });
+  }, [audioOutputDeviceId]);
 
   return (
     <>

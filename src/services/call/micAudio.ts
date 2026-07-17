@@ -15,12 +15,13 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 type MicConstraints = MediaTrackConstraints & { voiceIsolation?: boolean };
 
 export function buildMicConstraints(): MicConstraints {
-  const { noiseSuppression, voiceIsolation } = useSettingsStore.getState();
+  const { noiseSuppression, voiceIsolation, audioInputDeviceId } = useSettingsStore.getState();
   return {
     echoCancellation: true,
     autoGainControl: true,
     noiseSuppression,
     voiceIsolation,
+    ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {}),
   };
 }
 
