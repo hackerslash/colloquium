@@ -1,0 +1,77 @@
+name: CI
+
+# Builds and tests Haven on native macOS, Windows, and Linux runners for
+# every push/PR, so platform-specific regressions (e.g. a backend only
+# compiled in for some OSes) are caught before a release build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            dbus-x11 \
+            gnome-keyring
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Frontend tests
+        run: pnpm test
+
+      - name: Rust tests (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        working-directory: src-tauri
+        run: |
+          dbus-run-session -- bash -c '
+            eval "$(printf "\n" | gnome-keyring-daemon --unlock --components=secrets)"
+            cargo test
+          '
+
+      - name: Rust tests
+        if: matrix.platform != 'ubuntu-22.04'
+        working-directory: src-tauri
+        run: cargo test

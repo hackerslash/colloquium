@@ -5,6 +5,7 @@ import { useCallStore } from "../stores/useCallStore";
 import { useRoomCallStore } from "../stores/useRoomCallStore";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
+import { toast } from "../stores/useToastStore";
 
 const PTT_SHORTCUT = "CommandOrControl+Shift+Space";
 
@@ -66,7 +67,13 @@ export function useGlobalShortcuts({ onOpenSettings }: Options) {
       .then(() => {
         registered = true;
       })
-      .catch((err) => console.warn("failed to register push-to-talk shortcut", err));
+      .catch((err) => {
+        console.warn("failed to register push-to-talk shortcut", err);
+        toast.warning(
+          "Push-to-talk unavailable",
+          "Your OS or desktop environment blocked the global shortcut. Mic will only toggle from in-app controls.",
+        );
+      });
 
     return () => {
       if (registered) void unregister(PTT_SHORTCUT).catch(() => {});

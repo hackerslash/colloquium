@@ -109,7 +109,14 @@ export const useCallStore = create<CallState>((set) => ({
   declineCall: () => callService.declineCall(requireSelf()),
   hangUp: () => callService.hangUp(),
   toggleMic: () => callService.toggleMic(),
-  toggleCam: () => callService.toggleCam(),
+  toggleCam: async () => {
+    try {
+      await callService.toggleCam();
+    } catch (err) {
+      console.error("Failed to toggle camera:", err);
+      toast.error("Couldn't access the camera", MEDIA_ERROR_HINT);
+    }
+  },
   toggleScreenShare: async () => {
     if (useCallStore.getState().screenOn) await callService.stopScreenShare();
     else await callService.startScreenShare(useCallStore.getState().screenConfig);

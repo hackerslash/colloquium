@@ -422,12 +422,7 @@ export async function toggleCam() {
     return;
   }
 
-  let cameraStream: MediaStream;
-  try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
-  } catch {
-    return; // camera unavailable/denied — stay audio-only
-  }
+  const cameraStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
   const track = cameraStream.getVideoTracks()[0];
   if (!ctx.localStream) ctx.localStream = new MediaStream();
   ctx.localStream.addTrack(track);

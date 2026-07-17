@@ -1,10 +1,13 @@
 # Haven
 
-A premium, Discord-inspired peer-to-peer desktop app (Windows + macOS) for
-persistent text chat and voice/video rooms. Built with Tauri v2 + React +
+A premium, Discord-inspired peer-to-peer desktop app (Windows + macOS + Linux)
+for persistent text chat and voice/video rooms. Built with Tauri v2 + React +
 TypeScript + Vite. No custom backend — WebRTC signaling goes through the free
 PeerJS cloud broker, with a hosted TURN relay for NAT traversal, and all data
 lives locally in SQLite.
+
+On Linux, the device identity key is stored via the Secret Service D-Bus API,
+so a keyring provider (e.g. GNOME Keyring or KWallet) must be running.
 
 ## Prerequisites
 

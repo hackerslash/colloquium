@@ -15,6 +15,11 @@ use tauri_plugin_window_state::StateFlags;
 /// the persisted value and syncs it via `set_close_to_tray`.
 struct CloseToTray(Mutex<bool>);
 
+/// Whether the tray icon actually came up (see `setup` below) — some Linux
+/// desktops have no tray host at all, in which case hiding to "tray" would
+/// strand the user with no way to reopen the window.
+struct TrayAvailable(bool);
+
 #[tauri::command]
 fn set_close_to_tray(state: tauri::State<CloseToTray>, enabled: bool) {
     *state.0.lock().unwrap() = enabled;
@@ -54,7 +59,17 @@ pub fn run() {
         )
         .manage(CloseToTray(Mutex::new(true)))
         .setup(|app| {
-            tray::build(app)?;
+            // Best-effort: some Linux desktop environments have no tray host
+            // (no StatusNotifierWatcher), which would otherwise take the
+            // whole app down at launch. Run without a tray icon instead.
+            let tray_ok = match tray::build(app) {
+                Ok(()) => true,
+                Err(err) => {
+                    eprintln!("failed to create tray icon: {err}");
+                    false
+                }
+            };
+            app.manage(TrayAvailable(tray_ok));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -65,7 +80,8 @@ pub fn run() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
                     let close_to_tray = *window.state::<CloseToTray>().0.lock().unwrap();
-                    if close_to_tray {
+                    let tray_available = window.state::<TrayAvailable>().0;
+                    if close_to_tray && tray_available {
                         api.prevent_close();
                         let _ = window.hide();
                     }

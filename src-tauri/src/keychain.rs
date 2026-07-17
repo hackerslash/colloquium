@@ -9,8 +9,9 @@ fn entry() -> Result<Entry, String> {
 }
 
 /// Persists the raw private key seed bytes in the OS keychain (macOS Keychain /
-/// Windows Credential Manager). Never call this with anything that should be
-/// visible to the webview — this module is the only place the raw key touches disk.
+/// Windows Credential Manager / Linux Secret Service). Never call this with
+/// anything that should be visible to the webview — this module is the only
+/// place the raw key touches disk.
 pub fn save_private_key_bytes(bytes: &[u8]) -> Result<(), String> {
     entry()?
         .set_password(&STANDARD.encode(bytes))
