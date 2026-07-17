@@ -5,6 +5,7 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
 import { CallControlBar } from "./CallControlBar";
 import { ScreenShareButton } from "./ScreenShareButton";
+import { ScreenQualityBadge } from "./ScreenQualityBadge";
 import { IconButton } from "../ui/IconButton";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
 
@@ -79,7 +80,12 @@ export function RoomCallView() {
         : "grid-cols-2 md:grid-cols-3";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-bg-primary">
+    <div className="relative flex min-h-0 flex-1 flex-col bg-bg-primary">
+      {screenOn && (
+        <div className="absolute right-4 top-4 z-30">
+          <ScreenQualityBadge currentConfig={screenConfig} onConfigChange={setScreenConfig} />
+        </div>
+      )}
       {hasScreens ? (
         <>
           {/* Screen stage: bounded by both axes, natural aspect via object-contain */}
@@ -181,8 +187,6 @@ export function RoomCallView() {
           <ScreenShareButton
             screenOn={screenOn}
             disabled={slotsFull}
-            currentConfig={screenConfig}
-            onConfigChange={setScreenConfig}
             onToggle={() => void toggleScreenShare()}
             label={slotsFull ? "Both screen-share slots are taken" : screenOn ? "Stop presenting" : "Present screen"}
           />

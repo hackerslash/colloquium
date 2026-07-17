@@ -3,6 +3,7 @@ import { Check, Copy, Hash, Home, Inbox, Plus, Settings, Volume2, X } from "luci
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
 import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
@@ -34,6 +35,7 @@ export function Sidebar({ selection, onSelect, onCreateGroup, onOpenSettings }: 
   const roomsById = useRoomStore((s) => s.roomsById);
   const callParticipantsByRoom = useRoomStore((s) => s.callParticipantsByRoom);
   const unreadByRoom = useRoomStore((s) => s.unreadByRoom);
+  const pendingRequests = useFriendRequestStore((s) => s.pending.length);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -87,7 +89,8 @@ export function Sidebar({ selection, onSelect, onCreateGroup, onOpenSettings }: 
           )}
         >
           <Inbox size={18} aria-hidden="true" className={selection.kind === "inbox" ? "text-accent" : "text-text-muted"} />
-          Inbox
+          <span className="flex-1">Inbox</span>
+          <UnreadBadge count={pendingRequests} />
         </button>
       </div>
 

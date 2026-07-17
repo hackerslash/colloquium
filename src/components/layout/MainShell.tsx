@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
 import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar, type Selection } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
@@ -25,6 +26,7 @@ export function MainShell() {
   const loadRoster = useRosterStore((s) => s.loadRoster);
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const loadUnread = useRoomStore((s) => s.loadUnread);
+  const refreshFriendRequests = useFriendRequestStore((s) => s.refresh);
   const markRead = useRoomStore((s) => s.markRead);
   const activeRoomId = useRoomStore((s) => s.activeRoomId);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
@@ -36,7 +38,8 @@ export function MainShell() {
   useEffect(() => {
     void loadRoster();
     void loadRooms().then(() => loadUnread());
-  }, [loadRoster, loadRooms, loadUnread]);
+    void refreshFriendRequests();
+  }, [loadRoster, loadRooms, loadUnread, refreshFriendRequests]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;

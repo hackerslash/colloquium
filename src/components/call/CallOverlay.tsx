@@ -6,6 +6,7 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
 import { CallControlBar } from "./CallControlBar";
 import { ScreenShareButton } from "./ScreenShareButton";
+import { ScreenQualityBadge } from "./ScreenQualityBadge";
 import { IconButton } from "../ui/IconButton";
 import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
@@ -36,6 +37,8 @@ export function CallOverlay() {
   const toggleScreenShare = useCallStore((s) => s.toggleScreenShare);
   const screenConfig = useCallStore((s) => s.screenConfig);
   const setScreenConfig = useCallStore((s) => s.setScreenConfig);
+  const self = useIdentityStore((s) => s.self);
+  const speakingIds = useCallStore((s) => s.speakingIds);
 
   const remoteName = useRemoteName(activeCall?.remoteId);
 
@@ -122,9 +125,6 @@ export function CallOverlay() {
     unknown: "bg-text-muted",
   };
 
-  const self = useIdentityStore((s) => s.self);
-  const speakingIds = useCallStore((s) => s.speakingIds);
-
   const localHasVideo = (camOn || screenOn) && (localStream?.getVideoTracks().length ?? 0) > 0;
 
   return (
@@ -154,6 +154,15 @@ export function CallOverlay() {
       )}
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 pb-28">
+        {screenOn && (
+          <div className="absolute right-4 top-4 z-30">
+            <ScreenQualityBadge
+              currentConfig={screenConfig}
+              onConfigChange={setScreenConfig}
+              quality={quality}
+            />
+          </div>
+        )}
         <div key={`remote-${mediaVersion}`} className="h-full w-full max-w-5xl">
           <VideoTile
             stream={remoteStream}
@@ -195,12 +204,7 @@ export function CallOverlay() {
             onClick={toggleCam}
           />
           {activeCall.status === "active" && (
-            <ScreenShareButton
-              screenOn={screenOn}
-              currentConfig={screenConfig}
-              onConfigChange={setScreenConfig}
-              onToggle={() => void toggleScreenShare()}
-            />
+            <ScreenShareButton screenOn={screenOn} onToggle={() => void toggleScreenShare()} />
           )}
           <IconButton
             icon={PhoneOff}

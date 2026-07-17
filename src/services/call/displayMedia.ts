@@ -35,18 +35,14 @@ const SYSTEM_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 };
 
 export async function captureDisplay(config?: ScreenShareQualityOption): Promise<DisplayCapture> {
-  const videoConstraints: MediaTrackConstraints = {};
-
-  if (config && config.id !== "auto") {
-    if (config.frameRate) videoConstraints.frameRate = { ideal: config.frameRate };
-    if (config.width) videoConstraints.width = { ideal: config.width };
-    if (config.height) videoConstraints.height = { ideal: config.height };
-  } else {
-    videoConstraints.frameRate = { ideal: 30 };
-  }
+  // Always capture at the display's native resolution. Quality is then applied
+  // in the encoder (downscale via scaleResolutionDownBy + bitrate/framerate
+  // caps), so the user can switch resolution live — down AND back up to native
+  // — without re-prompting the OS picker. Only frame rate is hinted here.
+  const frameRate = config && config.id !== "auto" && config.frameRate ? config.frameRate : 30;
 
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: Object.keys(videoConstraints).length > 0 ? videoConstraints : true,
+    video: { frameRate: { ideal: frameRate } },
     audio: SYSTEM_AUDIO_CONSTRAINTS,
   });
 

@@ -11,10 +11,21 @@ export type FileRecord = {
 
 export async function insertFile(file: FileRecord): Promise<void> {
   const db = await getDb();
+  // OR IGNORE: a late duplicate chunk can re-complete an already-stored file
+  // (its map entry was deleted on first completion), and re-inserting the same
+  // id would otherwise throw on the UNIQUE constraint.
   await db.execute(
-    "INSERT INTO files (id, name, size, mime_type, data) VALUES (?1, ?2, ?3, ?4, ?5)",
+    "INSERT OR IGNORE INTO files (id, name, size, mime_type, data) VALUES (?1, ?2, ?3, ?4, ?5)",
     [file.id, file.name, file.size, file.mimeType, bytesToBase64(file.data)]
   );
+}
+
+/** Cheap existence check that doesn't load the blob — used to decide whether to
+ * offer a download for an attachment without pulling the whole file into memory. */
+export async function fileExists(id: string): Promise<boolean> {
+  const db = await getDb();
+  const rows = await db.select<{ id: string }[]>("SELECT id FROM files WHERE id = ?1 LIMIT 1", [id]);
+  return rows.length > 0;
 }
 
 export async function getFile(id: string): Promise<FileRecord | null> {

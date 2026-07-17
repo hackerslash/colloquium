@@ -13,7 +13,7 @@ import { derivePeerId } from "../peer/derivePeerId";
 import { PeerConnectionWrapper } from "./PeerConnectionWrapper";
 import { SpeakingMonitor } from "./speakingMonitor";
 import { captureDisplay, releaseDisplayAudio, type DisplayCapture } from "./displayMedia";
-import type { ScreenShareQualityOption } from "./screenShareConfig";
+import { resolveScreenTier, type ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
@@ -295,14 +295,12 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   const { stream } = capture;
   const track = stream.getVideoTracks()[0];
   ctx.screenStream = stream;
+  await applyScreenTrackConstraints(track, config);
 
   // Screen rides its own sender (and stream/msid), so camera and screen can
-  // run at the same time and the remote can tell them apart.
-  const customTier = config.id !== "auto" && config.maxBitrate ? {
-    maxBitrate: config.maxBitrate,
-    scaleResolutionDownBy: 1,
-    maxFramerate: config.frameRate ?? 30,
-  } : undefined;
+  // run at the same time and the remote can tell them apart. The tier
+  // downscales from the native capture width to the selected resolution.
+  const customTier = resolveScreenTier(config, track?.getSettings().width);
 
   if (ctx.wrapper.hasVideoSender("screen")) {
     await ctx.wrapper.replaceVideoTrack(track, "screen");
@@ -506,12 +504,29 @@ export async function handleRtcCandidate(_self: Identity, msg: RtcCandidateMessa
   await ctx.wrapper.handleCandidate(msg.candidate);
 }
 
-export function updateScreenShareQuality(config: ScreenShareQualityOption) {
+/** Applies a live quality change to the screen sender: hints the source frame
+ * rate (best-effort — display tracks may ignore it) and re-derives the encoder
+ * tier from the current capture width so resolution actually changes. */
+export async function updateScreenShareQuality(config: ScreenShareQualityOption) {
   if (!ctx?.wrapper) return;
-  const customTier = config.id !== "auto" && config.maxBitrate ? {
-    maxBitrate: config.maxBitrate,
-    scaleResolutionDownBy: 1,
-    maxFramerate: config.frameRate ?? 30,
-  } : undefined;
+  const track = ctx.screenStream?.getVideoTracks()[0];
+  if (track) await applyScreenTrackConstraints(track, config);
+  const customTier = resolveScreenTier(config, track?.getSettings().width);
   ctx.wrapper.applyVideoTier("screen", customTier);
+}
+
+/** Best-effort frame-rate hint on a live getDisplayMedia track. Resolution is
+ * handled in the encoder (scaleResolutionDownBy), not here, so switching back
+ * up to native stays possible — hence width/height are deliberately omitted. */
+async function applyScreenTrackConstraints(
+  track: MediaStreamTrack | undefined,
+  config: ScreenShareQualityOption,
+) {
+  if (!track || config.id === "auto" || !config.frameRate) return;
+  try {
+    await track.applyConstraints({ frameRate: { ideal: config.frameRate } });
+  } catch {
+    // Display-surface tracks may reject applyConstraints; the encoder-side
+    // maxFramerate cap still takes effect.
+  }
 }

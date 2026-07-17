@@ -8,6 +8,7 @@ import { derivePeerId } from "../peer/derivePeerId";
 import { computeIdentityId } from "../../lib/crypto";
 import { utf8ToBase64 } from "../../lib/base64";
 import { notifyIfUnfocused } from "../notify";
+import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
 
 function canonicalFriendRequest(m: Omit<FriendRequestMessage, "sig">): string {
   return JSON.stringify([m.type, m.fromId, m.fromPubKey, m.fromDisplayName, m.ts]);
@@ -127,6 +128,10 @@ export async function handleFriendRequest(self: Identity, msg: FriendRequestMess
     createdAt: msg.ts,
   });
 
+  // Reflect the new request in the Inbox / sidebar badge immediately, even if
+  // the Inbox is already open when it arrives.
+  await useFriendRequestStore.getState().refresh();
+
   notifyIfUnfocused(msg.fromDisplayName, "sent you a friend request");
 }
 
@@ -179,16 +184,21 @@ export async function declineFriendRequest(self: Identity, req: friendRequestsRe
   await friendRequestsRepo.setStatus(req.id, "declined");
 }
 
-export async function handleFriendRequestResponse(self: Identity, msg: FriendRequestResponseMessage): Promise<void> {
-  void self; // to avoid unused warning if not used extensively
+/** Handles a response to one of our outgoing requests. Returns the newly-added
+ * contact id when the peer accepted (so the caller can reflect it in the local
+ * UI without waiting for the peer's roster_sync echo), or null otherwise. */
+export async function handleFriendRequestResponse(
+  self: Identity,
+  msg: FriendRequestResponseMessage,
+): Promise<string | null> {
   const sigValid = await verifyCanonical(msg.fromPubKey, canonicalFriendRequestResponse(msg), msg.sig);
-  if (!sigValid) return;
+  if (!sigValid) return null;
 
   const derivedId = await computeIdentityId(msg.fromPubKey);
-  if (derivedId !== msg.fromId) return;
+  if (derivedId !== msg.fromId) return null;
 
   const existing = await friendRequestsRepo.findByFromId(msg.fromId);
-  if (!existing || existing.direction !== "outgoing") return;
+  if (!existing || existing.direction !== "outgoing") return null;
 
   if (msg.accepted) {
     const now = Date.now();
@@ -206,7 +216,9 @@ export async function handleFriendRequestResponse(self: Identity, msg: FriendReq
     await mergeRosterEntries(self, msg.roster);
     await friendRequestsRepo.setStatus(existing.id, "accepted");
     await broadcastRosterSync(self);
+    return msg.fromId;
   } else {
     await friendRequestsRepo.setStatus(existing.id, "declined");
+    return null;
   }
 }

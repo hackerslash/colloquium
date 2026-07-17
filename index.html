@@ -17,25 +17,23 @@
               : "light";
         document.documentElement.setAttribute("data-theme", theme);
 
-        // Accent color — hardcoded presets so we can apply before any module loads.
-        var accent = localStorage.getItem("haven-accent");
-        if (accent && accent !== "indigo") {
-          var presets = {
-            blue:    { d: ["#3b82f6","#2563eb","#1d4ed8"], l: ["#2563eb","#1d4ed8","#1e40af"] },
-            emerald: { d: ["#10b981","#059669","#047857"], l: ["#059669","#047857","#065f46"] },
-            violet:  { d: ["#8b5cf6","#7c3aed","#6d28d9"], l: ["#7c3aed","#6d28d9","#5b21b6"] },
-            rose:    { d: ["#f43f5e","#e11d48","#be123c"], l: ["#e11d48","#be123c","#9f1239"] },
-            amber:   { d: ["#f59e0b","#d97706","#b45309"], l: ["#d97706","#b45309","#92400e"] },
-          };
-          var p = presets[accent];
-          if (p) {
+        // Accent color — replay the resolved values cached by applyAccent()
+        // (single source of truth is ACCENT_PRESETS in useSettingsStore). This
+        // runs before any module loads, so it just reads the cache; the DB
+        // reconciles the real value shortly after.
+        try {
+          var raw = localStorage.getItem("haven-accent-vars");
+          if (raw) {
+            var p = JSON.parse(raw);
             var vals = theme === "light" ? p.l : p.d;
-            var s = document.documentElement.style;
-            s.setProperty("--color-accent", vals[0]);
-            s.setProperty("--color-accent-hover", vals[1]);
-            s.setProperty("--color-accent-active", vals[2]);
+            if (vals) {
+              var s = document.documentElement.style;
+              s.setProperty("--color-accent", vals[0]);
+              s.setProperty("--color-accent-hover", vals[1]);
+              s.setProperty("--color-accent-active", vals[2]);
+            }
           }
-        }
+        } catch (e) {}
       })();
     </script>
   </head>

@@ -91,7 +91,7 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   setScreenConfig: (config) => {
     set({ screenConfig: config });
     if (useRoomCallStore.getState().screenOn) {
-      roomCallService.updateScreenShareQuality(config);
+      void roomCallService.updateScreenShareQuality(config);
     }
   },
 

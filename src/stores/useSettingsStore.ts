@@ -51,7 +51,13 @@ export function applyTheme(theme: ThemePref) {
 
 /** Sets the three accent CSS custom properties on :root.
  *  When the default "indigo" is selected the inline styles are removed so the
- *  stylesheet-defined values apply instead. */
+ *  stylesheet-defined values apply instead.
+ *
+ *  Also caches the selected preset's resolved values (both light + dark
+ *  variants) to localStorage under "haven-accent-vars". ACCENT_PRESETS is the
+ *  single source of truth; the pre-paint script in index.html just replays this
+ *  cache to avoid an accent flash on launch, so the hex values live in exactly
+ *  one place. */
 export function applyAccent(key: string) {
   const preset = ACCENT_PRESETS.find((p) => p.key === key);
   const style = document.documentElement.style;
@@ -60,6 +66,7 @@ export function applyAccent(key: string) {
     style.removeProperty("--color-accent");
     style.removeProperty("--color-accent-hover");
     style.removeProperty("--color-accent-active");
+    localStorage.removeItem("haven-accent-vars");
     return;
   }
 
@@ -69,6 +76,14 @@ export function applyAccent(key: string) {
   style.setProperty("--color-accent", isLight ? preset.lightBase : preset.base);
   style.setProperty("--color-accent-hover", isLight ? preset.lightHover : preset.hover);
   style.setProperty("--color-accent-active", isLight ? preset.lightActive : preset.active);
+
+  localStorage.setItem(
+    "haven-accent-vars",
+    JSON.stringify({
+      d: [preset.base, preset.hover, preset.active],
+      l: [preset.lightBase, preset.lightHover, preset.lightActive],
+    }),
+  );
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -98,9 +113,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setAccent: async (key) => {
-    applyAccent(key);
+    applyAccent(key); // also refreshes the cached "haven-accent-vars"
     set({ accent: key });
-    localStorage.setItem("haven-accent", key);
     await settingsRepo.set("accent", key);
   },
 

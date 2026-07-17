@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Check, X } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
-import * as friendRequestsRepo from "../../services/db/friendRequestsRepo";
+import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
+import type * as friendRequestsRepo from "../../services/db/friendRequestsRepo";
 import * as friendRequestService from "../../services/roster/friendRequestService";
+import { reflectNewContactLocally } from "../../services/bridge/networkBridge";
 import { Avatar } from "../ui/Avatar";
 import { IconButton } from "../ui/IconButton";
 import { EmptyState } from "../ui/EmptyState";
@@ -10,22 +12,24 @@ import { Inbox } from "lucide-react";
 
 export function InboxView() {
   const self = useIdentityStore((s) => s.self);
-  const [requests, setRequests] = useState<friendRequestsRepo.FriendRequest[]>([]);
+  const requests = useFriendRequestStore((s) => s.pending);
+  const refresh = useFriendRequestStore((s) => s.refresh);
 
   useEffect(() => {
-    friendRequestsRepo.listPendingIncoming().then(setRequests);
-  }, []);
+    void refresh();
+  }, [refresh]);
 
   async function handleAccept(req: friendRequestsRepo.FriendRequest) {
     if (!self) return;
     await friendRequestService.acceptFriendRequest(self, req);
-    setRequests((r) => r.filter((x) => x.id !== req.id));
+    await reflectNewContactLocally(self, req.fromId);
+    await refresh();
   }
 
   async function handleDecline(req: friendRequestsRepo.FriendRequest) {
     if (!self) return;
     await friendRequestService.declineFriendRequest(self, req);
-    setRequests((r) => r.filter((x) => x.id !== req.id));
+    await refresh();
   }
 
   if (requests.length === 0) {

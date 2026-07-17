@@ -21,7 +21,7 @@ import {
   SLOT_COUNT,
 } from "./PresenterSlotManager";
 import { captureDisplay, releaseDisplayAudio } from "./displayMedia";
-import type { ScreenShareQualityOption } from "./screenShareConfig";
+import { resolveScreenTier, type ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useCallStore } from "../../stores/useCallStore";
@@ -463,12 +463,9 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   session.screenStream = stream;
   // Fires when the user clicks the OS/browser "Stop sharing" control.
   videoTrack.onended = () => stopScreenShare();
+  await applyScreenTrackConstraints(videoTrack, config);
 
-  const customTier = config.id !== "auto" && config.maxBitrate ? {
-    maxBitrate: config.maxBitrate,
-    scaleResolutionDownBy: 1,
-    maxFramerate: config.frameRate ?? 30,
-  } : undefined;
+  const customTier = resolveScreenTier(config, videoTrack?.getSettings().width);
 
   for (const wrapper of session.wrappers.values()) {
     if (wrapper.hasVideoSender("screen")) {
@@ -613,14 +610,31 @@ export function isRoomCallActive(roomId: string): boolean {
 
 export { SLOT_COUNT, LEASE_MS, HEARTBEAT_MS };
 
-export function updateScreenShareQuality(config: ScreenShareQualityOption) {
+/** Applies a live quality change to every screen sender in the mesh: hints the
+ * source frame rate (best-effort) and re-derives the encoder tier from the
+ * current capture width so resolution actually changes. */
+export async function updateScreenShareQuality(config: ScreenShareQualityOption) {
   if (!session) return;
-  const customTier = config.id !== "auto" && config.maxBitrate ? {
-    maxBitrate: config.maxBitrate,
-    scaleResolutionDownBy: 1,
-    maxFramerate: config.frameRate ?? 30,
-  } : undefined;
+  const track = session.screenStream?.getVideoTracks()[0];
+  if (track) await applyScreenTrackConstraints(track, config);
+  const customTier = resolveScreenTier(config, track?.getSettings().width);
   for (const wrapper of session.wrappers.values()) {
     wrapper.applyVideoTier("screen", customTier);
+  }
+}
+
+/** Best-effort frame-rate hint on a live getDisplayMedia track. Resolution is
+ * handled in the encoder (scaleResolutionDownBy), not here, so switching back
+ * up to native stays possible — hence width/height are deliberately omitted. */
+async function applyScreenTrackConstraints(
+  track: MediaStreamTrack | undefined,
+  config: ScreenShareQualityOption,
+) {
+  if (!track || config.id === "auto" || !config.frameRate) return;
+  try {
+    await track.applyConstraints({ frameRate: { ideal: config.frameRate } });
+  } catch {
+    // Display-surface tracks may reject applyConstraints; the encoder-side
+    // maxFramerate cap still takes effect.
   }
 }

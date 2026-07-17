@@ -45,6 +45,20 @@ async function syncDmWith(self: Identity, contactId: string, peerId: string) {
   await roomService.announceRoomsToPeer(self, contactId, peerId);
 }
 
+/** Makes a freshly-trusted contact visible locally right away — reloads the
+ * roster (sidebar) and ensures the DM room exists + backfills — instead of
+ * waiting for the peer's roster_sync echo (which a connection blip can drop).
+ * Used after accepting an incoming request and after our outgoing request is
+ * accepted. */
+export async function reflectNewContactLocally(
+  self: Identity,
+  contactId: string,
+  peerId?: string,
+): Promise<void> {
+  await useRosterStore.getState().loadRoster();
+  await syncDmWith(self, contactId, peerId ?? derivePeerId(contactId));
+}
+
 /** Starts this device's PeerJS registration, wires its events into the roster
  * store/DB, and kicks off the periodic discovery loop that's how a returning
  * trusted member becomes reachable again with no re-invite. Call once, after
@@ -139,9 +153,11 @@ export function initNetworkBridge(self: Identity): () => void {
       case "friend_request":
         void friendRequestService.handleFriendRequest(self, msg);
         break;
-      case "friend_request_response":
-        void friendRequestService.handleFriendRequestResponse(self, msg);
+      case "friend_request_response": {
+        const addedId = await friendRequestService.handleFriendRequestResponse(self, msg);
+        if (addedId) await reflectNewContactLocally(self, addedId, peerId);
         break;
+      }
       case "file_chunk":
         void chatService.handleFileChunk(msg);
         break;

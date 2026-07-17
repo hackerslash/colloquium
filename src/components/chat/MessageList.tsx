@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, Check, CheckCheck, Clock, MessageSquare, Paperclip, X } from "lucide-react";
+import { AlertCircle, Check, CheckCheck, Clock, Download, MessageSquare, Paperclip, X } from "lucide-react";
 import type { DeliveryStatus, Message } from "../../types/domain";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
@@ -41,29 +41,37 @@ function DeliveryTick({ status }: { status: DeliveryStatus }) {
   }
 }
 
-function MessageAttachment({ message }: { message: Message }) {
+function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolean }) {
+  const isImage = message.attachmentType?.startsWith("image/") || message.contentType === "image";
   const [url, setUrl] = useState<string | null>(null);
+  const [available, setAvailable] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!message.attachmentId) return;
-    
+
+    let cancelled = false;
     let objectUrl: string | null = null;
 
     function checkFile() {
-      // Check if it's an image
-      if (message.attachmentType?.startsWith("image/") || message.contentType === "image") {
-        fileRepo.getFile(message.attachmentId!).then((file) => {
-          if (file) {
-            const blob = new Blob([file.data], { type: file.mimeType });
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-            objectUrl = URL.createObjectURL(blob);
-            setUrl(objectUrl);
-          }
+      const id = message.attachmentId!;
+      if (isImage) {
+        fileRepo.getFile(id).then((file) => {
+          // Guard against resolving after unmount — otherwise we'd create an
+          // object URL the cleanup has already run past and never revoke it.
+          if (cancelled || !file) return;
+          const blob = new Blob([file.data], { type: file.mimeType });
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          objectUrl = URL.createObjectURL(blob);
+          setUrl(objectUrl);
+        });
+      } else {
+        fileRepo.fileExists(id).then((ok) => {
+          if (!cancelled) setAvailable(ok);
         });
       }
     }
-    
+
     checkFile();
 
     const handleFileEvent = (e: Event) => {
@@ -72,14 +80,30 @@ function MessageAttachment({ message }: { message: Message }) {
         checkFile();
       }
     };
-    
+
     window.addEventListener("haven_file_downloaded", handleFileEvent);
 
     return () => {
+      cancelled = true;
       window.removeEventListener("haven_file_downloaded", handleFileEvent);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [message.attachmentId, message.attachmentType, message.contentType]);
+  }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);
+
+  async function downloadFile() {
+    if (!message.attachmentId) return;
+    const file = await fileRepo.getFile(message.attachmentId);
+    if (!file) return;
+    const blob = new Blob([file.data], { type: file.mimeType });
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
 
   // Handle escape key to close lightbox
   useEffect(() => {
@@ -138,9 +162,23 @@ function MessageAttachment({ message }: { message: Message }) {
   }
 
   return (
-    <div className={cx("mt-1 flex items-center gap-2 rounded px-2 py-1 text-xs", message.authorId ? "bg-black/20" : "bg-black/5")}>
-      <Paperclip size={12} />
-      <span className="truncate max-w-[150px]">{message.attachmentName}</span>
+    <div className={cx("mt-1 flex items-center gap-2 rounded px-2 py-1 text-xs", isOwn ? "bg-black/20" : "bg-black/10")}>
+      <Paperclip size={12} className="shrink-0" />
+      <span className="min-w-0 flex-1 truncate">{message.attachmentName}</span>
+      {available && (
+        <button
+          type="button"
+          onClick={() => void downloadFile()}
+          aria-label={`Download ${message.attachmentName ?? "file"}`}
+          title="Download"
+          className={cx(
+            "shrink-0 rounded p-0.5 transition-colors",
+            isOwn ? "hover:bg-white/20" : "hover:bg-black/10",
+          )}
+        >
+          <Download size={12} />
+        </button>
+      )}
     </div>
   );
 }
@@ -277,7 +315,7 @@ export function MessageList({ messages, intro }: MessageListProps) {
                     >
                       {message.body && <div>{message.body}</div>}
                       {message.attachmentName && (
-                        <MessageAttachment message={message} />
+                        <MessageAttachment message={message} isOwn={isOwn} />
                       )}
                     </div>
                     <span

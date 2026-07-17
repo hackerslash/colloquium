@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Paperclip, SendHorizontal, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { IconButton } from "../ui/IconButton";
+import { MAX_FILE_SIZE } from "../../services/room/chatService";
+import { toast } from "../../stores/useToastStore";
 
 type ComposerProps = {
   value: string;
@@ -72,7 +74,16 @@ export function Composer({ value, placeholder, onChange, onSend }: ComposerProps
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];
-            if (file) setSelectedFile(file);
+            if (file) {
+              if (file.size > MAX_FILE_SIZE) {
+                toast.error(
+                  "File too large",
+                  `Attachments are limited to ${Math.round(MAX_FILE_SIZE / (1024 * 1024))} MB.`,
+                );
+              } else {
+                setSelectedFile(file);
+              }
+            }
             if (fileInputRef.current) fileInputRef.current.value = "";
           }}
         />

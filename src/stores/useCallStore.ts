@@ -94,7 +94,7 @@ export const useCallStore = create<CallState>((set) => ({
   setScreenConfig: (config) => {
     set({ screenConfig: config });
     if (useCallStore.getState().screenOn) {
-      callService.updateScreenShareQuality(config);
+      void callService.updateScreenShareQuality(config);
     }
   },
 
