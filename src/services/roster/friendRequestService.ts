@@ -115,8 +115,18 @@ export async function handleFriendRequest(self: Identity, msg: FriendRequestMess
   const contact = await rosterRepo.getContact(msg.fromId);
   if (contact && !contact.revoked) return;
 
+  // Blocks re-sends indefinitely once we've declined someone: without this, a
+  // declined sender can resend the same request forever, each one recreating
+  // a fresh pending row and re-notifying us (there's no "unblock" affordance,
+  // so a decline should stay final).
   const existing = await friendRequestsRepo.findByFromId(msg.fromId);
-  if (existing && existing.status === "pending" && existing.direction === "incoming") return;
+  if (
+    existing &&
+    existing.direction === "incoming" &&
+    (existing.status === "pending" || existing.status === "declined")
+  ) {
+    return;
+  }
 
   await friendRequestsRepo.upsert({
     id: crypto.randomUUID(),
