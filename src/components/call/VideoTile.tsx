@@ -7,11 +7,10 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
 
-/** setSinkId exists in Chromium-based browsers but is not yet in TypeScript's
- * lib.dom — extend the interface so we can call it without `any` casts. */
+/** setSinkId exists in Chromium-based browsers; declare on interface if needed. */
 declare global {
   interface HTMLMediaElement {
-    setSinkId?(sinkId: string): Promise<void>;
+    setSinkId(sinkId: string): Promise<void>;
   }
 }
 
