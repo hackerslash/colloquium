@@ -40,14 +40,20 @@ export async function listPendingIncoming(): Promise<FriendRequest[]> {
   return rows.map(fromRow);
 }
 
+/** Every caller passes a freshly-generated id for a brand new pending
+ * request, so the conflict target that matters is the dedup one: a second
+ * near-simultaneous request from/to the same party (network race or a
+ * double-clicked "Add friend") folds into the existing pending row instead
+ * of creating a duplicate — see idx_friend_requests_pending_unique. */
 export async function upsert(req: FriendRequest): Promise<void> {
   const db = await getDb();
   await db.execute(
     `INSERT INTO friend_requests (id, from_id, from_pubkey, display_name, direction, status, created_at)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-     ON CONFLICT(id) DO UPDATE SET
+     ON CONFLICT(from_id, direction) WHERE status = 'pending' DO UPDATE SET
        status = excluded.status,
-       display_name = excluded.display_name`,
+       display_name = excluded.display_name,
+       from_pubkey = excluded.from_pubkey`,
     [req.id, req.fromId, req.fromPubKey, req.displayName, req.direction, req.status, req.createdAt]
   );
 }

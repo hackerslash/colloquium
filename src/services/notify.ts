@@ -4,18 +4,29 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { toast } from "../stores/useToastStore";
 
-let permissionChecked = false;
-let permissionGranted = false;
+// Only the OS *prompt* is one-shot (re-asking on every call would be
+// obnoxious); actual grant state is re-checked every time so a permission the
+// user flips on later (via OS settings, without restarting Haven) is picked
+// up instead of staying permanently "denied" from a stale first check.
+let hasPrompted = false;
+let deniedNoticeShown = false;
 
 async function ensurePermission(): Promise<boolean> {
-  if (permissionChecked) return permissionGranted;
-  permissionChecked = true;
-  permissionGranted = await isPermissionGranted();
-  if (!permissionGranted) {
-    permissionGranted = (await requestPermission()) === "granted";
+  if (await isPermissionGranted()) return true;
+  if (!hasPrompted) {
+    hasPrompted = true;
+    if ((await requestPermission()) === "granted") return true;
   }
-  return permissionGranted;
+  if (!deniedNoticeShown) {
+    deniedNoticeShown = true;
+    toast.warning(
+      "Notifications are off",
+      "Haven won't alert you about messages or calls while unfocused. Enable notifications for Haven in your OS settings to turn this back on.",
+    );
+  }
+  return false;
 }
 
 /** Fires an OS notification only when the window isn't focused, so an active

@@ -75,10 +75,16 @@ export function initNetworkBridge(self: Identity): () => void {
     const contact = findContactByPeerId(peerId);
     if (contact) {
       setPresence(contact.identityId, "online");
-      void rosterRepo.markSeen(contact.identityId, peerId, Date.now());
-      void syncDmWith(self, contact.identityId, peerId);
+      void rosterRepo
+        .markSeen(contact.identityId, peerId, Date.now())
+        .catch((err) => console.error("failed to record peer seen", peerId, err));
+      void syncDmWith(self, contact.identityId, peerId).catch((err) =>
+        console.error("failed to sync DM with", peerId, err),
+      );
     }
-    void rosterService.sendRosterSync(self, peerId);
+    void rosterService
+      .sendRosterSync(self, peerId)
+      .catch((err) => console.error("failed to send roster sync to", peerId, err));
   });
 
   registry.on("peer-disconnected", (peerId) => {
@@ -108,10 +114,22 @@ export function initNetworkBridge(self: Identity): () => void {
     discover();
   });
 
+  // Messages from the SAME peer must be handled in arrival order — two
+  // rtc_description messages handled concurrently (e.g. a renegotiation
+  // racing a camera-toggle offer) can both observe signalingState "stable"
+  // and both call setRemoteDescription, so the second throws and the
+  // renegotiation is silently lost. Different peers stay fully concurrent;
+  // only messages sharing a peerId queue behind each other.
+  const perPeerChain = new Map<string, Promise<void>>();
+  function enqueueForPeer(peerId: string, data: unknown) {
+    const prevSettled = (perPeerChain.get(peerId) ?? Promise.resolve()).catch(() => {});
+    const result = prevSettled.then(() => routeMessage(peerId, data));
+    perPeerChain.set(peerId, result);
+    result.catch((err) => console.error("failed handling message from", peerId, err));
+  }
+
   registry.on("message", (peerId, data) => {
-    void routeMessage(peerId, data).catch((err) =>
-      console.error("failed handling message from", peerId, err),
-    );
+    enqueueForPeer(peerId, data);
   });
 
   registry.on("error", (err) => {
@@ -151,7 +169,7 @@ export function initNetworkBridge(self: Identity): () => void {
         break;
       }
       case "friend_request":
-        void friendRequestService.handleFriendRequest(self, msg);
+        await friendRequestService.handleFriendRequest(self, msg);
         break;
       case "friend_request_response": {
         const addedId = await friendRequestService.handleFriendRequestResponse(self, msg);
@@ -159,7 +177,7 @@ export function initNetworkBridge(self: Identity): () => void {
         break;
       }
       case "file_chunk":
-        void chatService.handleFileChunk(msg);
+        await chatService.handleFileChunk(msg);
         break;
       case "chat_message": {
         const stored = await chatService.handleChatMessage(self, msg, Date.now());

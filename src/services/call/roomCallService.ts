@@ -39,6 +39,13 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
  * are handled by messages; this catches the ones that never say goodbye. */
 const PEER_TIMEOUT_MS = 15_000;
 
+/** A peer whose *media* has been stuck failed/disconnected this long is
+ * reaped even if its data channel is still delivering beacons — otherwise a
+ * peer with healthy signaling but dead ICE (NAT rebind, TURN drop) never
+ * satisfies PEER_TIMEOUT_MS's data-silence check and its frozen tile never
+ * clears. Mirrors the 1:1 call's CALL_DROP_TIMEOUT_MS. */
+const MEDIA_FAILED_TIMEOUT_MS = 20_000;
+
 type Session = {
   self: Identity;
   roomId: string;
@@ -60,6 +67,9 @@ type Session = {
   remoteStreams: Map<string, Map<string, MediaStream>>;
   /** Last time each peer proved it's alive (any message received). */
   lastSeenAt: Map<string, number>;
+  /** When each peer's media connection first became disconnected/failed;
+   * cleared on reconnect. Reaped independently of data-channel liveness. */
+  mediaFailedSinceAt: Map<string, number>;
   /** Effective-slot fingerprint from the previous tick, so a lease expiring
    * silently (crashed presenter) still triggers stream reclassification. */
   slotFingerprint: string;
@@ -249,8 +259,16 @@ function ensureWrapper(remoteId: string): PeerConnectionWrapper {
     },
     onConnectionStateChange: (state) => {
       useRoomCallStore.getState()._setParticipantConnection(remoteId, state);
+      if (state === "connected") {
+        session?.mediaFailedSinceAt.delete(remoteId);
+      } else if (state === "disconnected" || state === "failed") {
+        if (session && !session.mediaFailedSinceAt.has(remoteId)) {
+          session.mediaFailedSinceAt.set(remoteId, Date.now());
+        }
+      }
       // "failed" gets a chance to ICE-restart; only a fully closed connection
-      // removes the peer from the mesh.
+      // removes the peer from the mesh immediately — the onTick reaper below
+      // catches ones stuck failed/disconnected too long to ever recover.
       if (state === "closed") removePeer(remoteId);
     },
   });
@@ -302,6 +320,7 @@ function removePeer(remoteId: string) {
   }
   session.remoteStreams.delete(remoteId);
   session.lastSeenAt.delete(remoteId);
+  session.mediaFailedSinceAt.delete(remoteId);
   session.screenLinkBps.delete(remoteId);
   pushScreenLinkToStore();
   useRoomCallStore.getState()._removeParticipant(remoteId);
@@ -332,6 +351,7 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
     screenLinkBps: new Map(),
     wrappers: new Map(),
     remoteStreams: new Map(),
+    mediaFailedSinceAt: new Map(),
     lastSeenAt: new Map(),
     slotFingerprint: "",
     slots: new PresenterSlotManager(),
@@ -392,12 +412,24 @@ function onTick() {
     broadcastBeacon(false);
   }
 
-  // Reap crashed/vanished peers: no message in PEER_TIMEOUT_MS (they beacon
-  // every 3s when alive) AND no working media. Requiring both means a peer
-  // with healthy media but a broken data path is never kicked.
+  // Reap crashed/vanished peers via either signal:
+  // - dataStale: no message in PEER_TIMEOUT_MS (they beacon every 3s when
+  //   alive) while media also isn't connected — catches a peer that never
+  //   really connected, or died on both fronts at once.
+  // - mediaStuck: media itself stuck failed/disconnected past
+  //   MEDIA_FAILED_TIMEOUT_MS, independent of the data channel — catches dead
+  //   ICE whose beacons keep arriving and would otherwise keep lastSeen
+  //   looking fresh forever.
+  // The inverse — data path dead, media still connected — is left alone on
+  // purpose: as long as media keeps delivering, a participant shouldn't be
+  // dropped just because a separate signaling channel had a blip.
   for (const [remoteId, wrapper] of [...session.wrappers]) {
     const lastSeen = session.lastSeenAt.get(remoteId) ?? now;
-    if (now - lastSeen > PEER_TIMEOUT_MS && wrapper.pc.connectionState !== "connected") {
+    const dataStale = now - lastSeen > PEER_TIMEOUT_MS && wrapper.pc.connectionState !== "connected";
+    const mediaFailedSince = session.mediaFailedSinceAt.get(remoteId);
+    const mediaStuck =
+      mediaFailedSince !== undefined && now - mediaFailedSince > MEDIA_FAILED_TIMEOUT_MS;
+    if (dataStale || mediaStuck) {
       removePeer(remoteId);
     }
   }
@@ -474,8 +506,9 @@ export async function applyMicSettings(): Promise<void> {
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---
 
 export async function toggleCam() {
-  if (!session) return;
-  if (session.cameraTrack) {
+  const call = session;
+  if (!call) return;
+  if (call.cameraTrack) {
     stopCameraLocal();
     return;
   }
@@ -489,15 +522,22 @@ export async function toggleCam() {
     return;
   }
 
-  session.cameraTrack = track;
-  session.localStream.addTrack(track);
+  if (session !== call) {
+    // Left the room call while the camera prompt was open — release it
+    // instead of leaving the camera light on for a call no longer live.
+    track.stop();
+    return;
+  }
+
+  call.cameraTrack = track;
+  call.localStream.addTrack(track);
   track.onended = () => stopCameraLocal();
 
-  for (const wrapper of session.wrappers.values()) {
+  for (const wrapper of call.wrappers.values()) {
     if (wrapper.hasVideoSender("camera")) {
       void wrapper.replaceVideoTrack(track, "camera");
     } else {
-      wrapper.addVideoTrack(track, session.localStream, "camera", cameraCeiling());
+      wrapper.addVideoTrack(track, call.localStream, "camera", cameraCeiling());
     }
   }
   const store = useRoomCallStore.getState();
@@ -522,9 +562,10 @@ function stopCameraLocal() {
 // --- Screen share: coordinated via the 2 presenter slots ---
 
 export async function startScreenShare(config: ScreenShareQualityOption) {
-  if (!session || session.screenStream) return;
+  const call = session;
+  if (!call || call.screenStream) return;
   const now = Date.now();
-  const freeIndex = ([0, 1] as const).find((i) => session!.slots.isFree(i, now));
+  const freeIndex = ([0, 1] as const).find((i) => call.slots.isFree(i, now));
   if (freeIndex === undefined) {
     useRoomCallStore.getState()._setPresentError("Both screen-share slots are taken.");
     return;
@@ -548,26 +589,40 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
     return;
   }
 
+  if (session !== call) {
+    // Left the room call while the OS picker was open — release the capture
+    // instead of leaking it (and its "you are sharing" indicator).
+    stream.getTracks().forEach((t) => t.stop());
+    releaseDisplayAudio();
+    return;
+  }
+
   const videoTrack = stream.getVideoTracks()[0];
-  const claim = session.slots.buildClaim(freeIndex, session.self.identityId, stream.id, now);
+  const claim = call.slots.buildClaim(freeIndex, call.self.identityId, stream.id, now);
   if (!claim) {
     stream.getTracks().forEach((t) => t.stop());
     return;
   }
-  broadcast({ ...claim, roomId: session.roomId } satisfies SlotClaimMessage);
+  broadcast({ ...claim, roomId: call.roomId } satisfies SlotClaimMessage);
   pushSlotsToStore();
 
-  session.screenStream = stream;
+  call.screenStream = stream;
   // Fires when the user clicks the OS/browser "Stop sharing" control.
   videoTrack.onended = () => stopScreenShare();
   await applyScreenTrackConstraints(videoTrack, config);
 
+  if (session !== call) {
+    stream.getTracks().forEach((t) => t.stop());
+    releaseDisplayAudio();
+    return;
+  }
+
   const tierSpec = resolveScreenTierSpec(config, videoTrack?.getSettings().width);
-  session.screenTierSpec = tierSpec;
-  session.screenLinkBps.clear();
+  call.screenTierSpec = tierSpec;
+  call.screenLinkBps.clear();
   pushScreenLinkToStore();
 
-  for (const wrapper of session.wrappers.values()) {
+  for (const wrapper of call.wrappers.values()) {
     if (wrapper.hasVideoSender("screen")) {
       void wrapper.replaceVideoTrack(videoTrack, "screen");
       wrapper.applyVideoTier("screen", tierSpec);
@@ -584,7 +639,7 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   store._setPresentError(null);
   // Own screen rides the same store slot as remote screens so the stage
   // renders local and remote shares identically.
-  store._setParticipantScreenStream(session.self.identityId, stream);
+  store._setParticipantScreenStream(call.self.identityId, stream);
   store._bumpMediaVersion();
 }
 

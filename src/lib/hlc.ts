@@ -5,7 +5,12 @@
 // so two peers never disagree on ordering.
 
 const WALL_PAD = 15; // ms since epoch fits in 13 digits well past year 2286
-const COUNTER_PAD = 6;
+// Wide enough that sustained clock skew (e.g. a peer with a badly-set future
+// wall clock, forcing the local counter to climb for as long as the skew
+// persists) can't plausibly overflow it — padStart doesn't truncate, so if the
+// counter's digit count ever exceeded this width, lexicographic comparison
+// against a same-wall, narrower-counter HLC would silently invert.
+const COUNTER_PAD = 12;
 
 export type Hlc = string;
 

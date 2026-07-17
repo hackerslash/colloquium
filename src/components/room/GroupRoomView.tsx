@@ -44,12 +44,21 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
   useEffect(() => {
     setActiveRoom(roomId);
     void loadMessages(roomId);
-    void roomMembersRepo.listMembers(roomId).then(setMemberIds);
+    let cancelled = false;
+    // Switching rooms fast enough can let a previous room's lookup resolve
+    // after the current one's — without this guard, memberIds (and thus who
+    // a send addresses) could silently end up set to the wrong room's list.
+    void roomMembersRepo.listMembers(roomId).then((ids) => {
+      if (!cancelled) setMemberIds(ids);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [roomId, loadMessages, setActiveRoom]);
 
   function handleSend(file?: File) {
     if (!room) return;
-    sendMessage(roomId, memberIds, draft, file).catch((err) => {
+    return sendMessage(roomId, memberIds, draft, file).catch((err) => {
       console.error("Failed to send message:", err);
       toast.error("Message not sent", "Please try again.");
     });

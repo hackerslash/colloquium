@@ -9,13 +9,16 @@ type ComposerProps = {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
-  onSend: (file?: File) => void;
+  onSend: (file?: File) => void | Promise<unknown>;
 };
 
 export function Composer({ value, placeholder, onChange, onSend }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  // Guards against a double Enter/click firing two sends before the first
+  // one's promise settles — without it the same message could go out twice.
+  const [sending, setSending] = useState(false);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -41,9 +44,14 @@ export function Composer({ value, placeholder, onChange, onSend }: ComposerProps
   }
 
   function handleSend() {
+    if (sending) return;
     if (!value.trim() && !selectedFile) return;
-    onSend(selectedFile ?? undefined);
+    const result = onSend(selectedFile ?? undefined);
     setSelectedFile(null);
+    if (result) {
+      setSending(true);
+      void Promise.resolve(result).finally(() => setSending(false));
+    }
   }
 
   return (
@@ -113,7 +121,7 @@ export function Composer({ value, placeholder, onChange, onSend }: ComposerProps
             label="Send"
             size="sm"
             variant={value.trim() || selectedFile ? "accent" : "ghost"}
-            disabled={!value.trim() && !selectedFile}
+            disabled={sending || (!value.trim() && !selectedFile)}
             tooltip={false}
             onClick={handleSend}
           />

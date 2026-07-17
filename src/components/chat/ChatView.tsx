@@ -58,7 +58,7 @@ export function ChatView({ contactId }: ChatViewProps) {
 
   function handleSend(file?: File) {
     if (!roomId) return;
-    sendMessage(roomId, [contactId], draft, file).catch((err) => {
+    return sendMessage(roomId, [contactId], draft, file).catch((err) => {
       console.error("Failed to send message:", err);
       toast.error("Message not sent", "Please try again.");
     });

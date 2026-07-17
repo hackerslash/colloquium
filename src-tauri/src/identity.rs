@@ -32,10 +32,14 @@ fn to_public_identity(signing_key: &SigningKey) -> PublicIdentity {
 fn load_signing_key() -> Result<Option<SigningKey>, String> {
     let seed = keychain::load_private_key_bytes()?;
     match seed {
+        // Wrong length can never be real key material we could recover —
+        // discard it so the caller can generate a fresh one instead of being
+        // permanently locked out of onboarding.
+        Some(bytes) if bytes.len() != SECRET_KEY_LENGTH => {
+            keychain::delete_private_key_bytes()?;
+            Ok(None)
+        }
         Some(bytes) => {
-            if bytes.len() != SECRET_KEY_LENGTH {
-                return Err("stored key has unexpected length".into());
-            }
             let mut arr = [0u8; SECRET_KEY_LENGTH];
             arr.copy_from_slice(&bytes);
             Ok(Some(SigningKey::from_bytes(&arr)))

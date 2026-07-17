@@ -165,6 +165,11 @@ export class PeerConnectionWrapper {
   private lastPacketsLost = 0;
   private lastPacketsSent = 0;
   private closed = false;
+  /** Candidates that arrive before the first remote description is set (e.g.
+   * a fast trickle at call start) — applying them immediately would throw
+   * and silently drop them; queued here and flushed once there's a session
+   * description to apply them against. */
+  private pendingCandidates: RTCIceCandidateInit[] = [];
 
   constructor(
     private readonly isPolite: boolean,
@@ -383,10 +388,23 @@ export class PeerConnectionWrapper {
       : description;
     await this.pc.setRemoteDescription(tuned);
     this.isSettingRemoteAnswerPending = false;
+    await this.flushPendingCandidates();
 
     if (description.type === "offer") {
       await this.pc.setLocalDescription();
       this.sendLocalDescription();
+    }
+  }
+
+  private async flushPendingCandidates() {
+    const queued = this.pendingCandidates;
+    this.pendingCandidates = [];
+    for (const candidate of queued) {
+      try {
+        await this.pc.addIceCandidate(candidate);
+      } catch (err) {
+        if (!this.ignoreOffer) console.warn("failed to apply queued ICE candidate", err);
+      }
     }
   }
 
@@ -401,6 +419,10 @@ export class PeerConnectionWrapper {
   }
 
   async handleCandidate(candidate: RTCIceCandidateInit) {
+    if (!this.pc.remoteDescription) {
+      this.pendingCandidates.push(candidate);
+      return;
+    }
     try {
       await this.pc.addIceCandidate(candidate);
     } catch (err) {

@@ -19,6 +19,10 @@ export function useRingtone(type: 'incoming' | 'outgoing' | null) {
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new AudioContext();
       audioCtxRef.current = ctx;
+      // A context created with no preceding user gesture can start suspended
+      // (autoplay policy) — the graph below would then schedule silently with
+      // no audible ring and no error. Resuming is a no-op if already running.
+      if (ctx.state === "suspended") void ctx.resume().catch(() => {});
 
       const gainNode = ctx.createGain();
       gainNode.connect(ctx.destination);

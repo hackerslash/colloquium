@@ -220,8 +220,12 @@ async function handleInviteConsume(
   }
 
   const now = Date.now();
-  await pendingInvitesRepo.markConsumed(msg.inviteToken, msg.inviteeId, now);
-
+  // Add the contact BEFORE marking the token consumed: upsertLww is
+  // idempotent, so if the process dies or errors between these two calls, a
+  // retried invite_consume for the same (still-unconsumed) token just re-runs
+  // this harmlessly and then succeeds — instead of permanently burning the
+  // token with no contact ever added on this side (the old markConsumed-first
+  // order had no way to recover from that).
   await rosterRepo.upsertLww({
     identityId: msg.inviteeId,
     publicKey: msg.inviteePubKey,
@@ -233,6 +237,7 @@ async function handleInviteConsume(
     revokedAt: null,
     revokedBy: null,
   });
+  await pendingInvitesRepo.markConsumed(msg.inviteToken, msg.inviteeId, now);
 
   const existing = await rosterRepo.listContacts();
   const roster = [buildSelfEntry(self), ...existing.map(toWire)];

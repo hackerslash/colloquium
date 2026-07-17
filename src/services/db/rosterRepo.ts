@@ -50,44 +50,33 @@ export async function getContact(identityId: string): Promise<RosterContact | nu
 }
 
 /** Grow-only-add + per-field last-writer-wins merge: safe to call repeatedly
- * with the same or stale data — a caller never needs to check first. */
+ * with the same or stale data — a caller never needs to check first. A
+ * single guarded upsert (not a separate read-then-insert-or-update) so two
+ * concurrent merges for a not-yet-stored contact can't both take the INSERT
+ * branch and violate the primary key. */
 export async function upsertLww(entry: RosterEntryWire): Promise<void> {
   const db = await getDb();
-  const existing = await getContact(entry.identityId);
-
-  if (!existing) {
-    await db.execute(
-      `INSERT INTO roster
-         (identity_id, public_key, display_name, added_by, added_at, updated_at, revoked, revoked_at, revoked_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        entry.identityId,
-        entry.publicKey,
-        entry.displayName,
-        entry.addedBy,
-        entry.addedAt,
-        entry.updatedAt,
-        entry.revoked ? 1 : 0,
-        entry.revokedAt,
-        entry.revokedBy,
-      ],
-    );
-    return;
-  }
-
-  if (entry.updatedAt < existing.updatedAt) return;
-
   await db.execute(
-    `UPDATE roster
-        SET display_name = $1, updated_at = $2, revoked = $3, revoked_at = $4, revoked_by = $5
-      WHERE identity_id = $6`,
+    `INSERT INTO roster
+       (identity_id, public_key, display_name, added_by, added_at, updated_at, revoked, revoked_at, revoked_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT(identity_id) DO UPDATE SET
+       display_name = excluded.display_name,
+       updated_at = excluded.updated_at,
+       revoked = excluded.revoked,
+       revoked_at = excluded.revoked_at,
+       revoked_by = excluded.revoked_by
+     WHERE excluded.updated_at >= roster.updated_at`,
     [
+      entry.identityId,
+      entry.publicKey,
       entry.displayName,
+      entry.addedBy,
+      entry.addedAt,
       entry.updatedAt,
       entry.revoked ? 1 : 0,
       entry.revokedAt,
       entry.revokedBy,
-      entry.identityId,
     ],
   );
 }

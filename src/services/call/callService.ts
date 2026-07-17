@@ -26,11 +26,16 @@ const VIDEO_CONSTRAINTS: MediaTrackConstraints = {
   frameRate: { ideal: 30 },
 };
 
-/** How long an undeliverable invite waits in the Outbox before the call is
- * abandoned as unreachable. */
-const INVITE_TTL_MS = 10_000;
 /** Ring timeout on both sides. */
 const RING_TIMEOUT_MS = 30_000;
+/** How long an undeliverable invite waits in the Outbox before the call is
+ * abandoned as unreachable. Pinned to RING_TIMEOUT_MS (not a shorter, separate
+ * constant) so it's never accidentally shorter than the broker's own
+ * reconnect backoff ceiling — otherwise a call placed during a broker blip
+ * gets abandoned as unreachable moments before the broker would have
+ * recovered. There's also no reason to give up on delivery before we'd give
+ * up on ringing anyway. */
+const INVITE_TTL_MS = RING_TIMEOUT_MS;
 /** How long a call may sit disconnected/failed (ICE restarts still trying)
  * before we declare the peer gone — crashed apps never say goodbye, so
  * without this the call shows "Reconnecting…" forever. */
@@ -231,6 +236,7 @@ export async function acceptCall(self: Identity) {
   const active = store.activeCall;
   if (!active || active.status !== "incoming") return;
   clearIncomingTimer();
+  const inviteId = active.inviteId;
 
   // Voice calls stay voice: the camera only opens when the caller asked for
   // video. Either side can still turn their camera on later.
@@ -251,6 +257,16 @@ export async function acceptCall(self: Identity) {
     useCallStore.getState()._clear();
     throw err;
   }
+
+  // The call may have already ended (remote hangup/decline, or another path
+  // raced ahead) while the permission prompt was open — don't resurrect a
+  // dead call with a freshly-opened mic/camera the remote will never see.
+  const stillActive = useCallStore.getState().activeCall;
+  if (ctx || !stillActive || stillActive.status !== "incoming" || stillActive.inviteId !== inviteId) {
+    localStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
+
   ctx = {
     self,
     remoteId: active.remoteId,
@@ -324,7 +340,8 @@ function endCallLocal() {
 }
 
 export async function startScreenShare(config: ScreenShareQualityOption) {
-  if (!ctx?.wrapper) return;
+  const call = ctx;
+  if (!call?.wrapper) return;
   let capture: DisplayCapture;
   try {
     capture = await captureDisplay(config);
@@ -340,20 +357,38 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
     return;
   }
   const { stream } = capture;
+  if (ctx !== call) {
+    // Call ended while the OS picker was open — release the capture instead
+    // of leaking the screen/system-audio stream until app restart.
+    stream.getTracks().forEach((t) => t.stop());
+    releaseDisplayAudio();
+    return;
+  }
   const track = stream.getVideoTracks()[0];
-  ctx.screenStream = stream;
+  call.screenStream = stream;
   await applyScreenTrackConstraints(track, config);
+
+  if (ctx !== call) {
+    stream.getTracks().forEach((t) => t.stop());
+    releaseDisplayAudio();
+    return;
+  }
 
   // Screen rides its own sender (and stream/msid), so camera and screen can
   // run at the same time and the remote can tell them apart. The tier
   // downscales from the native capture width to the selected resolution.
   const tierSpec = resolveScreenTierSpec(config, track?.getSettings().width);
 
-  if (ctx.wrapper.hasVideoSender("screen")) {
-    await ctx.wrapper.replaceVideoTrack(track, "screen");
-    ctx.wrapper.applyVideoTier("screen", tierSpec);
+  if (call.wrapper.hasVideoSender("screen")) {
+    await call.wrapper.replaceVideoTrack(track, "screen");
+    if (ctx !== call) {
+      stream.getTracks().forEach((t) => t.stop());
+      releaseDisplayAudio();
+      return;
+    }
+    call.wrapper.applyVideoTier("screen", tierSpec);
   } else {
-    ctx.wrapper.addVideoTrack(track, stream, "screen", 0, tierSpec);
+    call.wrapper.addVideoTrack(track, stream, "screen", 0, tierSpec);
   }
   if (tierSpec !== "max") useCallStore.getState()._setScreenLinkBps(null);
 
@@ -361,7 +396,7 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   // separate call track). Rides the screen stream's msid so the receiver
   // groups it with the screen, not the camera.
   for (const audioTrack of stream.getAudioTracks()) {
-    ctx.wrapper.addTrack(audioTrack, stream);
+    call.wrapper.addTrack(audioTrack, stream);
   }
 
   track.onended = () => void stopScreenShare();
@@ -372,19 +407,21 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
 }
 
 export async function stopScreenShare() {
-  if (!ctx) return;
-  const tracks = ctx.screenStream?.getTracks() ?? [];
+  const call = ctx;
+  if (!call) return;
+  const tracks = call.screenStream?.getTracks() ?? [];
   for (const track of tracks) {
-    await ctx.wrapper?.detachTrack(track);
+    await call.wrapper?.detachTrack(track);
     track.stop();
   }
-  ctx.screenStream = null;
   releaseDisplayAudio();
 
+  if (ctx !== call) return; // call ended mid-teardown; endCallLocal already cleared everything
+  call.screenStream = null;
   const store = useCallStore.getState();
   store._setScreenOn(false);
   store._setScreenLinkBps(null);
-  store._setLocalStream(ctx.localStream); // back to the camera/mic stream
+  store._setLocalStream(call.localStream); // back to the camera/mic stream
 }
 
 export function toggleMic() {
@@ -410,32 +447,41 @@ export function isCallActive(): boolean {
 /** Camera on/off releases the device (and its light) when off, and works on
  * calls that started as voice — turning on mid-call renegotiates. */
 export async function toggleCam() {
-  if (!ctx) return;
+  const call = ctx;
+  if (!call) return;
   const store = useCallStore.getState();
-  const current = ctx.localStream?.getVideoTracks()[0] ?? null;
+  const current = call.localStream?.getVideoTracks()[0] ?? null;
 
   if (store.camOn && current) {
-    await ctx.wrapper?.replaceVideoTrack(null, "camera");
+    await call.wrapper?.replaceVideoTrack(null, "camera");
     current.stop();
-    ctx.localStream?.removeTrack(current);
-    store._setMediaFlags(store.micOn, false);
+    call.localStream?.removeTrack(current);
+    if (ctx === call) store._setMediaFlags(store.micOn, false);
     return;
   }
 
   const cameraStream = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS });
+  if (ctx !== call) {
+    // Call ended while the camera prompt was open — release it instead of
+    // leaving the camera light on for a call that's no longer live.
+    cameraStream.getTracks().forEach((t) => t.stop());
+    return;
+  }
   const track = cameraStream.getVideoTracks()[0];
-  if (!ctx.localStream) ctx.localStream = new MediaStream();
-  ctx.localStream.addTrack(track);
+  if (!call.localStream) call.localStream = new MediaStream();
+  call.localStream.addTrack(track);
 
-  if (ctx.wrapper) {
-    if (ctx.wrapper.hasVideoSender("camera")) {
-      await ctx.wrapper.replaceVideoTrack(track, "camera");
+  if (call.wrapper) {
+    if (call.wrapper.hasVideoSender("camera")) {
+      await call.wrapper.replaceVideoTrack(track, "camera");
     } else {
-      ctx.wrapper.addVideoTrack(track, ctx.localStream, "camera");
+      call.wrapper.addVideoTrack(track, call.localStream, "camera");
     }
   }
-  store._setMediaFlags(store.micOn, true);
-  if (!store.screenOn) store._setLocalStream(ctx.localStream);
+  if (ctx === call) {
+    store._setMediaFlags(store.micOn, true);
+    if (!store.screenOn) store._setLocalStream(call.localStream);
+  }
 }
 
 // --- Incoming message handlers (called by the network bridge) ---

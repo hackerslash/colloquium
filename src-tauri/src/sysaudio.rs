@@ -10,11 +10,19 @@
 
 use tauri::ipc::Channel;
 
+// `imp::start` blocks the calling thread for up to ~10s (two sequential
+// recv_timeout(5s) waits on ScreenCaptureKit setup) — non-async Tauri
+// commands run inline on the thread that dispatches the IPC call, so without
+// spawn_blocking a slow/first-run-permission-prompt capture setup would
+// freeze the whole window for that long.
 #[tauri::command]
-pub fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
+pub async fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        imp::start(channel)
+        tauri::async_runtime::spawn_blocking(move || imp::start(channel))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|inner| inner)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -166,7 +174,12 @@ mod imp {
             let data = f32_slice(buf);
             let ch = buf.mNumberChannels.max(1) as usize;
             if ch >= 2 {
-                data.iter().map(|&s| to_i16(s)).collect()
+                // Truncate to a whole number of stereo frames — an odd sample
+                // count would otherwise shift L/R for the rest of the buffer.
+                data[..data.len() - data.len() % 2]
+                    .iter()
+                    .map(|&s| to_i16(s))
+                    .collect()
             } else {
                 // Mono -> duplicate to stereo.
                 let mut out = Vec::with_capacity(data.len() * 2);
@@ -297,7 +310,11 @@ mod imp {
     }
 
     pub fn stop() {
-        if let Some(cap) = STATE.lock().unwrap().take() {
+        // Drop the lock before the FFI call below — if it ever panicked while
+        // held, STATE would be poisoned and system-audio capture permanently
+        // unusable until restart.
+        let cap = STATE.lock().unwrap().take();
+        if let Some(cap) = cap {
             let handler = RcBlock::new(|_err: *mut NSError| {});
             unsafe {
                 cap.stream.stopCaptureWithCompletionHandler(Some(&handler));

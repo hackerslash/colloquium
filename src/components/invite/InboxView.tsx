@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
@@ -9,27 +9,54 @@ import { Avatar } from "../ui/Avatar";
 import { IconButton } from "../ui/IconButton";
 import { EmptyState } from "../ui/EmptyState";
 import { Inbox } from "lucide-react";
+import { toast } from "../../stores/useToastStore";
 
 export function InboxView() {
   const self = useIdentityStore((s) => s.self);
   const requests = useFriendRequestStore((s) => s.pending);
   const refresh = useFriendRequestStore((s) => s.refresh);
+  const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
-  async function handleAccept(req: friendRequestsRepo.FriendRequest) {
-    if (!self) return;
-    await friendRequestService.acceptFriendRequest(self, req);
-    await reflectNewContactLocally(self, req.fromId);
-    await refresh();
+  function withProcessing(id: string, fn: () => Promise<void>) {
+    setProcessingIds((s) => new Set(s).add(id));
+    fn().finally(() => {
+      setProcessingIds((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    });
   }
 
-  async function handleDecline(req: friendRequestsRepo.FriendRequest) {
-    if (!self) return;
-    await friendRequestService.declineFriendRequest(self, req);
-    await refresh();
+  function handleAccept(req: friendRequestsRepo.FriendRequest) {
+    if (!self || processingIds.has(req.id)) return;
+    withProcessing(req.id, async () => {
+      try {
+        await friendRequestService.acceptFriendRequest(self, req);
+        await reflectNewContactLocally(self, req.fromId);
+        await refresh();
+      } catch (err) {
+        console.error("Failed to accept friend request:", err);
+        toast.error("Couldn't accept request", "Please try again.");
+      }
+    });
+  }
+
+  function handleDecline(req: friendRequestsRepo.FriendRequest) {
+    if (!self || processingIds.has(req.id)) return;
+    withProcessing(req.id, async () => {
+      try {
+        await friendRequestService.declineFriendRequest(self, req);
+        await refresh();
+      } catch (err) {
+        console.error("Failed to decline friend request:", err);
+        toast.error("Couldn't decline request", "Please try again.");
+      }
+    });
   }
 
   if (requests.length === 0) {
@@ -61,14 +88,16 @@ export function InboxView() {
                     icon={Check}
                     label="Accept"
                     variant="solid"
-                    onClick={() => void handleAccept(req)}
+                    disabled={processingIds.has(req.id)}
+                    onClick={() => handleAccept(req)}
                     className="bg-accent text-accent-ink hover:bg-accent-hover shadow-sm"
                   />
                   <IconButton
                     icon={X}
                     label="Decline"
                     variant="danger"
-                    onClick={() => void handleDecline(req)}
+                    disabled={processingIds.has(req.id)}
+                    onClick={() => handleDecline(req)}
                   />
                 </div>
               </li>

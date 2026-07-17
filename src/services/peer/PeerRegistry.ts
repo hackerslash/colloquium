@@ -120,19 +120,32 @@ export class PeerRegistry {
       }
       this.emit("error", err);
       if (!openedOnce) reject(err);
+      // Fatal broker errors (server-error/socket-error/network, or id-suffix
+      // attempts exhausted) can destroy the underlying Peer. A destroyed
+      // Peer's reconnect() is a permanent no-op, so without recreating it
+      // here the device stays signaling-dead until the app is restarted.
+      if (this.peer === peer && peer.destroyed) {
+        this.scheduleBrokerRecovery(() => this.registerWithBroker(0, () => {}, () => {}));
+      }
     });
 
     peer.on("disconnected", () => {
-      this.emit("broker-down");
-      const delay = jittered(
-        Math.min(BROKER_BACKOFF_MAX_MS, BROKER_BACKOFF_BASE_MS * 2 ** this.brokerAttempts),
-      );
-      this.brokerAttempts++;
-      if (this.brokerReconnectTimer) clearTimeout(this.brokerReconnectTimer);
-      this.brokerReconnectTimer = setTimeout(() => {
+      this.scheduleBrokerRecovery(() => {
         if (this.peer === peer && !peer.destroyed && peer.disconnected) peer.reconnect();
-      }, delay);
+      });
     });
+  }
+
+  /** Shared backoff for both plain broker disconnects (reconnect() suffices)
+   * and fatal errors that destroy the Peer (need a fresh one recreated). */
+  private scheduleBrokerRecovery(attempt: () => void) {
+    this.emit("broker-down");
+    const delay = jittered(
+      Math.min(BROKER_BACKOFF_MAX_MS, BROKER_BACKOFF_BASE_MS * 2 ** this.brokerAttempts),
+    );
+    this.brokerAttempts++;
+    if (this.brokerReconnectTimer) clearTimeout(this.brokerReconnectTimer);
+    this.brokerReconnectTimer = setTimeout(attempt, delay);
   }
 
   private registerConnection(conn: DataConnection) {

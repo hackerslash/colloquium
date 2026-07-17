@@ -18,12 +18,19 @@ pub fn save_private_key_bytes(bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Returns `Ok(None)` both when nothing is stored and when what's stored is
+/// undecodable garbage (e.g. left over from an incompatible format) — either
+/// way there's no usable key to return, and the caller (`identity.rs`) treats
+/// `None` as "safe to generate a fresh one" rather than a permanent lockout.
 pub fn load_private_key_bytes() -> Result<Option<Vec<u8>>, String> {
     match entry()?.get_password() {
-        Ok(encoded) => STANDARD
-            .decode(&encoded)
-            .map(Some)
-            .map_err(|e| e.to_string()),
+        Ok(encoded) => match STANDARD.decode(&encoded) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(_) => {
+                delete_private_key_bytes()?;
+                Ok(None)
+            }
+        },
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(e) => Err(e.to_string()),
     }

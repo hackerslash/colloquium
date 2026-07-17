@@ -30,6 +30,22 @@ const FILE_ASSEMBLY_TTL_MS = 60_000;
 let clock: Hlc | null = null;
 let clockReady: Promise<void> | null = null;
 
+// Serializes the seq-allocate -> sign -> insert sequence in sendMessage. Two
+// overlapping sends would otherwise both read the same next author_seq
+// before either insert lands, and the second insert would be silently
+// dropped by the UNIQUE(room_id, author_id, author_seq) constraint — the
+// signature binds author_seq, so the seq must be known before signing and
+// can't just be assigned atomically by the DB at insert time.
+let sendLock: Promise<unknown> = Promise.resolve();
+function withSendLock<T>(fn: () => Promise<T>): Promise<T> {
+  const result = sendLock.then(fn, fn);
+  sendLock = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 async function ensureClock(): Promise<void> {
   if (!clockReady) clockReady = messageRepo.latestHlc().then((h) => void (clock = h));
   return clockReady;
@@ -120,33 +136,42 @@ export async function sendMessage(
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));
+  const hlc = clock;
 
-  const authorSeq = await messageRepo.nextAuthorSeq(roomId, self.identityId);
-  const wireBase: Omit<ChatMessageWire, "sig"> = {
-    id: crypto.randomUUID(),
-    roomId,
-    authorId: self.identityId,
-    authorSeq,
-    hlc: clock,
-    contentType: attachment ? (attachment.type.startsWith("image/") ? "image" : "file") : "text",
-    body,
-    attachmentId: attachment?.id ?? undefined,
-    attachmentName: attachment?.name ?? undefined,
-    attachmentSize: attachment?.size ?? undefined,
-    attachmentType: attachment?.type ?? undefined,
-    replyToId: null,
-    sentAt: physicalNow,
-    editedAt: null,
-    deletedAt: null,
-  };
-  const sig = await identityService.sign(utf8ToBase64(canonicalMessage(wireBase)));
-  const wire: ChatMessageWire = { ...wireBase, sig };
+  const message = await withSendLock(async () => {
+    const authorSeq = await messageRepo.nextAuthorSeq(roomId, self.identityId);
+    const wireBase: Omit<ChatMessageWire, "sig"> = {
+      id: crypto.randomUUID(),
+      roomId,
+      authorId: self.identityId,
+      authorSeq,
+      hlc,
+      contentType: attachment ? (attachment.type.startsWith("image/") ? "image" : "file") : "text",
+      body,
+      attachmentId: attachment?.id ?? undefined,
+      attachmentName: attachment?.name ?? undefined,
+      attachmentSize: attachment?.size ?? undefined,
+      attachmentType: attachment?.type ?? undefined,
+      replyToId: null,
+      sentAt: physicalNow,
+      editedAt: null,
+      deletedAt: null,
+    };
+    const sig = await identityService.sign(utf8ToBase64(canonicalMessage(wireBase)));
+    const wire: ChatMessageWire = { ...wireBase, sig };
 
-  const message = wireToMessage(wire, "pending");
-  await messageRepo.insertIfAbsent(message);
-  await roomRepo.touchLastMessage(roomId, message.sentAt);
+    const built = wireToMessage(wire, "pending");
+    const inserted = await messageRepo.insertIfAbsent(built);
+    if (!inserted) {
+      // Should be unreachable now that allocation+insert is serialized, but
+      // never silently broadcast a message we don't actually hold locally.
+      throw new Error("failed to allocate a unique message sequence");
+    }
+    await roomRepo.touchLastMessage(roomId, built.sentAt);
+    return built;
+  });
 
-  const payload: ChatMessageMessage = { type: "chat_message", message: wire };
+  const payload: ChatMessageMessage = { type: "chat_message", message: messageToWire(message) };
   const recipients = memberIds.filter((id) => id !== self.identityId);
 
   // If there's a file, chunk and send it BEFORE the message so it's ready when the message arrives
@@ -262,10 +287,12 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
     state.receivedCount++;
 
     if (state.receivedCount === state.expected) {
-      incomingFiles.delete(msg.fileId);
       const fullBase64 = state.chunks.join("");
       const bytes = base64ToBytes(fullBase64);
 
+      // Only drop the in-memory chunks once they're durably stored — if the
+      // insert throws (disk full, DB locked), the assembled bytes stay
+      // buffered so a retry (or the TTL sweep) doesn't lose them outright.
       await fileRepo.insertFile({
         id: msg.fileId,
         name: state.fileName,
@@ -273,6 +300,7 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
         mimeType: state.mimeType,
         data: bytes,
       });
+      incomingFiles.delete(msg.fileId);
 
       // Dispatch an event so MessageList/MessageAttachment can re-render to load the file
       window.dispatchEvent(new CustomEvent("haven_file_downloaded", { detail: msg.fileId }));

@@ -69,7 +69,13 @@ export class PresenterSlotManager {
   replaceAll(slots: PresenterSlotWire[]) {
     for (const incoming of slots) {
       const current = this.slots[incoming.slotIndex];
-      if (incoming.epoch >= current.epoch) this.slots[incoming.slotIndex] = { ...incoming };
+      const wins =
+        incoming.epoch > current.epoch ||
+        (incoming.epoch === current.epoch &&
+          (current.holderId === null ||
+            incoming.holderId === current.holderId ||
+            (incoming.holderId !== null && incoming.holderId < current.holderId)));
+      if (wins) this.slots[incoming.slotIndex] = { ...incoming };
     }
   }
 
@@ -122,6 +128,18 @@ export class PresenterSlotManager {
   applyHeartbeat(msg: SlotHeartbeatMessage): boolean {
     const current = this.slots[msg.slotIndex];
     if (msg.epoch < current.epoch) return false;
+    if (
+      msg.epoch === current.epoch &&
+      current.holderId !== null &&
+      msg.holderId !== current.holderId &&
+      !(msg.holderId < current.holderId)
+    ) {
+      // Same-epoch conflict from a different holder — e.g. a straggling
+      // heartbeat from a claimant that lost the glare tie-break. Apply the
+      // same deterministic tie-break as claims instead of last-write-wins,
+      // otherwise it can flip the slot to the wrong holder.
+      return false;
+    }
     this.slots[msg.slotIndex] = {
       slotIndex: msg.slotIndex,
       holderId: msg.holderId,

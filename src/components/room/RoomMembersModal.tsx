@@ -33,9 +33,13 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
 
   useEffect(() => {
     if (!open) return;
-    void roomMembersRepo.listMembersFull(roomId).then((all) =>
-      setMembers(all.filter((m) => m.leftAt === null)),
-    );
+    let cancelled = false;
+    void roomMembersRepo.listMembersFull(roomId).then((all) => {
+      if (!cancelled) setMembers(all.filter((m) => m.leftAt === null));
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [open, roomId]);
 
   async function handleLeave() {

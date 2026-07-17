@@ -3,6 +3,7 @@ import * as settingsRepo from "../services/db/settingsRepo";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
 import { setCloseToTray as syncCloseToTray } from "../services/window";
+import { toast } from "./useToastStore";
 
 export type ThemePref = "system" | "light" | "dark";
 
@@ -120,40 +121,88 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setTheme: async (theme) => {
+    const previous = get().theme;
     applyTheme(theme);
     // Re-apply accent so the correct light/dark variant is used
     applyAccent(get().accent);
     set({ theme });
-    await settingsRepo.set("theme", theme);
+    try {
+      await settingsRepo.set("theme", theme);
+    } catch (err) {
+      console.error("Failed to save theme setting:", err);
+      applyTheme(previous);
+      applyAccent(get().accent);
+      set({ theme: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 
   setAccent: async (key) => {
+    const previous = get().accent;
     applyAccent(key); // also refreshes the cached "haven-accent-vars"
     set({ accent: key });
-    await settingsRepo.set("accent", key);
+    try {
+      await settingsRepo.set("accent", key);
+    } catch (err) {
+      console.error("Failed to save accent setting:", err);
+      applyAccent(previous);
+      set({ accent: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 
   setPushToTalk: async (on) => {
+    const previous = get().pushToTalk;
     set({ pushToTalk: on });
-    await settingsRepo.set("pushToTalk", on);
+    try {
+      await settingsRepo.set("pushToTalk", on);
+    } catch (err) {
+      console.error("Failed to save push-to-talk setting:", err);
+      set({ pushToTalk: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 
   setCloseToTray: async (on) => {
+    const previous = get().closeToTray;
     set({ closeToTray: on });
     void syncCloseToTray(on);
-    await settingsRepo.set("closeToTray", on);
+    try {
+      await settingsRepo.set("closeToTray", on);
+    } catch (err) {
+      console.error("Failed to save close-to-tray setting:", err);
+      set({ closeToTray: previous });
+      void syncCloseToTray(previous);
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 
   setNoiseSuppression: async (on) => {
+    const previous = get().noiseSuppression;
     set({ noiseSuppression: on });
     applyVoiceSettingsToLiveCalls();
-    await settingsRepo.set("noiseSuppression", on);
+    try {
+      await settingsRepo.set("noiseSuppression", on);
+    } catch (err) {
+      console.error("Failed to save noise suppression setting:", err);
+      set({ noiseSuppression: previous });
+      applyVoiceSettingsToLiveCalls();
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 
   setVoiceIsolation: async (on) => {
+    const previous = get().voiceIsolation;
     set({ voiceIsolation: on });
     applyVoiceSettingsToLiveCalls();
-    await settingsRepo.set("voiceIsolation", on);
+    try {
+      await settingsRepo.set("voiceIsolation", on);
+    } catch (err) {
+      console.error("Failed to save voice isolation setting:", err);
+      set({ voiceIsolation: previous });
+      applyVoiceSettingsToLiveCalls();
+      toast.error("Setting not saved", "Please try again.");
+    }
   },
 }));
 

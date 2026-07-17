@@ -13,12 +13,16 @@ fn show_main(app: &tauri::AppHandle) {
 }
 
 pub fn build(app: &App) -> Result<()> {
+    let icon = app
+        .default_window_icon()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?
+        .clone();
     let open = MenuItem::with_id(app, "open", "Open Haven", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Haven", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
 
     TrayIconBuilder::with_id("haven-tray")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {

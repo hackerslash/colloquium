@@ -7,6 +7,12 @@ const FOCUSABLE =
  * the previously-focused element on unmount. Also routes Escape to onClose. */
 export function useFocusTrap<T extends HTMLElement>(onClose?: () => void) {
   const ref = useRef<T>(null);
+  // Read through a ref so a caller passing a fresh inline arrow every render
+  // doesn't re-run the effect below — that used to tear down and re-attach
+  // the trap (re-stealing focus to the first control) on every unrelated
+  // parent re-render while the modal was open, disrupting mid-typing.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     const container = ref.current;
@@ -21,7 +27,7 @@ export function useFocusTrap<T extends HTMLElement>(onClose?: () => void) {
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose?.();
+        onCloseRef.current?.();
         return;
       }
       if (e.key !== "Tab") return;
@@ -43,7 +49,7 @@ export function useFocusTrap<T extends HTMLElement>(onClose?: () => void) {
       container.removeEventListener("keydown", onKeyDown);
       previouslyFocused?.focus?.();
     };
-  }, [onClose]);
+  }, []);
 
   return ref;
 }
