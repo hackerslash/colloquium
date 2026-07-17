@@ -19,6 +19,7 @@ import {
   PresenterSlotManager,
   SLOT_COUNT,
 } from "./PresenterSlotManager";
+import { captureDisplay, releaseDisplayAudio } from "./displayMedia";
 import { emitCallEvent } from "./callEvents";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useCallStore } from "../../stores/useCallStore";
@@ -322,6 +323,7 @@ export function leaveRoomCall() {
   session.localStream.getTracks().forEach((t) => t.stop());
   session.cameraTrack?.stop();
   session.screenStream?.getTracks().forEach((t) => t.stop());
+  releaseDisplayAudio();
   session = null;
   useRoomCallStore.getState()._clear();
 }
@@ -409,10 +411,7 @@ export async function startScreenShare() {
   // never got.
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 30 } },
-      audio: true,
-    });
+    ({ stream } = await captureDisplay());
   } catch (err) {
     const name = (err as Error)?.name;
     useRoomCallStore
@@ -444,6 +443,7 @@ export async function startScreenShare() {
     } else {
       wrapper.addVideoTrack(videoTrack, stream, "screen", screenCeiling());
     }
+    // System audio only (never the mic); rides the screen stream's msid.
     for (const audioTrack of stream.getAudioTracks()) {
       wrapper.addTrack(audioTrack, stream);
     }
@@ -464,6 +464,7 @@ function stopScreenShareLocal() {
     for (const track of tracks) void wrapper.detachTrack(track);
   }
   tracks.forEach((t) => t.stop());
+  releaseDisplayAudio();
   session.screenStream = null;
   const store = useRoomCallStore.getState();
   store._setScreenOn(false);

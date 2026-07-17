@@ -11,6 +11,7 @@ import type {
 import { getOutbox, getPeerRegistry } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
 import { PeerConnectionWrapper } from "./PeerConnectionWrapper";
+import { captureDisplay, releaseDisplayAudio, type DisplayCapture } from "./displayMedia";
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
@@ -237,6 +238,7 @@ function endCallLocal() {
   clearIncomingTimer();
   ctx?.localStream?.getTracks().forEach((t) => t.stop());
   ctx?.screenStream?.getTracks().forEach((t) => t.stop());
+  releaseDisplayAudio();
   ctx?.wrapper?.close();
   ctx = null;
   useCallStore.getState()._clear();
@@ -244,12 +246,9 @@ function endCallLocal() {
 
 export async function startScreenShare() {
   if (!ctx?.wrapper) return;
-  let stream: MediaStream;
+  let capture: DisplayCapture;
   try {
-    stream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 30 } },
-      audio: true,
-    });
+    capture = await captureDisplay();
   } catch (err) {
     const name = (err as Error)?.name;
     useCallStore
@@ -261,6 +260,7 @@ export async function startScreenShare() {
       );
     return;
   }
+  const { stream } = capture;
   const track = stream.getVideoTracks()[0];
   ctx.screenStream = stream;
 
@@ -272,9 +272,9 @@ export async function startScreenShare() {
     ctx.wrapper.addVideoTrack(track, stream, "screen");
   }
 
-  // Forward any audio the OS picker returned (tab audio, or system audio if
-  // the user ticked "Share audio" in the native screen picker — no extra
-  // software needed).
+  // Forward the system audio the OS returned (never the mic — that's a
+  // separate call track). Rides the screen stream's msid so the receiver
+  // groups it with the screen, not the camera.
   for (const audioTrack of stream.getAudioTracks()) {
     ctx.wrapper.addTrack(audioTrack, stream);
   }
@@ -294,6 +294,7 @@ export async function stopScreenShare() {
     track.stop();
   }
   ctx.screenStream = null;
+  releaseDisplayAudio();
 
   const store = useCallStore.getState();
   store._setScreenOn(false);

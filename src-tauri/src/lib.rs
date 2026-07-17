@@ -1,6 +1,7 @@
 mod db;
 mod identity;
 mod keychain;
+mod sysaudio;
 mod tray;
 
 use tauri::{Manager, WindowEvent};
@@ -59,6 +60,8 @@ pub fn run() {
             identity::identity_sign,
             identity::identity_verify,
             identity::identity_delete_keypair,
+            sysaudio::sysaudio_start,
+            sysaudio::sysaudio_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
