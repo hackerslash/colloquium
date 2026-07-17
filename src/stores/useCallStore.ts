@@ -4,6 +4,12 @@ import type { ConnectionQuality } from "../services/call/PeerConnectionWrapper";
 import * as callService from "../services/call/callService";
 import { useIdentityStore } from "./useIdentityStore";
 import { SCREEN_SHARE_OPTIONS, type ScreenShareQualityOption } from "../services/call/screenShareConfig";
+import { toast } from "./useToastStore";
+
+/** getUserMedia rejections don't carry a message worth showing a user
+ * (e.g. "Permission denied"); a single friendly line covers the common
+ * denied/no-device cases without misdiagnosing which one it was. */
+const MEDIA_ERROR_HINT = "Check your microphone permissions and try again.";
 
 export type CallStatus =
   | "idle"
@@ -84,9 +90,22 @@ export const useCallStore = create<CallState>((set) => ({
   screenConfig: SCREEN_SHARE_OPTIONS[0],
   screenLinkBps: null,
 
-  startCall: (roomId, remoteId, withVideo) =>
-    callService.startCall(requireSelf(), roomId, remoteId, withVideo),
-  acceptCall: () => callService.acceptCall(requireSelf()),
+  startCall: async (roomId, remoteId, withVideo) => {
+    try {
+      await callService.startCall(requireSelf(), roomId, remoteId, withVideo);
+    } catch (err) {
+      console.error("Failed to start call:", err);
+      toast.error("Couldn't start call", MEDIA_ERROR_HINT);
+    }
+  },
+  acceptCall: async () => {
+    try {
+      await callService.acceptCall(requireSelf());
+    } catch (err) {
+      console.error("Failed to accept call:", err);
+      toast.error("Couldn't join call", MEDIA_ERROR_HINT);
+    }
+  },
   declineCall: () => callService.declineCall(requireSelf()),
   hangUp: () => callService.hangUp(),
   toggleMic: () => callService.toggleMic(),

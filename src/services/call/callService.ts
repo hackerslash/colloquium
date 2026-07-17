@@ -234,7 +234,23 @@ export async function acceptCall(self: Identity) {
 
   // Voice calls stay voice: the camera only opens when the caller asked for
   // video. Either side can still turn their camera on later.
-  const localStream = await acquireLocalMedia(active.withVideo);
+  let localStream: MediaStream;
+  try {
+    localStream = await acquireLocalMedia(active.withVideo);
+  } catch (err) {
+    // Mic unavailable/denied — let the caller know we're not answering
+    // instead of leaving them ringing forever, and clear our own UI so the
+    // incoming-call banner doesn't get stuck.
+    sendToRemote(active.remoteId, {
+      type: "call_decline",
+      roomId: active.roomId,
+      fromId: self.identityId,
+      inviteId: active.inviteId,
+      reason: "declined",
+    } satisfies CallDeclineMessage);
+    useCallStore.getState()._clear();
+    throw err;
+  }
   ctx = {
     self,
     remoteId: active.remoteId,

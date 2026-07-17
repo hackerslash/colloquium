@@ -6,6 +6,7 @@ import * as roomCallService from "../services/call/roomCallService";
 import * as roomMembersRepo from "../services/db/roomMembersRepo";
 import { useIdentityStore } from "./useIdentityStore";
 import { SCREEN_SHARE_OPTIONS, type ScreenShareQualityOption } from "../services/call/screenShareConfig";
+import { toast } from "./useToastStore";
 
 type RoomCallState = {
   roomId: string | null;
@@ -82,9 +83,14 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   screenLinkBps: null,
 
   join: async (roomId) => {
-    const self = requireSelf();
-    const memberIds = await roomMembersRepo.listMembers(roomId);
-    await roomCallService.joinRoomCall(self, roomId, memberIds);
+    try {
+      const self = requireSelf();
+      const memberIds = await roomMembersRepo.listMembers(roomId);
+      await roomCallService.joinRoomCall(self, roomId, memberIds);
+    } catch (err) {
+      console.error("Failed to join room call:", err);
+      toast.error("Couldn't join call", "Check your microphone permissions and try again.");
+    }
   },
   leave: () => roomCallService.leaveRoomCall(),
   toggleMic: () => roomCallService.toggleMic(),
