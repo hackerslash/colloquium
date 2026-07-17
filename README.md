@@ -9,6 +9,22 @@ lives locally in SQLite.
 On Linux, the device identity key is stored via the Secret Service D-Bus API,
 so a keyring provider (e.g. GNOME Keyring or KWallet) must be running.
 
+## Download
+
+Installers for Windows, macOS (universal), and Linux (`.deb`, `.rpm`,
+`.AppImage`) are published on the
+[Releases page](https://github.com/hackerslash/Haven/releases/latest).
+
+## Features
+
+- Persistent text chat and 1:1 / room voice & video calls over WebRTC
+- Screen sharing with adjustable quality, up to a link-tested Max mode, plus
+  system audio capture on macOS
+- Live voice isolation and noise suppression
+- Local-first: all data lives in SQLite, no custom backend
+- Cross-platform: Windows, macOS (universal), and Linux, including a
+  persistent Secret Service-backed identity keychain on Linux
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/)

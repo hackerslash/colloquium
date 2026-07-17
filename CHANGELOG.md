@@ -7,7 +7,7 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
-## v2
+## 0.1.0
 
 ### Added
 
@@ -102,7 +102,3 @@ backend, and the frontend stores/components.
   and silently reorder messages.
 - Wired up the `closeToTray` setting and gated it on the tray actually
   existing, so it can't strand a hidden window with no way to reopen it.
-
-## v1
-
-Initial tagged release.
