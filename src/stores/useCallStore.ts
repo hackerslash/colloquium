@@ -4,12 +4,21 @@ import type { ConnectionQuality } from "../services/call/PeerConnectionWrapper";
 import * as callService from "../services/call/callService";
 import { useIdentityStore } from "./useIdentityStore";
 
-export type CallStatus = "idle" | "outgoing" | "incoming" | "connecting" | "active";
+export type CallStatus =
+  | "idle"
+  | "dialing" // invite not yet delivered (peer unreachable so far)
+  | "outgoing" // invite sent, no ringing ack yet
+  | "ringing" // callee confirmed the ring UI is showing
+  | "incoming"
+  | "connecting"
+  | "active";
 
 type ActiveCall = {
   roomId: string;
   remoteId: string;
   status: CallStatus;
+  withVideo: boolean;
+  inviteId?: string;
 };
 
 type CallState = {

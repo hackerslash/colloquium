@@ -34,5 +34,17 @@ pub fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0005_settings.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 6,
+            description: "room_membership_v2",
+            sql: include_str!("../migrations/0006_room_membership_v2.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 7,
+            description: "read_state",
+            sql: include_str!("../migrations/0007_read_state.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }

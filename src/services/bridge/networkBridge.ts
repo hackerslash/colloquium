@@ -1,7 +1,8 @@
-import type { Identity } from "../../types/domain";
-import type { HavenMessage } from "../../types/wire";
-import { initPeerRegistry } from "../peer/registry";
+import type { Identity, Presence } from "../../types/domain";
+import type { HavenMessage, MsgAckMessage } from "../../types/wire";
+import { initPeerRegistry, getOutbox } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
+import * as messageRepo from "../db/messageRepo";
 import * as rosterService from "../roster/rosterService";
 import * as rosterRepo from "../db/rosterRepo";
 import * as roomRepo from "../db/roomRepo";
@@ -10,12 +11,14 @@ import * as chatService from "../room/chatService";
 import * as roomService from "../room/roomService";
 import * as callService from "../call/callService";
 import * as roomCallService from "../call/roomCallService";
+import { getRoomCallPresenceTracker } from "../call/RoomCallPresenceTracker";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { notifyIfUnfocused } from "../notify";
 
 const DISCOVERY_INTERVAL_MS = 2_000;
+const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
 
 function findContactByPeerId(peerId: string) {
   const contacts = Object.values(useRosterStore.getState().contactsById);
@@ -47,11 +50,16 @@ async function syncDmWith(self: Identity, contactId: string, peerId: string) {
  * identity is known, and call the returned teardown on sign-out/app close. */
 export function initNetworkBridge(self: Identity): () => void {
   const registry = initPeerRegistry(self.identityId);
+  let brokerUp = false;
+
+  function setPresence(contactId: string, presence: Presence) {
+    useRosterStore.getState().setPresence(contactId, presence);
+  }
 
   registry.on("peer-connected", (peerId) => {
     const contact = findContactByPeerId(peerId);
     if (contact) {
-      useRosterStore.getState().setPresence(contact.identityId, "online");
+      setPresence(contact.identityId, "online");
       void rosterRepo.markSeen(contact.identityId, peerId, Date.now());
       void syncDmWith(self, contact.identityId, peerId);
     }
@@ -60,9 +68,29 @@ export function initNetworkBridge(self: Identity): () => void {
 
   registry.on("peer-disconnected", (peerId) => {
     const contact = findContactByPeerId(peerId);
-    if (contact) {
-      useRosterStore.getState().setPresence(contact.identityId, "offline");
+    if (contact) setPresence(contact.identityId, "offline");
+  });
+
+  registry.on("dial-failed", (peerId) => {
+    const contact = findContactByPeerId(peerId);
+    if (contact) setPresence(contact.identityId, "offline");
+  });
+
+  registry.on("broker-down", () => {
+    brokerUp = false;
+    // Presence can't be trusted while signaling is down. Established
+    // connections stay (their heartbeat is the authority); everyone else
+    // drops out of "connecting" limbo.
+    for (const contact of Object.values(useRosterStore.getState().contactsById)) {
+      if (!registry.isConnected(derivePeerId(contact.identityId))) {
+        setPresence(contact.identityId, "offline");
+      }
     }
+  });
+
+  registry.on("broker-up", () => {
+    brokerUp = true;
+    discover();
   });
 
   registry.on("message", (peerId, data) => {
@@ -75,14 +103,23 @@ export function initNetworkBridge(self: Identity): () => void {
     console.warn("PeerRegistry error", err);
   });
 
-  // Dial everyone as soon as the broker connection is actually open. The
-  // initial discover() below fires before that and mostly no-ops; this is what
-  // makes presence appear promptly instead of waiting for the next interval.
-  registry.on("ready", () => discover());
-
   registry.start().catch((err) => {
     console.error("failed to register with the signaling broker", err);
   });
+
+  function ackMessage(toPeerId: string, roomId: string, messageId: string) {
+    const ack: MsgAckMessage = { type: "msg_ack", roomId, messageId };
+    registry.send(toPeerId, ack);
+  }
+
+  /** Bumps the room's unread count unless it's the room the user is currently
+   * viewing in a focused window (in which case it's read on arrival). */
+  function markUnreadIfInactive(roomId: string) {
+    const roomStore = useRoomStore.getState();
+    const isActive = roomStore.activeRoomId === roomId && document.hasFocus();
+    if (isActive) void roomStore.markRead(roomId);
+    else roomStore.bumpUnread(roomId);
+  }
 
   async function routeMessage(peerId: string, data: unknown) {
     const msg = data as HavenMessage;
@@ -101,7 +138,9 @@ export function initNetworkBridge(self: Identity): () => void {
       case "chat_message": {
         const stored = await chatService.handleChatMessage(self, msg, Date.now());
         if (stored) {
+          ackMessage(peerId, stored.roomId, stored.id);
           useChatStore.getState().ingestMessage(stored);
+          markUnreadIfInactive(stored.roomId);
           const author = useRosterStore.getState().contactsById[stored.authorId];
           void notifyIfUnfocused(
             author?.displayName ?? "New message",
@@ -110,16 +149,34 @@ export function initNetworkBridge(self: Identity): () => void {
         }
         break;
       }
-      case "room_sync_request":
-        await chatService.handleRoomSyncRequest(peerId, msg);
+      case "msg_ack":
+        await messageRepo.setDeliveryStatus(msg.messageId, "delivered");
+        useChatStore.getState().updateMessageStatus(msg.roomId, msg.messageId, "delivered");
         break;
+      case "room_sync_request": {
+        // The requester's have-vector doubles as a receipt: anything of ours
+        // at or below their seq is already on their device.
+        const flipped = await chatService.handleRoomSyncRequest(self.identityId, peerId, msg);
+        if (flipped) await useChatStore.getState().refreshRoom(msg.roomId);
+        break;
+      }
       case "room_sync_response": {
         const stored = await chatService.handleRoomSyncResponse(self, msg, Date.now());
-        for (const m of stored) useChatStore.getState().ingestMessage(m);
+        for (const m of stored) {
+          // Ack the author directly (best effort) — the relaying peer isn't
+          // necessarily who wrote the message.
+          ackMessage(derivePeerId(m.authorId), m.roomId, m.id);
+          useChatStore.getState().ingestMessage(m);
+          // Backfilled messages count as unread but don't fire a notification.
+          markUnreadIfInactive(m.roomId);
+        }
         break;
       }
       case "call_invite":
         callService.handleCallInvite(self, msg);
+        break;
+      case "call_ringing":
+        callService.handleCallRinging(self, msg);
         break;
       case "call_accept":
         callService.handleCallAccept(self, msg);
@@ -141,6 +198,14 @@ export function initNetworkBridge(self: Identity): () => void {
       case "room_announce":
         await roomService.handleRoomAnnounce(self, msg);
         await useRoomStore.getState().loadRooms();
+        break;
+      case "room_leave":
+        await roomService.handleRoomLeave(self, msg);
+        await useRoomStore.getState().loadRooms();
+        break;
+      case "room_call_beacon":
+        getRoomCallPresenceTracker().applyBeacon(msg);
+        roomCallService.handleRoomCallBeacon(self, msg);
         break;
       case "room_call_join":
         roomCallService.handleRoomCallJoin(self, msg);
@@ -164,6 +229,11 @@ export function initNetworkBridge(self: Identity): () => void {
   }
 
   function discover() {
+    registry.heartbeatTick(Date.now());
+    getOutbox().sweep();
+    getRoomCallPresenceTracker().sweep();
+    if (!brokerUp) return;
+
     const contacts = Object.values(useRosterStore.getState().contactsById);
     for (const contact of contacts) {
       if (contact.revoked) continue;
@@ -173,30 +243,35 @@ export function initNetworkBridge(self: Identity): () => void {
       // contact can also be added to the roster (via roster_sync) after the
       // connection to them already opened, so this covers that case too.
       if (registry.isConnected(peerId)) {
-        useRosterStore.getState().setPresence(contact.identityId, "online");
+        setPresence(contact.identityId, "online");
         continue;
       }
 
-      // Only the lexicographically-smaller identity dials; the other waits for
-      // the incoming connection. This makes exactly one connection per pair,
-      // avoiding the glare where both dial and each side keeps a different
-      // physical connection (which silently breaks delivery in one direction).
-      if (self.identityId < contact.identityId) {
-        useRosterStore.getState().setPresence(contact.identityId, "connecting");
-        registry.connect(peerId).catch(() => {
-          useRosterStore.getState().setPresence(contact.identityId, "offline");
-        });
-      } else {
-        useRosterStore.getState().setPresence(contact.identityId, "offline");
+      // Both sides dial; the registry resolves glare deterministically. A
+      // peer in dial backoff just shows offline until its next attempt.
+      if (!registry.canDial(peerId)) {
+        setPresence(contact.identityId, "offline");
+        continue;
       }
+
+      setPresence(contact.identityId, "connecting");
+      registry.connect(peerId).catch(() => {
+        // dial-failed / peer-disconnected events settle presence
+      });
     }
   }
 
-  discover();
   const intervalId = setInterval(discover, DISCOVERY_INTERVAL_MS);
+
+  // Slow gossip: LWW-merged re-announces converge member sets that diverged
+  // while someone was offline past the Outbox TTL.
+  const reannounceId = setInterval(() => {
+    void roomService.reannounceAllGroupRooms(self);
+  }, REANNOUNCE_INTERVAL_MS);
 
   return () => {
     clearInterval(intervalId);
+    clearInterval(reannounceId);
     registry.stop();
   };
 }

@@ -84,6 +84,24 @@ export async function setDeliveryStatus(
   await db.execute("UPDATE messages SET delivery_status = $1 WHERE id = $2", [status, id]);
 }
 
+/** Marks this author's undelivered messages up to a seq as delivered — used
+ * when a peer's sync have-vector proves they already hold them. */
+export async function markDeliveredUpTo(
+  roomId: string,
+  authorId: string,
+  maxSeq: number,
+): Promise<number> {
+  if (maxSeq <= 0) return 0;
+  const db = await getDb();
+  const result = await db.execute(
+    `UPDATE messages SET delivery_status = 'delivered'
+     WHERE room_id = $1 AND author_id = $2 AND author_seq <= $3
+       AND delivery_status IN ('pending', 'sent')`,
+    [roomId, authorId, maxSeq],
+  );
+  return result.rowsAffected;
+}
+
 /** Highest author_seq this device holds for each author in a room — the
  * `have` vector the backfill protocol sends so peers reply with only the gap. */
 export async function highestSeqPerAuthor(roomId: string): Promise<Record<string, number>> {

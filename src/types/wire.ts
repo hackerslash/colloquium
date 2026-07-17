@@ -70,6 +70,22 @@ export type ChatMessageMessage = {
   message: ChatMessageWire;
 };
 
+// --- Transport-level liveness. Consumed inside PeerRegistry (never routed to
+// the app-level message switch): any traffic bumps a per-peer lastSeenAt, and
+// a peer silent past the liveness timeout is closed and marked offline. ---
+
+export type PingMessage = { type: "ping"; ts: number };
+export type PongMessage = { type: "pong"; ts: number };
+
+/** Receipt sent to a chat message's author once the message is verified and
+ * stored (live delivery or sync backfill). Flips the author's local
+ * deliveryStatus to "delivered". */
+export type MsgAckMessage = {
+  type: "msg_ack";
+  roomId: string;
+  messageId: string;
+};
+
 /** DM rooms have deterministic IDs derived from the two member identityIds
  * (see roomService.dmRoomId), so both sides independently agree on the room a
  * message belongs to without exchanging room metadata. This carries the
@@ -87,30 +103,49 @@ export type RoomSyncResponseMessage = {
   messages: ChatMessageWire[];
 };
 
-// --- Call control (a layer above raw negotiation) ---
+// --- Call control (a layer above raw negotiation). inviteId ties the whole
+// ring handshake together so a late ack from an abandoned attempt can't
+// confuse a newer one. ---
 
 export type CallInviteMessage = {
   type: "call_invite";
   roomId: string;
   fromId: string;
+  inviteId: string;
+  /** Whether the caller wants this to start as a video call — the callee
+   * only opens the camera when true. */
+  withVideo: boolean;
+};
+
+/** Callee received the invite and is showing the ring UI. Until this arrives
+ * the caller shows "reaching…" rather than a false "ringing". */
+export type CallRingingMessage = {
+  type: "call_ringing";
+  roomId: string;
+  fromId: string;
+  inviteId: string;
 };
 
 export type CallAcceptMessage = {
   type: "call_accept";
   roomId: string;
   fromId: string;
+  inviteId?: string;
 };
 
 export type CallDeclineMessage = {
   type: "call_decline";
   roomId: string;
   fromId: string;
+  inviteId?: string;
+  reason?: "busy" | "timeout" | "declined";
 };
 
 export type CallHangupMessage = {
   type: "call_hangup";
   roomId: string;
   fromId: string;
+  reason?: "hangup" | "timeout";
 };
 
 // --- Perfect-negotiation signaling (SDP + ICE), relayed over the PeerJS
@@ -159,12 +194,16 @@ export type RoomCallPresenceMessage = {
   slots: PresenterSlotWire[];
 };
 
+/** Slots coordinate SCREEN shares only (cameras are full-mesh and slot-free).
+ * streamId is the sharer's screen MediaStream id — msid survives SDP, so
+ * receivers use it to tell screen tracks apart from camera tracks. */
 export type PresenterSlotWire = {
   slotIndex: 0 | 1;
   holderId: string | null;
   epoch: number;
   leaseExpiresAt: number;
   mediaKind: "camera" | "screen" | null;
+  streamId: string | null;
 };
 
 export type SlotClaimMessage = {
@@ -175,6 +214,7 @@ export type SlotClaimMessage = {
   epoch: number;
   leaseExpiresAt: number;
   mediaKind: "camera" | "screen";
+  streamId: string | null;
 };
 
 export type SlotHeartbeatMessage = {
@@ -185,6 +225,7 @@ export type SlotHeartbeatMessage = {
   epoch: number;
   leaseExpiresAt: number;
   mediaKind: "camera" | "screen";
+  streamId: string | null;
 };
 
 export type SlotReleaseMessage = {
@@ -195,7 +236,20 @@ export type SlotReleaseMessage = {
   epoch: number;
 };
 
-// --- Group room membership announcement ---
+// --- Group room membership announcement (v2: LWW + tombstones) ---
+
+/** Membership entry with a tombstone (leftAt) and an LWW clock (updatedAt) so
+ * merges are order-independent and a leave can't be resurrected by a stale
+ * re-announce. displayName is embedded so receivers can materialize members
+ * they haven't learned through roster gossip yet. */
+export type RoomMemberWire = {
+  id: string;
+  displayName: string | null;
+  role: "owner" | "member";
+  joinedAt: number;
+  leftAt: number | null;
+  updatedAt: number;
+};
 
 export type RoomAnnounceMessage = {
   type: "room_announce";
@@ -206,7 +260,27 @@ export type RoomAnnounceMessage = {
     createdBy: string;
     createdAt: number;
   };
-  memberIds: string[];
+  members: RoomMemberWire[];
+};
+
+export type RoomLeaveMessage = {
+  type: "room_leave";
+  roomId: string;
+  fromId: string;
+  ts: number;
+};
+
+/** Room-call occupancy beacon, broadcast to ALL room members (not just call
+ * participants) so a room can show as active to people who haven't joined.
+ * Same absolute-expiry lease model as presenter slots: entries expire on
+ * their own if the sender vanishes, and `leaving` removes immediately. */
+export type RoomCallBeaconMessage = {
+  type: "room_call_beacon";
+  roomId: string;
+  fromId: string;
+  participants: string[];
+  leaseExpiresAt: number;
+  leaving: boolean;
 };
 
 export type HavenMessage =
@@ -214,9 +288,13 @@ export type HavenMessage =
   | InviteAckMessage
   | RosterSyncMessage
   | ChatMessageMessage
+  | PingMessage
+  | PongMessage
+  | MsgAckMessage
   | RoomSyncRequestMessage
   | RoomSyncResponseMessage
   | CallInviteMessage
+  | CallRingingMessage
   | CallAcceptMessage
   | CallDeclineMessage
   | CallHangupMessage
@@ -228,4 +306,6 @@ export type HavenMessage =
   | SlotClaimMessage
   | SlotHeartbeatMessage
   | SlotReleaseMessage
-  | RoomAnnounceMessage;
+  | RoomAnnounceMessage
+  | RoomLeaveMessage
+  | RoomCallBeaconMessage;

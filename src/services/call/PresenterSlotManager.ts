@@ -12,7 +12,14 @@ export const HEARTBEAT_MS = 3_000;
 type Slot = PresenterSlotWire;
 
 function emptySlot(index: 0 | 1): Slot {
-  return { slotIndex: index, holderId: null, epoch: 0, leaseExpiresAt: 0, mediaKind: null };
+  return {
+    slotIndex: index,
+    holderId: null,
+    epoch: 0,
+    leaseExpiresAt: 0,
+    mediaKind: null,
+    streamId: null,
+  };
 }
 
 /**
@@ -37,7 +44,7 @@ export class PresenterSlotManager {
   effective(now: number): Slot[] {
     return this.slots.map((s) =>
       s.holderId && now > s.leaseExpiresAt
-        ? { ...s, holderId: null, mediaKind: null }
+        ? { ...s, holderId: null, mediaKind: null, streamId: null }
         : { ...s },
     );
   }
@@ -66,11 +73,13 @@ export class PresenterSlotManager {
     }
   }
 
-  /** Build the claim to broadcast; also applies it locally (optimistic). */
+  /** Build the claim to broadcast; also applies it locally (optimistic).
+   * Slots carry screen shares only; streamId is the sharer's screen
+   * MediaStream id so receivers can classify incoming tracks. */
   buildClaim(
     index: 0 | 1,
     claimantId: string,
-    mediaKind: "camera" | "screen",
+    streamId: string,
     now: number,
   ): SlotClaimMessage | null {
     if (!this.isFree(index, now)) return null;
@@ -83,7 +92,8 @@ export class PresenterSlotManager {
       claimantId,
       epoch,
       leaseExpiresAt,
-      mediaKind,
+      mediaKind: "screen",
+      streamId,
     };
     this.applyClaim(claim);
     return claim;
@@ -104,6 +114,7 @@ export class PresenterSlotManager {
       epoch: msg.epoch,
       leaseExpiresAt: msg.leaseExpiresAt,
       mediaKind: msg.mediaKind,
+      streamId: msg.streamId,
     };
     return true;
   }
@@ -117,6 +128,7 @@ export class PresenterSlotManager {
       epoch: msg.epoch,
       leaseExpiresAt: msg.leaseExpiresAt,
       mediaKind: msg.mediaKind,
+      streamId: msg.streamId,
     };
     return true;
   }
@@ -131,6 +143,7 @@ export class PresenterSlotManager {
       epoch: msg.epoch + 1,
       leaseExpiresAt: 0,
       mediaKind: null,
+      streamId: null,
     };
     return true;
   }
@@ -147,7 +160,8 @@ export class PresenterSlotManager {
       holderId,
       epoch: s.epoch,
       leaseExpiresAt,
-      mediaKind: s.mediaKind ?? "camera",
+      mediaKind: s.mediaKind ?? "screen",
+      streamId: s.streamId,
     };
   }
 

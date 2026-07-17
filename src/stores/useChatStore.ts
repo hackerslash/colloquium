@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Message } from "../types/domain";
+import type { DeliveryStatus, Message } from "../types/domain";
 import * as messageRepo from "../services/db/messageRepo";
 import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
@@ -15,6 +15,10 @@ type ChatState = {
   /** Bridge-called: a message arrived/backfilled from the network and was
    * already persisted; reflect it in the in-memory list if the room is loaded. */
   ingestMessage: (message: Message) => void;
+  /** Bridge-called: a delivery receipt arrived; the repo row is already updated. */
+  updateMessageStatus: (roomId: string, messageId: string, status: DeliveryStatus) => void;
+  /** Reloads a room's messages from the DB, but only if it's already loaded. */
+  refreshRoom: (roomId: string) => Promise<void>;
 };
 
 function insertOrdered(list: Message[], message: Message): Message[] {
@@ -70,5 +74,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }));
     }
     void useRoomStore.getState().loadRooms();
+  },
+
+  updateMessageStatus: (roomId, messageId, status) => {
+    const loaded = get().messagesByRoom[roomId];
+    if (!loaded) return;
+    set((state) => ({
+      messagesByRoom: {
+        ...state.messagesByRoom,
+        [roomId]: loaded.map((m) =>
+          m.id === messageId ? { ...m, deliveryStatus: status } : m,
+        ),
+      },
+    }));
+  },
+
+  refreshRoom: async (roomId) => {
+    if (get().messagesByRoom[roomId]) await get().loadMessages(roomId);
   },
 }));

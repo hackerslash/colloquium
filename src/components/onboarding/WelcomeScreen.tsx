@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { motion } from "motion/react";
+import { Shield } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { Button } from "../ui/Button";
 
 export function WelcomeScreen() {
   const createIdentity = useIdentityStore((s) => s.createIdentity);
@@ -23,23 +26,28 @@ export function WelcomeScreen() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-bg-primary">
-      <form
+    <div className="flex h-full items-center justify-center bg-bg-base p-6">
+      <motion.form
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-2xl bg-bg-secondary p-8 shadow-xl"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25, ease: [0.25, 1, 0.5, 1] }}
+        className="w-full max-w-sm rounded-2xl border border-border bg-bg-secondary p-8 shadow-modal"
       >
-        <h1 className="text-2xl font-semibold text-text-primary">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/15 text-accent">
+          <Shield size={28} aria-hidden="true" />
+        </span>
+        <h1 className="mt-4 text-2xl font-bold tracking-tight text-text-primary">
           Welcome to Haven
         </h1>
         <p className="mt-2 text-sm text-text-secondary">
-          Create your identity to get started. This device will generate a
-          private key that never leaves your machine — it's how other
-          trusted members will recognize you.
+          Create your identity to get started. This device generates a private key that never
+          leaves your machine — it's how trusted members recognize you.
         </p>
 
         <label
           htmlFor="displayName"
-          className="mt-6 block text-xs font-semibold uppercase tracking-wide text-text-secondary"
+          className="mt-6 block text-[11px] font-semibold uppercase tracking-wider text-text-muted"
         >
           Display name
         </label>
@@ -50,7 +58,7 @@ export function WelcomeScreen() {
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="e.g. Afridi"
           maxLength={32}
-          className="mt-1.5 w-full rounded-lg border border-border bg-bg-tertiary px-3 py-2 text-text-primary outline-none focus:ring-2 focus:ring-accent"
+          className="mt-1.5 w-full rounded-md border border-border-strong bg-bg-tertiary px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent"
         />
 
         {error && (
@@ -59,14 +67,16 @@ export function WelcomeScreen() {
           </p>
         )}
 
-        <button
+        <Button
           type="submit"
-          disabled={!displayName.trim() || submitting}
-          className="mt-6 w-full rounded-lg bg-accent px-4 py-2.5 font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          size="lg"
+          loading={submitting}
+          disabled={!displayName.trim()}
+          className="mt-6 w-full"
         >
-          {submitting ? "Creating identity…" : "Get Started"}
-        </button>
-      </form>
+          Get started
+        </Button>
+      </motion.form>
     </div>
   );
 }

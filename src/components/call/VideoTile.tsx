@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Maximize2, Minimize2 } from "lucide-react";
+import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
+import { Avatar } from "../ui/Avatar";
+import { cx } from "../../lib/cx";
 
 type VideoTileProps = {
   stream: MediaStream | null;
@@ -7,16 +11,23 @@ type VideoTileProps = {
   mirror?: boolean;
   label: string;
   hasVideo: boolean;
+  /** "grid": fixed 16:9 tile (cameras). "fill": fills whatever box the layout
+   * gives it, bounded by BOTH axes — screens letterbox to their natural
+   * aspect instead of being cropped by a forced 16:9 container. */
+  fit?: "grid" | "fill";
+  /** Real identity id for a deterministic avatar color (falls back to label). */
+  participantId?: string;
+  quality?: ConnectionQuality;
 };
 
-/** Renders the actual <video> element, reused in both normal and fullscreen modes. */
-function VideoInner({
-  stream,
-  muted,
-  mirror,
-  label,
-  hasVideo,
-}: VideoTileProps) {
+const QUALITY_DOT: Record<ConnectionQuality, string> = {
+  good: "bg-success",
+  fair: "bg-warning",
+  poor: "bg-danger",
+  unknown: "bg-text-muted",
+};
+
+function VideoInner({ stream, muted, mirror, label, hasVideo, participantId }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -31,82 +42,75 @@ function VideoInner({
         autoPlay
         playsInline
         muted={muted}
-        className={`h-full w-full object-contain ${hasVideo ? "" : "hidden"} ${
-          mirror ? "-scale-x-100" : ""
-        }`}
+        className={cx("h-full w-full object-contain", !hasVideo && "hidden", mirror && "-scale-x-100")}
       />
-      {!hasVideo && (
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-bg-tertiary text-xl font-semibold text-text-primary">
-          {label.slice(0, 1).toUpperCase()}
-        </div>
-      )}
-      <span className="absolute bottom-2 left-2 rounded bg-black/50 px-2 py-0.5 text-xs text-white">
+      {!hasVideo && <Avatar id={participantId ?? label} name={label} size="xl" />}
+      <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white backdrop-blur-sm">
         {label}
       </span>
     </>
   );
 }
 
-export function VideoTile({ stream, muted, mirror, label, hasVideo }: VideoTileProps) {
+export function VideoTile({
+  stream,
+  muted,
+  mirror,
+  label,
+  hasVideo,
+  fit = "grid",
+  participantId,
+  quality,
+}: VideoTileProps) {
   const [expanded, setExpanded] = useState(false);
+  const inner = { stream, muted, mirror, label, hasVideo, participantId };
 
   return (
     <>
-      {/* Normal inline tile */}
       <div
         onDoubleClick={() => setExpanded(true)}
-        className="group relative flex aspect-video items-center justify-center overflow-hidden rounded-xl bg-black"
+        className={cx(
+          "group relative flex items-center justify-center overflow-hidden rounded-lg bg-black ring-1 ring-border",
+          fit === "fill" ? "h-full w-full min-h-0" : "aspect-video",
+        )}
       >
-        <VideoInner
-          stream={stream}
-          muted={muted}
-          mirror={mirror}
-          label={label}
-          hasVideo={hasVideo}
-        />
-        {/* Expand button — visible on hover */}
+        <VideoInner {...inner} />
+        {quality && quality !== "unknown" && (
+          <span
+            className={cx("absolute left-2 top-2 h-2 w-2 rounded-full", QUALITY_DOT[quality])}
+            aria-hidden="true"
+          />
+        )}
         <button
-          onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(true);
+          }}
           aria-label="Expand to fullscreen"
           title="Expand (or double-click)"
           className="absolute right-2 top-2 flex rounded bg-black/50 p-1 text-white opacity-0 transition-opacity group-hover:opacity-90 hover:!opacity-100"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 3 21 3 21 9" />
-            <polyline points="9 21 3 21 3 15" />
-            <line x1="21" y1="3" x2="14" y2="10" />
-            <line x1="3" y1="21" x2="10" y2="14" />
-          </svg>
+          <Maximize2 size={14} aria-hidden="true" />
         </button>
       </div>
 
-      {/* CSS fullscreen overlay — rendered into document.body via portal */}
       {expanded &&
         createPortal(
           <div
             className="fixed inset-0 z-[200] flex items-center justify-center bg-black"
             onDoubleClick={() => setExpanded(false)}
           >
-            <VideoInner
-              stream={stream}
-              muted={muted}
-              mirror={mirror}
-              label={label}
-              hasVideo={hasVideo}
-            />
-            {/* Close button */}
+            <VideoInner {...inner} />
             <button
-              onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded(false);
+              }}
               aria-label="Exit fullscreen"
               title="Exit fullscreen (or double-click)"
               className="absolute right-4 top-4 flex rounded bg-black/60 p-2 text-white opacity-70 transition-opacity hover:opacity-100"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="4 14 10 14 10 20" />
-                <polyline points="20 10 14 10 14 4" />
-                <line x1="10" y1="14" x2="21" y2="3" />
-                <line x1="3" y1="21" x2="14" y2="10" />
-              </svg>
+              <Minimize2 size={16} aria-hidden="true" />
             </button>
           </div>,
           document.body,

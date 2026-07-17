@@ -25,10 +25,18 @@ function fromRow(row: RoomRow): Room {
   };
 }
 
-export async function listRooms(): Promise<Room[]> {
+/** Rooms visible to this identity: DMs always, group rooms only while our own
+ * membership isn't tombstoned (a left room stays in the DB so its tombstone
+ * keeps blocking re-announces, but disappears from lists). */
+export async function listRooms(selfId: string): Promise<Room[]> {
   const db = await getDb();
   const rows = await db.select<RoomRow[]>(
-    "SELECT * FROM rooms WHERE is_archived = 0 ORDER BY last_message_at DESC NULLS LAST, created_at DESC",
+    `SELECT r.* FROM rooms r
+     LEFT JOIN room_members rm ON rm.room_id = r.id AND rm.contact_id = $1
+     WHERE r.is_archived = 0
+       AND (r.type = 'dm' OR (rm.contact_id IS NOT NULL AND rm.left_at IS NULL))
+     ORDER BY r.last_message_at DESC NULLS LAST, r.created_at DESC`,
+    [selfId],
   );
   return rows.map(fromRow);
 }

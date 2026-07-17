@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
@@ -14,14 +15,17 @@ import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
 let bridgeStarted = false;
 
-function shortId(identityId: string): string {
-  return `${identityId.slice(0, 8)}…${identityId.slice(-4)}`;
+function selectionKey(s: Selection): string {
+  return s.kind === "dm" ? `dm:${s.contactId}` : s.kind === "group" ? `group:${s.roomId}` : "home";
 }
 
 export function MainShell() {
   const self = useIdentityStore((s) => s.self);
   const loadRoster = useRosterStore((s) => s.loadRoster);
   const loadRooms = useRoomStore((s) => s.loadRooms);
+  const loadUnread = useRoomStore((s) => s.loadUnread);
+  const markRead = useRoomStore((s) => s.markRead);
+  const activeRoomId = useRoomStore((s) => s.activeRoomId);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -30,8 +34,8 @@ export function MainShell() {
 
   useEffect(() => {
     void loadRoster();
-    void loadRooms();
-  }, [loadRoster, loadRooms]);
+    void loadRooms().then(() => loadUnread());
+  }, [loadRoster, loadRooms, loadUnread]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;
@@ -39,52 +43,55 @@ export function MainShell() {
     initNetworkBridge(self);
   }, [self]);
 
+  // Regaining window focus reads whatever room the user is looking at.
+  useEffect(() => {
+    function onFocus() {
+      if (activeRoomId) void markRead(activeRoomId);
+    }
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [activeRoomId, markRead]);
+
   return (
     <div className="flex h-full bg-bg-primary text-text-primary">
       <Sidebar
         selection={selection}
         onSelect={setSelection}
         onCreateGroup={() => setCreatingGroup(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-border px-4 py-2">
-          <span className="text-sm text-text-secondary">Haven</span>
-          <span className="flex items-center gap-3 text-xs text-text-secondary">
-            <span className="font-medium text-text-primary">{self?.displayName}</span>
-            <span className="font-mono">{self ? shortId(self.identityId) : null}</span>
-            <button
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Open settings"
-              title="Settings"
-              className="rounded px-1.5 py-0.5 hover:bg-bg-tertiary hover:text-text-primary"
-            >
-              ⚙
-            </button>
-          </span>
-        </header>
-        <div className="flex flex-1 overflow-hidden">
-          {selection.kind === "dm" ? (
-            <ChatView key={selection.contactId} contactId={selection.contactId} />
-          ) : selection.kind === "group" ? (
-            <GroupRoomView key={selection.roomId} roomId={selection.roomId} />
-          ) : (
-            <div className="flex-1 overflow-y-auto">
-              <HomeView />
-            </div>
-          )}
-        </div>
-      </div>
+      <main className="flex min-w-0 flex-1 flex-col">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={selectionKey(selection)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.12 }}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {selection.kind === "dm" ? (
+              <ChatView contactId={selection.contactId} />
+            ) : selection.kind === "group" ? (
+              <GroupRoomView roomId={selection.roomId} />
+            ) : (
+              <div className="flex-1 overflow-y-auto">
+                <HomeView />
+              </div>
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
 
-      {creatingGroup && (
-        <CreateGroupModal
-          onClose={() => setCreatingGroup(false)}
-          onCreated={(roomId) => {
-            setCreatingGroup(false);
-            setSelection({ kind: "group", roomId });
-          }}
-        />
-      )}
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      <CreateGroupModal
+        open={creatingGroup}
+        onClose={() => setCreatingGroup(false)}
+        onCreated={(roomId) => {
+          setCreatingGroup(false);
+          setSelection({ kind: "group", roomId });
+        }}
+      />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <CallOverlay />
     </div>
   );

@@ -78,13 +78,15 @@ function messageToWire(m: Message): ChatMessageWire {
   };
 }
 
-/** Broadcasts to the room's currently-connected members. For a DM that's the
- * single peer; broadcast keeps this correct once group rooms arrive. */
-function broadcastToRoomMembers(roomMemberIds: string[], data: unknown) {
+/** Broadcasts to the room's currently-connected members and returns how many
+ * actually received the send (offline members converge later via room sync). */
+function broadcastToRoomMembers(roomMemberIds: string[], data: unknown): number {
   const registry = getPeerRegistry();
+  let delivered = 0;
   for (const memberId of roomMemberIds) {
-    registry.send(derivePeerId(memberId), data);
+    if (registry.send(derivePeerId(memberId), data)) delivered++;
   }
+  return delivered;
 }
 
 export async function sendMessage(
@@ -114,12 +116,17 @@ export async function sendMessage(
   const sig = await identityService.sign(utf8ToBase64(canonicalMessage(wireBase)));
   const wire: ChatMessageWire = { ...wireBase, sig };
 
-  const message = wireToMessage(wire, "sent");
+  const message = wireToMessage(wire, "pending");
   await messageRepo.insertIfAbsent(message);
   await roomRepo.touchLastMessage(roomId, message.sentAt);
 
   const payload: ChatMessageMessage = { type: "chat_message", message: wire };
-  broadcastToRoomMembers(memberIds, payload);
+  const recipients = memberIds.filter((id) => id !== self.identityId);
+  const delivered = broadcastToRoomMembers(recipients, payload);
+  if (delivered > 0) {
+    message.deliveryStatus = "sent";
+    await messageRepo.setDeliveryStatus(message.id, "sent");
+  }
   return message;
 }
 
@@ -151,18 +158,31 @@ export async function handleChatMessage(
   return verifyAndStore(msg.message, physicalNow, self.identityId);
 }
 
+/** Responds with the messages the requester is missing. Also treats their
+ * have-vector as an implicit receipt for our own messages — anything of ours
+ * at or below their seq is on their device, so pending/sent flips to
+ * delivered. Returns true if any of our statuses changed. */
 export async function handleRoomSyncRequest(
+  selfId: string,
   fromPeerId: string,
   msg: RoomSyncRequestMessage,
-): Promise<void> {
+): Promise<boolean> {
+  const flipped = await messageRepo.markDeliveredUpTo(
+    msg.roomId,
+    selfId,
+    msg.have[selfId] ?? 0,
+  );
+
   const missing = await messageRepo.messagesSince(msg.roomId, msg.have);
-  if (missing.length === 0) return;
-  const response: RoomSyncResponseMessage = {
-    type: "room_sync_response",
-    roomId: msg.roomId,
-    messages: missing.map(messageToWire),
-  };
-  getPeerRegistry().send(fromPeerId, response);
+  if (missing.length > 0) {
+    const response: RoomSyncResponseMessage = {
+      type: "room_sync_response",
+      roomId: msg.roomId,
+      messages: missing.map(messageToWire),
+    };
+    getPeerRegistry().send(fromPeerId, response);
+  }
+  return flipped > 0;
 }
 
 export async function handleRoomSyncResponse(

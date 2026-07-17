@@ -2,11 +2,15 @@ import { create } from "zustand";
 import type { Presence, RosterContact } from "../types/domain";
 import * as rosterRepo from "../services/db/rosterRepo";
 import * as rosterService from "../services/roster/rosterService";
+import { dmRoomId } from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
 
 type RosterState = {
   contactsById: Record<string, RosterContact>;
   presenceById: Record<string, Presence>;
+  /** contactId → deterministic DM room id, for sidebar unread badges (the
+   * room id is an async SHA-256, so it's precomputed once per roster load). */
+  dmRoomIdByContact: Record<string, string>;
 
   loadRoster: () => Promise<void>;
   createInvite: () => Promise<string>;
@@ -14,6 +18,15 @@ type RosterState = {
   removeContact: (contactId: string) => Promise<void>;
   setPresence: (identityId: string, presence: Presence) => void;
 };
+
+async function buildDmRoomMap(contacts: RosterContact[]): Promise<Record<string, string>> {
+  const selfId = useIdentityStore.getState().self?.identityId;
+  if (!selfId) return {};
+  const entries = await Promise.all(
+    contacts.map(async (c) => [c.identityId, await dmRoomId(selfId, c.identityId)] as const),
+  );
+  return Object.fromEntries(entries);
+}
 
 function requireSelf() {
   const self = useIdentityStore.getState().self;
@@ -37,11 +50,13 @@ async function loadContactsExcludingSelf(): Promise<RosterContact[]> {
 export const useRosterStore = create<RosterState>((set) => ({
   contactsById: {},
   presenceById: {},
+  dmRoomIdByContact: {},
 
   loadRoster: async () => {
     const contacts = await loadContactsExcludingSelf();
     set({
       contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
+      dmRoomIdByContact: await buildDmRoomMap(contacts),
     });
   },
 
@@ -54,6 +69,7 @@ export const useRosterStore = create<RosterState>((set) => ({
     const contacts = await loadContactsExcludingSelf();
     set({
       contactsById: Object.fromEntries(contacts.map((c) => [c.identityId, c])),
+      dmRoomIdByContact: await buildDmRoomMap(contacts),
     });
   },
 

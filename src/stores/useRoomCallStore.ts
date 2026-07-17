@@ -10,31 +10,41 @@ type RoomCallState = {
   roomId: string | null;
   participants: string[];
   slots: PresenterSlotWire[];
+  /** Main (mic + camera) stream per participant. */
   streamsByParticipant: Record<string, MediaStream>;
+  /** Screen-share stream per participant (absent = not sharing). */
+  screenStreamsByParticipant: Record<string, MediaStream>;
   connectionByParticipant: Record<string, RTCPeerConnectionState>;
   qualityByParticipant: Record<string, ConnectionQuality>;
   localStream: MediaStream | null;
   micOn: boolean;
-  presenting: boolean;
+  camOn: boolean;
+  screenOn: boolean;
   presentError: string | null;
+  /** Bumped whenever tracks mute/unmute/arrive so components re-derive
+   * hasVideo from live MediaStream objects (same refs, changed contents). */
+  mediaVersion: number;
 
   join: (roomId: string) => Promise<void>;
   leave: () => void;
   toggleMic: () => void;
-  startPresenting: (source?: "camera" | "screen") => Promise<void>;
-  stopPresenting: () => void;
+  toggleCam: () => Promise<void>;
+  toggleScreenShare: () => Promise<void>;
 
   _setSession: (roomId: string) => void;
   _setParticipants: (ids: string[]) => void;
   _removeParticipant: (id: string) => void;
   _setSlots: (slots: PresenterSlotWire[]) => void;
   _setParticipantStream: (id: string, stream: MediaStream) => void;
+  _setParticipantScreenStream: (id: string, stream: MediaStream | null) => void;
   _setParticipantConnection: (id: string, state: RTCPeerConnectionState) => void;
   _setParticipantQuality: (id: string, quality: ConnectionQuality) => void;
   _setLocalStream: (stream: MediaStream | null) => void;
   _setMicOn: (on: boolean) => void;
-  _setPresenting: (on: boolean) => void;
+  _setCamOn: (on: boolean) => void;
+  _setScreenOn: (on: boolean) => void;
   _setPresentError: (error: string | null) => void;
+  _bumpMediaVersion: () => void;
   _clear: () => void;
 };
 
@@ -49,12 +59,15 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   participants: [],
   slots: [],
   streamsByParticipant: {},
+  screenStreamsByParticipant: {},
   connectionByParticipant: {},
   qualityByParticipant: {},
   localStream: null,
   micOn: true,
-  presenting: false,
+  camOn: false,
+  screenOn: false,
   presentError: null,
+  mediaVersion: 0,
 
   join: async (roomId) => {
     const self = requireSelf();
@@ -63,22 +76,28 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   },
   leave: () => roomCallService.leaveRoomCall(),
   toggleMic: () => roomCallService.toggleMic(),
-  startPresenting: (source = "camera") => roomCallService.startPresenting(source),
-  stopPresenting: () => roomCallService.stopPresenting(),
+  toggleCam: () => roomCallService.toggleCam(),
+  toggleScreenShare: async () => {
+    if (useRoomCallStore.getState().screenOn) roomCallService.stopScreenShare();
+    else await roomCallService.startScreenShare();
+  },
 
   _setSession: (roomId) => set({ roomId, presentError: null }),
   _setParticipants: (ids) => set({ participants: ids }),
   _removeParticipant: (id) =>
     set((s) => {
       const streams = { ...s.streamsByParticipant };
+      const screens = { ...s.screenStreamsByParticipant };
       const conns = { ...s.connectionByParticipant };
       const quals = { ...s.qualityByParticipant };
       delete streams[id];
+      delete screens[id];
       delete conns[id];
       delete quals[id];
       return {
         participants: s.participants.filter((p) => p !== id),
         streamsByParticipant: streams,
+        screenStreamsByParticipant: screens,
         connectionByParticipant: conns,
         qualityByParticipant: quals,
       };
@@ -86,25 +105,37 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   _setSlots: (slots) => set({ slots }),
   _setParticipantStream: (id, stream) =>
     set((s) => ({ streamsByParticipant: { ...s.streamsByParticipant, [id]: stream } })),
+  _setParticipantScreenStream: (id, stream) =>
+    set((s) => {
+      const screens = { ...s.screenStreamsByParticipant };
+      if (stream) screens[id] = stream;
+      else delete screens[id];
+      return { screenStreamsByParticipant: screens };
+    }),
   _setParticipantConnection: (id, state) =>
     set((s) => ({ connectionByParticipant: { ...s.connectionByParticipant, [id]: state } })),
   _setParticipantQuality: (id, quality) =>
     set((s) => ({ qualityByParticipant: { ...s.qualityByParticipant, [id]: quality } })),
   _setLocalStream: (stream) => set({ localStream: stream }),
   _setMicOn: (on) => set({ micOn: on }),
-  _setPresenting: (on) => set({ presenting: on }),
+  _setCamOn: (on) => set({ camOn: on }),
+  _setScreenOn: (on) => set({ screenOn: on }),
   _setPresentError: (error) => set({ presentError: error }),
+  _bumpMediaVersion: () => set((s) => ({ mediaVersion: s.mediaVersion + 1 })),
   _clear: () =>
     set({
       roomId: null,
       participants: [],
       slots: [],
       streamsByParticipant: {},
+      screenStreamsByParticipant: {},
       connectionByParticipant: {},
       qualityByParticipant: {},
       localStream: null,
       micOn: true,
-      presenting: false,
+      camOn: false,
+      screenOn: false,
       presentError: null,
+      mediaVersion: 0,
     }),
 }));

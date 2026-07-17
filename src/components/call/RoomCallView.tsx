@@ -1,7 +1,11 @@
+import { Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
+import { CallControlBar } from "./CallControlBar";
+import { IconButton } from "../ui/IconButton";
+import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
 
 function useNameLookup() {
   const self = useIdentityStore((s) => s.self);
@@ -10,34 +14,43 @@ function useNameLookup() {
     id === self?.identityId ? "You" : (contactsById[id]?.displayName ?? "Unknown");
 }
 
+function liveVideo(stream: MediaStream | null): boolean {
+  return (
+    stream?.getVideoTracks().some((t) => t.readyState === "live" && !t.muted) ?? false
+  );
+}
+
 export function RoomCallView() {
   const self = useIdentityStore((s) => s.self);
   const participants = useRoomCallStore((s) => s.participants);
   const slots = useRoomCallStore((s) => s.slots);
   const streamsByParticipant = useRoomCallStore((s) => s.streamsByParticipant);
+  const screenStreamsByParticipant = useRoomCallStore((s) => s.screenStreamsByParticipant);
   const qualityByParticipant = useRoomCallStore((s) => s.qualityByParticipant);
   const localStream = useRoomCallStore((s) => s.localStream);
   const micOn = useRoomCallStore((s) => s.micOn);
-  const presenting = useRoomCallStore((s) => s.presenting);
+  const camOn = useRoomCallStore((s) => s.camOn);
+  const screenOn = useRoomCallStore((s) => s.screenOn);
   const presentError = useRoomCallStore((s) => s.presentError);
+  useRoomCallStore((s) => s.mediaVersion); // re-render on track mute/unmute
 
   const leave = useRoomCallStore((s) => s.leave);
   const toggleMic = useRoomCallStore((s) => s.toggleMic);
-  const startPresenting = useRoomCallStore((s) => s.startPresenting);
-  const stopPresenting = useRoomCallStore((s) => s.stopPresenting);
+  const toggleCam = useRoomCallStore((s) => s.toggleCam);
+  const toggleScreenShare = useRoomCallStore((s) => s.toggleScreenShare);
 
   const nameOf = useNameLookup();
-  const presenterIds = slots.map((s) => s.holderId).filter((id): id is string => id !== null);
-  const slotsFull = presenterIds.length >= 2 && !presenting;
 
-  // The identity currently sharing their screen (if any) — used to make that
-  // tile large so it's immediately readable without manually going fullscreen.
-  const screenShareId = slots.find((s) => s.holderId !== null && s.source === "screen")?.holderId ?? null;
+  const holderIds = slots.map((s) => s.holderId).filter((id): id is string => id !== null);
+  const slotsFull = !screenOn && holderIds.length >= 2;
 
-  function streamFor(id: string): MediaStream | null {
+  function mainStreamFor(id: string): MediaStream | null {
     if (id === self?.identityId) return localStream;
     return streamsByParticipant[id] ?? null;
   }
+
+  const screenShares = Object.entries(screenStreamsByParticipant);
+  const hasScreens = screenShares.length > 0;
 
   const QUALITY_DOT: Record<string, string> = {
     good: "bg-success",
@@ -49,114 +62,134 @@ export function RoomCallView() {
     if (id === self?.identityId) return "bg-success";
     return QUALITY_DOT[qualityByParticipant[id] ?? "unknown"];
   }
+  function qualityFor(id: string): ConnectionQuality | undefined {
+    if (id === self?.identityId) return undefined;
+    return qualityByParticipant[id];
+  }
 
-  // Sort so the screen-share tile always comes first (gets the large slot).
-  const sortedPresenterIds = screenShareId
-    ? [screenShareId, ...presenterIds.filter((id) => id !== screenShareId)]
-    : presenterIds;
+  const gridCols =
+    participants.length <= 1
+      ? "grid-cols-1"
+      : participants.length <= 4
+        ? "grid-cols-1 md:grid-cols-2"
+        : "grid-cols-2 md:grid-cols-3";
 
   return (
-    <div className="flex flex-1 flex-col bg-bg-primary">
-      {/* Presenter stage */}
-      <div
-        className={`grid flex-1 gap-4 overflow-auto p-4 items-start ${
-          sortedPresenterIds.length <= 1
-            ? "grid-cols-1"
-            : screenShareId
-              ? "grid-cols-3" // screen share spans 2/3, camera spans 1/3
-              : "grid-cols-1 md:grid-cols-2"
-        }`}
-      >
-        {sortedPresenterIds.length === 0 && (
-          <div className="col-span-full flex items-center justify-center text-sm text-text-secondary">
-            No one is presenting. Click “Present” to share your camera.
+    <div className="flex min-h-0 flex-1 flex-col bg-bg-primary">
+      {hasScreens ? (
+        <>
+          {/* Screen stage: bounded by both axes, natural aspect via object-contain */}
+          <div className="flex min-h-0 flex-1 gap-4 p-4">
+            {screenShares.map(([id, stream]) => (
+              <div key={`screen-${id}`} className="min-h-0 min-w-0 flex-1">
+                <VideoTile
+                  stream={stream}
+                  muted={id === self?.identityId}
+                  label={`${nameOf(id)} (screen)`}
+                  hasVideo={liveVideo(stream)}
+                  fit="fill"
+                />
+              </div>
+            ))}
           </div>
-        )}
-        {sortedPresenterIds.map((id) => {
-          const stream = streamFor(id);
-          const isScreen = id === screenShareId;
-          return (
-            <div key={id} className={isScreen && sortedPresenterIds.length > 1 ? "col-span-2" : ""}>
+          {/* Camera filmstrip under the stage */}
+          <div className="flex h-28 shrink-0 gap-2 overflow-x-auto px-4 pb-2">
+            {participants.map((id) => {
+              const stream = mainStreamFor(id);
+              return (
+                <div key={id} className="aspect-video h-full shrink-0">
+                  <VideoTile
+                    stream={stream}
+                    muted={id === self?.identityId}
+                    mirror={id === self?.identityId}
+                    label={nameOf(id)}
+                    participantId={id}
+                    quality={qualityFor(id)}
+                    hasVideo={id === self?.identityId ? camOn : liveVideo(stream)}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className={`grid flex-1 content-center gap-4 overflow-auto p-4 ${gridCols}`}>
+          {participants.map((id) => {
+            const stream = mainStreamFor(id);
+            return (
               <VideoTile
+                key={id}
                 stream={stream}
                 muted={id === self?.identityId}
-                mirror={id === self?.identityId && !isScreen}
-                label={isScreen ? `${nameOf(id)} (screen)` : nameOf(id)}
-                hasVideo={(stream?.getVideoTracks().length ?? 0) > 0}
+                mirror={id === self?.identityId}
+                label={nameOf(id)}
+                participantId={id}
+                quality={qualityFor(id)}
+                hasVideo={id === self?.identityId ? camOn : liveVideo(stream)}
               />
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Viewer thumbnail strip — everyone present, audio-only or not */}
+      {/* Participant strip */}
       <div className="flex gap-2 overflow-x-auto border-t border-border px-4 py-2">
         {participants.map((id) => (
-          <div
+          <span
             key={id}
-            className="flex shrink-0 items-center gap-2 rounded-lg bg-bg-secondary px-3 py-1.5"
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-bg-tertiary px-2.5 py-1 text-xs"
           >
-            <span className={`h-2 w-2 rounded-full ${dotFor(id)}`} aria-hidden="true" />
-            <span className="text-xs text-text-primary">{nameOf(id)}</span>
-            {presenterIds.includes(id) && (
-              <span className="rounded bg-accent px-1 text-[10px] font-medium text-white">
-                live
-              </span>
+            <span className={`h-1.5 w-1.5 rounded-full ${dotFor(id)}`} aria-hidden="true" />
+            {nameOf(id)}
+            {screenStreamsByParticipant[id] && (
+              <span className="font-medium text-accent">LIVE</span>
             )}
-          </div>
+          </span>
         ))}
       </div>
 
       {presentError && (
-        <p role="alert" className="px-4 py-1 text-center text-xs text-danger">
+        <p role="alert" className="border-t border-border px-4 py-2 text-xs text-danger">
           {presentError}
         </p>
       )}
 
-      <footer className="flex items-center justify-center gap-3 border-t border-border py-3">
-        <button
-          onClick={toggleMic}
-          aria-pressed={!micOn}
-          className={`rounded-full px-4 py-2 text-sm font-medium ${
-            micOn ? "bg-bg-tertiary text-text-primary" : "bg-danger text-white"
-          }`}
-        >
-          {micOn ? "Mute" : "Unmute"}
-        </button>
-        {presenting ? (
-          <button
-            onClick={stopPresenting}
-            className="rounded-full bg-accent px-4 py-2 text-sm font-medium text-white"
-          >
-            Stop presenting
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={() => startPresenting("camera")}
-              disabled={slotsFull}
-              title={slotsFull ? "Both presenter slots are taken" : "Share your camera"}
-              className="rounded-full bg-bg-tertiary px-4 py-2 text-sm font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Present
-            </button>
-            <button
-              onClick={() => startPresenting("screen")}
-              disabled={slotsFull}
-              title={slotsFull ? "Both presenter slots are taken" : "Share your screen"}
-              className="rounded-full bg-bg-tertiary px-4 py-2 text-sm font-medium text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Share screen
-            </button>
-          </>
-        )}
-        <button
-          onClick={leave}
-          className="rounded-full bg-danger px-4 py-2 text-sm font-medium text-white"
-        >
-          Leave
-        </button>
-      </footer>
+      {/* Controls: mic · camera · present screen · leave */}
+      <div className="flex justify-center border-t border-border py-3">
+        <CallControlBar>
+          <IconButton
+            icon={micOn ? Mic : MicOff}
+            label={micOn ? "Mute" : "Unmute"}
+            size="lg"
+            variant={micOn ? "solid" : "danger"}
+            onClick={toggleMic}
+          />
+          <IconButton
+            icon={camOn ? Video : VideoOff}
+            label={camOn ? "Stop camera" : "Start camera"}
+            size="lg"
+            variant={camOn ? "accent" : "solid"}
+            onClick={() => void toggleCam()}
+          />
+          <IconButton
+            icon={MonitorUp}
+            label={slotsFull ? "Both screen-share slots are taken" : screenOn ? "Stop presenting" : "Present screen"}
+            size="lg"
+            variant={screenOn ? "accent" : "solid"}
+            active={screenOn}
+            disabled={slotsFull}
+            onClick={() => void toggleScreenShare()}
+          />
+          <IconButton
+            icon={PhoneOff}
+            label="Leave"
+            size="lg"
+            variant="danger"
+            tooltip={false}
+            onClick={leave}
+          />
+        </CallControlBar>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,7 @@
 import { useSettingsStore, type ThemePref } from "../../stores/useSettingsStore";
-import { useFocusTrap } from "../../hooks/useFocusTrap";
+import { Modal } from "../ui/Modal";
+import { Switch } from "../ui/Switch";
+import { cx } from "../../lib/cx";
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -8,10 +10,11 @@ const THEMES: { value: ThemePref; label: string }[] = [
 ];
 
 type SettingsModalProps = {
+  open: boolean;
   onClose: () => void;
 };
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
+export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const theme = useSettingsStore((s) => s.theme);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const pushToTalk = useSettingsStore((s) => s.pushToTalk);
@@ -19,88 +22,58 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const closeToTray = useSettingsStore((s) => s.closeToTray);
   const setCloseToTray = useSettingsStore((s) => s.setCloseToTray);
 
-  const trapRef = useFocusTrap<HTMLDivElement>(onClose);
-
   return (
-    <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60"
-      onClick={onClose}
-    >
-      <div
-        ref={trapRef}
-        className="w-96 rounded-2xl bg-bg-secondary p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-text-primary">Settings</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close settings"
-            className="rounded px-2 text-text-secondary hover:bg-bg-tertiary hover:text-text-primary"
-          >
-            ✕
-          </button>
-        </div>
-
-        <div className="mt-6">
-          <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Appearance
-          </p>
-          <div className="mt-2 flex gap-2" role="radiogroup" aria-label="Theme">
-            {THEMES.map((t) => (
-              <button
-                key={t.value}
-                role="radio"
-                aria-checked={theme === t.value}
-                onClick={() => setTheme(t.value)}
-                className={`flex-1 rounded-lg border px-3 py-1.5 text-sm ${
-                  theme === t.value
-                    ? "border-accent bg-accent/10 text-text-primary"
-                    : "border-border text-text-secondary hover:bg-bg-tertiary"
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-6 space-y-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">
-            Calls &amp; window
-          </p>
-          <label className="flex items-center justify-between text-sm text-text-primary">
-            <span>
-              Push-to-talk
-              <span className="block text-xs text-text-secondary">
-                Hold {navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to
-                unmute while in a call
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={pushToTalk}
-              onChange={(e) => setPushToTalk(e.target.checked)}
-            />
-          </label>
-          <label className="flex items-center justify-between text-sm text-text-primary">
-            <span>
-              Close to tray
-              <span className="block text-xs text-text-secondary">
-                Keep Haven running when the window is closed
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={closeToTray}
-              onChange={(e) => setCloseToTray(e.target.checked)}
-            />
-          </label>
+    <Modal open={open} onClose={onClose} title="Settings" size="md">
+      <div>
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Appearance
+        </p>
+        <div className="mt-2 flex rounded-md bg-bg-base p-0.5" role="radiogroup" aria-label="Theme">
+          {THEMES.map((t) => (
+            <button
+              key={t.value}
+              role="radio"
+              aria-checked={theme === t.value}
+              onClick={() => setTheme(t.value)}
+              className={cx(
+                "flex-1 rounded px-3 py-1.5 text-sm transition-colors",
+                theme === t.value
+                  ? "bg-bg-tertiary text-text-primary shadow-sm"
+                  : "text-text-secondary hover:text-text-primary",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
       </div>
-    </div>
+
+      <div className="mt-6">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Calls &amp; window
+        </p>
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Push-to-talk</p>
+              <p className="text-xs text-text-secondary">
+                Hold {navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to
+                unmute while in a call
+              </p>
+            </div>
+            <Switch checked={pushToTalk} onChange={setPushToTalk} aria-label="Push-to-talk" />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Close to tray</p>
+              <p className="text-xs text-text-secondary">
+                Keep Haven running when the window is closed
+              </p>
+            </div>
+            <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
+          </div>
+        </div>
+      </div>
+    </Modal>
   );
 }
