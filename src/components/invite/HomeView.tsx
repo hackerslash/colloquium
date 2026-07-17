@@ -46,6 +46,7 @@ export function HomeView() {
       setJoinInput("");
       toast.success("Connected", "You're now trusted with that member.");
     } catch (err) {
+      console.error("Failed to accept invite:", err);
       setJoinStatus("error");
       setJoinError(String(err));
     }

@@ -4,6 +4,20 @@ import { Sparkles } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { Button } from "../ui/Button";
 
+/** The raw error is a Rust/keyring failure string — not something a
+ * first-time user can act on. Map the cases we know about to plain
+ * language; the raw text is still logged to the console for debugging. */
+function friendlyIdentityError(err: unknown): string {
+  const raw = String(err);
+  if (raw.includes("already exists")) {
+    return "This device already has an identity. Restart Haven to continue with it.";
+  }
+  if (/keychain|keyring/i.test(raw)) {
+    return "Haven couldn't reach your system's secure storage. Check your OS security settings and try again.";
+  }
+  return "Something went wrong setting up your identity. Please try again.";
+}
+
 export function WelcomeScreen() {
   const createIdentity = useIdentityStore((s) => s.createIdentity);
   const [displayName, setDisplayName] = useState("");
@@ -20,7 +34,8 @@ export function WelcomeScreen() {
     try {
       await createIdentity(trimmed);
     } catch (err) {
-      setError(String(err));
+      console.error("Failed to create identity:", err);
+      setError(friendlyIdentityError(err));
       setSubmitting(false);
     }
   }
