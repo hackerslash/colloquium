@@ -4,23 +4,20 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
  * Shared microphone acquisition/processing config for the 1:1 and room call
  * services, driven by the user's voice settings:
  *   - noiseSuppression: the platform's standard noise reduction (default on).
- *   - voiceIsolation: stronger, ML-based isolation that suppresses everything
- *     that isn't speech (keyboard, music, room noise). A newer constraint —
- *     browsers that don't know it simply ignore it, so it's always safe to ask.
+ *     Strong ML suppression is layered on top by the RNNoise processor (see
+ *     noiseSuppressor.ts) and gated by this same setting; the built-in
+ *     constraint stays as a baseline and as the fallback when RNNoise can't
+ *     load.
  * Echo cancellation and auto gain stay unconditionally on: turning either off
  * audibly breaks calls, so they're not user-facing knobs.
  */
 
-/** `voiceIsolation` isn't in TypeScript's lib.dom yet. */
-type MicConstraints = MediaTrackConstraints & { voiceIsolation?: boolean };
-
-export function buildMicConstraints(): MicConstraints {
-  const { noiseSuppression, voiceIsolation } = useSettingsStore.getState();
+export function buildMicConstraints(): MediaTrackConstraints {
+  const { noiseSuppression } = useSettingsStore.getState();
   return {
     echoCancellation: true,
     autoGainControl: true,
     noiseSuppression,
-    voiceIsolation,
   };
 }
 

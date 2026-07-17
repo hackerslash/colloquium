@@ -20,8 +20,17 @@ import {
   PresenterSlotManager,
   SLOT_COUNT,
 } from "./PresenterSlotManager";
-import { captureDisplay, releaseDisplayAudio } from "./displayMedia";
+import {
+  captureDisplay,
+  describeScreenShareError,
+  logScreenShare,
+  releaseDisplayAudio,
+  type ScreenStopSource,
+} from "./displayMedia";
+import { toast } from "../../stores/useToastStore";
 import { applyMicProcessing, buildMicConstraints, markVoiceTracks } from "./micAudio";
+import { createMicProcessor, type MicProcessor } from "./noiseSuppressor";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 import { resolveScreenTierSpec, type ScreenShareQualityOption } from "./screenShareConfig";
 import type { TierSpec } from "./PeerConnectionWrapper";
 import { emitCallEvent } from "./callEvents";
@@ -77,6 +86,9 @@ type Session = {
   tickTimer: ReturnType<typeof setInterval> | null;
   tickCount: number;
   speakingMonitor: SpeakingMonitor | null;
+  /** RNNoise processor wrapping the raw mic; null if unavailable (we then
+   * transmit the raw mic track). */
+  micProcessor: MicProcessor | null;
 };
 
 let session: Session | null = null;
@@ -274,10 +286,10 @@ function ensureWrapper(remoteId: string): PeerConnectionWrapper {
   });
 
   // Full-mesh audio to every peer; camera/screen video too if currently on
-  // (covers late joiners).
-  for (const track of session.localStream.getAudioTracks()) {
-    wrapper.addTrack(track, session.localStream);
-  }
+  // (covers late joiners). Transmit the RNNoise-processed track (raw mic
+  // fallback), grouped under the main stream's msid.
+  const audioTrack = outgoingAudioTrack();
+  if (audioTrack) wrapper.addTrack(audioTrack, session.localStream);
   if (session.cameraTrack) {
     wrapper.addVideoTrack(session.cameraTrack, session.localStream, "camera", cameraCeiling());
   }
@@ -358,7 +370,14 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
     tickTimer: null,
     tickCount: 0,
     speakingMonitor: null,
+    micProcessor: null,
   };
+
+  // Wrap the mic in RNNoise before announcing ourselves, so every wrapper built
+  // for a peer (incl. late joiners via ensureWrapper) attaches the processed
+  // track. Best-effort: on failure we transmit the raw mic.
+  await initMicProcessing();
+  if (!session) return; // left the call while RNNoise loaded
 
   const store = useRoomCallStore.getState();
   store._setSession(roomId);
@@ -469,6 +488,10 @@ export function leaveRoomCall() {
     session.speakingMonitor.stop();
     session.speakingMonitor = null;
   }
+  if (session.micProcessor) {
+    void session.micProcessor.dispose();
+    session.micProcessor = null;
+  }
   session.wrappers.forEach((w) => w.close());
   session.localStream.getTracks().forEach((t) => t.stop());
   session.cameraTrack?.stop();
@@ -497,9 +520,32 @@ export function isInRoomCall(): boolean {
   return session !== null;
 }
 
-/** Re-applies the current voice settings (noise suppression / voice isolation)
- * to the live mic. Called by the settings store when the user toggles them. */
+/** Builds the RNNoise processor around the current raw mic. Best-effort — on
+ * failure session.micProcessor stays null and we transmit the raw mic track. */
+async function initMicProcessing(): Promise<void> {
+  if (!session) return;
+  const rawAudio = session.localStream.getAudioTracks()[0];
+  if (!rawAudio) return;
+  const enabled = useSettingsStore.getState().noiseSuppression;
+  const active = session;
+  const processor = await createMicProcessor(rawAudio, enabled);
+  if (session !== active) {
+    void processor?.dispose();
+    return;
+  }
+  active.micProcessor = processor;
+}
+
+/** The audio track we transmit: the RNNoise-processed track when available,
+ * otherwise the raw mic. */
+function outgoingAudioTrack(): MediaStreamTrack | null {
+  return session?.micProcessor?.track ?? session?.localStream.getAudioTracks()[0] ?? null;
+}
+
+/** Re-applies the current voice settings to the live mic. Called by the
+ * settings store when the user toggles noise suppression. */
 export async function applyMicSettings(): Promise<void> {
+  session?.micProcessor?.setEnabled(useSettingsStore.getState().noiseSuppression);
   await applyMicProcessing(session?.localStream);
 }
 
@@ -578,14 +624,8 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   try {
     ({ stream } = await captureDisplay(config));
   } catch (err) {
-    const name = (err as Error)?.name;
-    useRoomCallStore
-      .getState()
-      ._setPresentError(
-        name === "NotAllowedError"
-          ? "Screen share was cancelled or blocked. On macOS, grant Screen Recording to Haven in System Settings ▸ Privacy & Security."
-          : `Screen share isn't available: ${name ?? "unknown error"}.`,
-      );
+    logScreenShare("capture failed", { name: (err as Error)?.name });
+    useRoomCallStore.getState()._setPresentError(describeScreenShareError(err));
     return;
   }
 
@@ -607,8 +647,13 @@ export async function startScreenShare(config: ScreenShareQualityOption) {
   pushSlotsToStore();
 
   call.screenStream = stream;
-  // Fires when the user clicks the OS/browser "Stop sharing" control.
-  videoTrack.onended = () => stopScreenShare();
+  // Fires for the OS "Stop sharing" control AND for captures the system drops
+  // on its own (common on Windows/WebView2) — "ended" lets the teardown tell
+  // the user the capture was stopped for them.
+  videoTrack.onended = () => {
+    logScreenShare("video track ended (teardown)", { readyState: videoTrack.readyState });
+    stopScreenShare("ended");
+  };
   await applyScreenTrackConstraints(videoTrack, config);
 
   if (session !== call) {
@@ -661,8 +706,10 @@ function stopScreenShareLocal() {
   store._bumpMediaVersion();
 }
 
-export function stopScreenShare() {
+export function stopScreenShare(source: ScreenStopSource = "user") {
   if (!session) return;
+  logScreenShare("stopping screen share", { source });
+  const wasSharing = useRoomCallStore.getState().screenOn;
   const held = session.slots.slotHeldBy(session.self.identityId, Date.now());
   if (held !== null) {
     const rel = session.slots.buildRelease(held, session.self.identityId);
@@ -670,6 +717,12 @@ export function stopScreenShare() {
   }
   stopScreenShareLocal();
   pushSlotsToStore();
+
+  // A stop we didn't start from the in-app control means the OS/WebView ended
+  // the capture (the "Stop sharing" bar, or a dropped surface on Windows).
+  if (source === "ended" && wasSharing) {
+    toast.info("Screen sharing ended", "Your system stopped the screen capture.");
+  }
 }
 
 // --- Incoming message handlers ---

@@ -1,20 +1,24 @@
-//! macOS system-audio capture for screen sharing.
+//! Native system-audio capture for screen sharing (macOS + Windows).
 //!
-//! WKWebView does not expose display/system audio through getDisplayMedia, so
-//! we tap it natively with ScreenCaptureKit and stream PCM to the frontend,
-//! which feeds it into the WebRTC audio graph. `excludesCurrentProcessAudio`
-//! keeps Haven's own output — i.e. the voices of the people on the call — out
-//! of the capture, so sharing system audio during a call doesn't echo.
+//! The WebView's own getDisplayMedia audio path is unusable for a call: macOS
+//! WKWebView exposes no display audio at all, and on Windows getDisplayMedia
+//! taps a whole-system loopback that recaptures Haven's own playback of the
+//! other participants — sending their voices back to them (echo). So we tap
+//! system audio natively and stream PCM to the frontend, which feeds it into
+//! the WebRTC audio graph, **excluding Haven's own process** so the call
+//! doesn't echo:
+//!   - macOS: ScreenCaptureKit with `excludesCurrentProcessAudio`.
+//!   - Windows: WASAPI process loopback in EXCLUDE-target-process-tree mode.
 //!
 //! Wire format to the frontend: base64 of interleaved stereo i16 LE at 48 kHz.
 
 use tauri::ipc::Channel;
 
-// `imp::start` blocks the calling thread for up to ~10s (two sequential
-// recv_timeout(5s) waits on ScreenCaptureKit setup) — non-async Tauri
-// commands run inline on the thread that dispatches the IPC call, so without
-// spawn_blocking a slow/first-run-permission-prompt capture setup would
-// freeze the whole window for that long.
+// The platform `start` blocks the calling thread while the OS sets capture up
+// (ScreenCaptureKit does two sequential 5s waits and can show a first-run
+// permission prompt; WASAPI activation is async and waited on) — non-async
+// Tauri commands run inline on the IPC dispatch thread, so without
+// spawn_blocking a slow setup would freeze the whole window for that long.
 #[tauri::command]
 pub async fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -24,10 +28,17 @@ pub async fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
             .map_err(|e| e.to_string())
             .and_then(|inner| inner)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        tauri::async_runtime::spawn_blocking(move || win::start(channel))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|inner| inner)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = channel;
-        Err("system audio capture is only implemented on macOS".into())
+        Err("system audio capture is not implemented on this platform".into())
     }
 }
 
@@ -36,6 +47,10 @@ pub fn sysaudio_stop() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         imp::stop();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        win::stop();
     }
     Ok(())
 }
@@ -318,6 +333,295 @@ mod imp {
             let handler = RcBlock::new(|_err: *mut NSError| {});
             unsafe {
                 cap.stream.stopCaptureWithCompletionHandler(Some(&handler));
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod win {
+    //! WASAPI process-loopback capture that EXCLUDES Haven's own process tree,
+    //! the Windows analog of macOS's `excludesCurrentProcessAudio`. Everything
+    //! (COM init, activation, capture loop) runs on one dedicated thread so the
+    //! non-Send COM interfaces never cross a thread boundary; `start` waits for
+    //! setup to succeed/fail and returns that, then the thread polls until
+    //! `stop` clears the run flag.
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc, Condvar, Mutex};
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    use base64::Engine as _;
+    use tauri::ipc::Channel;
+
+    use windows::core::{implement, Interface, IUnknown, HRESULT, PROPVARIANT};
+    use windows::Win32::Media::Audio::{
+        ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
+        IActivateAudioInterfaceCompletionHandler,
+        IActivateAudioInterfaceCompletionHandler_Impl, IAudioCaptureClient, IAudioClient,
+        AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
+        AUDIOCLIENT_ACTIVATION_PARAMS, AUDIOCLIENT_ACTIVATION_PARAMS_0,
+        AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK, AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS,
+        PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+        WAVEFORMATEX,
+    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+
+    const SAMPLE_RATE: u32 = 48_000;
+    const CHANNELS: u16 = 2;
+    const BITS: u16 = 16;
+    const VT_BLOB: u16 = 65;
+    // 200 ms buffer, in 100-ns units.
+    const BUFFER_DURATION: i64 = 2_000_000;
+
+    struct CaptureHandle {
+        running: Arc<AtomicBool>,
+        join: Option<JoinHandle<()>>,
+    }
+
+    static STATE: Mutex<Option<CaptureHandle>> = Mutex::new(None);
+
+    /// Signals `ActivateCompleted` back to the waiting setup code without a
+    /// Win32 event object (pure Rust, so no extra `windows` features needed).
+    #[implement(IActivateAudioInterfaceCompletionHandler)]
+    struct ActivateHandler {
+        signal: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
+        fn ActivateCompleted(
+            &self,
+            _operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+        ) -> windows::core::Result<()> {
+            let (lock, cv) = &*self.signal;
+            *lock.lock().unwrap() = true;
+            cv.notify_all();
+            Ok(())
+        }
+    }
+
+    /// PROPVARIANT holding a VT_BLOB. Built as an explicit repr(C) mirror of the
+    /// real 64-bit layout (vt + 3 pad u16, then BLOB { u32 cbSize, ptr }) so we
+    /// don't have to construct windows-rs's PROPVARIANT union by hand; we pass a
+    /// pointer to it, which the callee reads by offset.
+    #[repr(C)]
+    struct BlobPropVariant {
+        vt: u16,
+        w1: u16,
+        w2: u16,
+        w3: u16,
+        cb_size: u32,
+        _pad: u32,
+        p_blob_data: *mut core::ffi::c_void,
+    }
+
+    struct Objects {
+        audio_client: IAudioClient,
+        capture_client: IAudioCaptureClient,
+    }
+
+    fn setup() -> Result<Objects, String> {
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED)
+                .ok()
+                .map_err(|e| format!("CoInitializeEx failed: {e}"))?;
+
+            // Exclude our own process tree so the call's own audio (played by
+            // Haven) is never recaptured — the whole point of the fix.
+            let params = AUDIOCLIENT_ACTIVATION_PARAMS {
+                ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+                Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+                    ProcessLoopbackParams: AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+                        TargetProcessId: GetCurrentProcessId(),
+                        ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE,
+                    },
+                },
+            };
+            let prop = BlobPropVariant {
+                vt: VT_BLOB,
+                w1: 0,
+                w2: 0,
+                w3: 0,
+                cb_size: core::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32,
+                _pad: 0,
+                p_blob_data: &params as *const _ as *mut core::ffi::c_void,
+            };
+            let prop_ptr = &prop as *const BlobPropVariant as *const PROPVARIANT;
+
+            let signal = Arc::new((Mutex::new(false), Condvar::new()));
+            let handler: IActivateAudioInterfaceCompletionHandler = ActivateHandler {
+                signal: signal.clone(),
+            }
+            .into();
+
+            let op: IActivateAudioInterfaceAsyncOperation = ActivateAudioInterfaceAsync(
+                VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
+                &IAudioClient::IID,
+                Some(prop_ptr),
+                &handler,
+            )
+            .map_err(|e| format!("ActivateAudioInterfaceAsync failed: {e}"))?;
+
+            // Wait for the async activation to complete (params/prop must stay
+            // alive until then — they do, we're still in scope).
+            {
+                let (lock, cv) = &*signal;
+                let mut done = lock.lock().unwrap();
+                while !*done {
+                    let (guard, timeout) = cv
+                        .wait_timeout(done, Duration::from_secs(5))
+                        .map_err(|_| "activation wait poisoned".to_string())?;
+                    done = guard;
+                    if timeout.timed_out() {
+                        return Err("timed out activating audio interface".into());
+                    }
+                }
+            }
+
+            let mut activate_hr = HRESULT(0);
+            let mut unknown: Option<IUnknown> = None;
+            op.GetActivateResult(&mut activate_hr, &mut unknown)
+                .map_err(|e| format!("GetActivateResult failed: {e}"))?;
+            activate_hr
+                .ok()
+                .map_err(|e| format!("audio interface activation failed: {e}"))?;
+            let audio_client: IAudioClient = unknown
+                .ok_or("activation returned no interface")?
+                .cast()
+                .map_err(|e| format!("cast to IAudioClient failed: {e}"))?;
+
+            let format = WAVEFORMATEX {
+                wFormatTag: 1, // WAVE_FORMAT_PCM
+                nChannels: CHANNELS,
+                nSamplesPerSec: SAMPLE_RATE,
+                nAvgBytesPerSec: SAMPLE_RATE * (CHANNELS as u32) * (BITS as u32 / 8),
+                nBlockAlign: CHANNELS * (BITS / 8),
+                wBitsPerSample: BITS,
+                cbSize: 0,
+            };
+
+            audio_client
+                .Initialize(
+                    AUDCLNT_SHAREMODE_SHARED,
+                    AUDCLNT_STREAMFLAGS_LOOPBACK,
+                    BUFFER_DURATION,
+                    0,
+                    &format,
+                    None,
+                )
+                .map_err(|e| format!("IAudioClient::Initialize failed: {e}"))?;
+
+            let capture_client: IAudioCaptureClient = audio_client
+                .GetService()
+                .map_err(|e| format!("GetService(IAudioCaptureClient) failed: {e}"))?;
+
+            audio_client
+                .Start()
+                .map_err(|e| format!("IAudioClient::Start failed: {e}"))?;
+
+            Ok(Objects {
+                audio_client,
+                capture_client,
+            })
+        }
+    }
+
+    fn capture_loop(objects: &Objects, channel: &Channel<String>, running: &AtomicBool) {
+        let silent_flag = AUDCLNT_BUFFERFLAGS_SILENT.0 as u32;
+        while running.load(Ordering::Relaxed) {
+            unsafe {
+                let mut packet = match objects.capture_client.GetNextPacketSize() {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+                if packet == 0 {
+                    std::thread::sleep(Duration::from_millis(8));
+                    continue;
+                }
+                while packet != 0 {
+                    let mut data: *mut u8 = core::ptr::null_mut();
+                    let mut frames: u32 = 0;
+                    let mut flags: u32 = 0;
+                    if objects
+                        .capture_client
+                        .GetBuffer(&mut data, &mut frames, &mut flags, None, None)
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if frames > 0 && (flags & silent_flag) == 0 && !data.is_null() {
+                        // Already interleaved stereo i16 LE at 48 kHz — the exact
+                        // wire format the frontend worklet expects.
+                        let byte_len = frames as usize * (CHANNELS as usize) * 2;
+                        let bytes = core::slice::from_raw_parts(data, byte_len);
+                        let encoded =
+                            base64::engine::general_purpose::STANDARD.encode(bytes);
+                        let _ = channel.send(encoded);
+                    }
+                    if objects.capture_client.ReleaseBuffer(frames).is_err() {
+                        return;
+                    }
+                    packet = match objects.capture_client.GetNextPacketSize() {
+                        Ok(n) => n,
+                        Err(_) => return,
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn start(channel: Channel<String>) -> Result<(), String> {
+        stop();
+        let running = Arc::new(AtomicBool::new(true));
+        let running_thread = running.clone();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+
+        let join = std::thread::spawn(move || {
+            let objects = match setup() {
+                Ok(o) => o,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                    unsafe { CoUninitialize() };
+                    return;
+                }
+            };
+            let _ = ready_tx.send(Ok(()));
+            capture_loop(&objects, &channel, &running_thread);
+            unsafe {
+                let _ = objects.audio_client.Stop();
+                CoUninitialize();
+            }
+        });
+
+        match ready_rx.recv_timeout(Duration::from_secs(6)) {
+            Ok(Ok(())) => {
+                *STATE.lock().unwrap() = Some(CaptureHandle {
+                    running,
+                    join: Some(join),
+                });
+                Ok(())
+            }
+            Ok(Err(e)) => {
+                running.store(false, Ordering::Relaxed);
+                let _ = join.join();
+                Err(e)
+            }
+            Err(_) => {
+                running.store(false, Ordering::Relaxed);
+                let _ = join.join();
+                Err("timed out starting system-audio capture".into())
+            }
+        }
+    }
+
+    pub fn stop() {
+        let handle = STATE.lock().unwrap().take();
+        if let Some(mut handle) = handle {
+            handle.running.store(false, Ordering::Relaxed);
+            if let Some(join) = handle.join.take() {
+                let _ = join.join();
             }
         }
     }

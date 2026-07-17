@@ -32,11 +32,9 @@ type SettingsState = {
   accent: string;
   pushToTalk: boolean;
   closeToTray: boolean;
-  /** Standard mic noise reduction (platform DSP). */
+  /** Mic noise reduction: the built-in DSP plus ML (RNNoise) suppression,
+   * gated together by this one toggle. */
   noiseSuppression: boolean;
-  /** Stronger ML-based isolation that mutes everything that isn't speech.
-   * Best-effort — silently ignored on platforms without support. */
-  voiceIsolation: boolean;
   loaded: boolean;
 
   loadSettings: () => Promise<void>;
@@ -45,7 +43,6 @@ type SettingsState = {
   setPushToTalk: (on: boolean) => Promise<void>;
   setCloseToTray: (on: boolean) => Promise<void>;
   setNoiseSuppression: (on: boolean) => Promise<void>;
-  setVoiceIsolation: (on: boolean) => Promise<void>;
 };
 
 function systemPrefersDark(): boolean {
@@ -103,7 +100,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   pushToTalk: false,
   closeToTray: true,
   noiseSuppression: true,
-  voiceIsolation: false,
   loaded: false,
 
   loadSettings: async () => {
@@ -113,10 +109,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const pushToTalk = (all.pushToTalk as boolean) ?? false;
     const closeToTray = (all.closeToTray as boolean) ?? true;
     const noiseSuppression = (all.noiseSuppression as boolean) ?? true;
-    const voiceIsolation = (all.voiceIsolation as boolean) ?? false;
     applyTheme(theme);
     applyAccent(accent);
-    set({ theme, accent, pushToTalk, closeToTray, noiseSuppression, voiceIsolation, loaded: true });
+    set({ theme, accent, pushToTalk, closeToTray, noiseSuppression, loaded: true });
     void syncCloseToTray(closeToTray);
   },
 
@@ -191,19 +186,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  setVoiceIsolation: async (on) => {
-    const previous = get().voiceIsolation;
-    set({ voiceIsolation: on });
-    applyVoiceSettingsToLiveCalls();
-    try {
-      await settingsRepo.set("voiceIsolation", on);
-    } catch (err) {
-      console.error("Failed to save voice isolation setting:", err);
-      set({ voiceIsolation: previous });
-      applyVoiceSettingsToLiveCalls();
-      toast.error("Setting not saved", "Please try again.");
-    }
-  },
 }));
 
 /** Voice-processing toggles take effect mid-call: re-apply constraints to

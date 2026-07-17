@@ -15,7 +15,13 @@
  * display/system output. The call microphone is a separate getUserMedia track,
  * so "only system audio is shared" holds by construction.
  */
-import { isMacOS, startSystemAudioTrack, stopSystemAudioTrack } from "./systemAudio";
+import {
+  isMacOS,
+  MACOS_QUARANTINE_HINT,
+  startSystemAudioTrack,
+  stopSystemAudioTrack,
+  usesNativeSystemAudio,
+} from "./systemAudio";
 import {
   MAX_CAPTURE_HEIGHT,
   MAX_CAPTURE_WIDTH,
@@ -27,11 +33,45 @@ export type DisplayCapture = {
   hasSystemAudio: boolean;
 };
 
+/** Why a screen share is stopping: the in-app Stop button ("user") vs the OS/
+ * WebView ending the capture out from under us ("ended"). */
+export type ScreenStopSource = "user" | "ended";
+
+/** Cheap structured breadcrumbs for the screen-share lifecycle. WebView2
+ * (Windows) can end a display capture for reasons the app never initiated
+ * (captured surface lost, window minimized, GPU/WebView2 teardown), which
+ * presents as a share "ending abruptly". These logs let an installed build be
+ * diagnosed from DevTools without a debugger attached. */
+export function logScreenShare(event: string, detail?: Record<string, unknown>): void {
+  console.info(`[screenShare] ${event}`, detail ?? {});
+}
+
+/** Platform-appropriate copy for a getDisplayMedia rejection. A cancelled OS
+ * picker rejects with `NotAllowedError` on every platform, so the macOS-only
+ * "grant Screen Recording" wording must not be shown to Windows/Linux users
+ * (who have no such permission and would be sent chasing a non-existent
+ * setting). */
+export function describeScreenShareError(err: unknown): string {
+  const name = (err as Error)?.name;
+  if (name === "NotAllowedError") {
+    return isMacOS()
+      ? "Screen share was cancelled or blocked. On macOS, grant Screen Recording to Haven in System Settings ▸ Privacy & Security." +
+          MACOS_QUARANTINE_HINT
+      : "Screen share was cancelled. Pick a screen or window and allow sharing to try again.";
+  }
+  return `Screen share isn't available: ${name ?? "unknown error"}.`;
+}
+
 // System audio (music, video, game) must be forwarded untouched. The mic-
 // oriented DSP — echo cancellation, noise suppression, auto gain — is designed
-// for a voice and would mangle full-range audio, so it's disabled here. Voice
-// feedback between call participants is handled upstream by each microphone's
-// echo cancellation, not by processing the shared audio.
+// for a voice and would mangle full-range audio, so it's disabled here.
+//
+// This is only used on platforms WITHOUT native capture (Linux). On macOS and
+// Windows we deliberately DON'T request getDisplayMedia audio at all: that tap
+// is a whole-system loopback that also recaptures Haven's own playback of the
+// remote participants, sending their voices back to them (echo). Those
+// platforms capture system audio natively instead, excluding the app's own
+// process (see systemAudio.ts / the Rust `sysaudio_*` commands).
 const SYSTEM_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: false,
   noiseSuppression: false,
@@ -50,20 +90,54 @@ export async function captureDisplay(config?: ScreenShareQualityOption): Promise
   // AND back up to native — without re-prompting the OS picker.
   const frameRate = config && config.id !== "auto" && config.frameRate ? config.frameRate : 30;
 
+  // On macOS/Windows we capture system audio natively (own-process-excluding),
+  // so don't also ask getDisplayMedia for the echo-prone whole-system loopback.
+  const native = usesNativeSystemAudio();
+  logScreenShare("requesting getDisplayMedia", {
+    frameRate,
+    config: config?.id,
+    audioSource: native ? "native" : "getDisplayMedia",
+  });
   const stream = await navigator.mediaDevices.getDisplayMedia({
     video: {
       width: { ideal: MAX_CAPTURE_WIDTH },
       height: { ideal: MAX_CAPTURE_HEIGHT },
       frameRate: { ideal: frameRate },
     },
-    audio: SYSTEM_AUDIO_CONSTRAINTS,
+    audio: native ? false : SYSTEM_AUDIO_CONSTRAINTS,
   });
 
-  // macOS WKWebView never returns display audio — capture it natively and
-  // splice the track in so downstream code forwards it like any other.
-  if (stream.getAudioTracks().length === 0 && isMacOS()) {
+  // Diagnostic-only listeners on the video track (the teardown `onended` is set
+  // by the caller). `mute`/`unmute` and an early `ended` are the fingerprints of
+  // a WebView2 capture that dropped without the user pressing Stop.
+  const videoTrack = stream.getVideoTracks()[0];
+  if (videoTrack) {
+    logScreenShare("capture started", {
+      label: videoTrack.label,
+      settings: videoTrack.getSettings(),
+    });
+    videoTrack.addEventListener("mute", () =>
+      logScreenShare("video track muted", { readyState: videoTrack.readyState }),
+    );
+    videoTrack.addEventListener("unmute", () =>
+      logScreenShare("video track unmuted", { readyState: videoTrack.readyState }),
+    );
+    videoTrack.addEventListener("ended", () =>
+      logScreenShare("video track ended (diagnostic)", { readyState: videoTrack.readyState }),
+    );
+  }
+
+  // On macOS/Windows, splice in the natively-captured system audio (excludes
+  // Haven's own output, so a call doesn't echo). Best-effort: if native capture
+  // is unavailable the screen still shares, video-only.
+  if (native && stream.getAudioTracks().length === 0) {
     const nativeTrack = await startSystemAudioTrack();
-    if (nativeTrack) stream.addTrack(nativeTrack);
+    if (nativeTrack) {
+      stream.addTrack(nativeTrack);
+      logScreenShare("native system audio attached", {});
+    } else {
+      logScreenShare("native system audio unavailable", {});
+    }
   }
 
   for (const track of stream.getAudioTracks()) {

@@ -58,3 +58,17 @@ objc2-core-media = { version = "0.3", features = [
     "objc2-core-audio-types",
 ] }
 
+# Windows system-audio capture (WASAPI process loopback). getDisplayMedia on
+# Windows taps a whole-system loopback that recaptures the call's own output
+# and echoes it back; instead we capture natively in EXCLUDE-target-process-tree
+# mode so Haven's own audio is left out.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.58"
+windows = { version = "0.58", features = [
+    "implement",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
+    "Win32_System_Threading",
+] }
+
