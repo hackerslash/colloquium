@@ -13,6 +13,7 @@ import { IconButton } from "../ui/IconButton";
 import { EmptyState } from "../ui/EmptyState";
 import { UserX } from "lucide-react";
 import type { Presence } from "../../types/domain";
+import { toast } from "../../stores/useToastStore";
 
 const PRESENCE_LABEL: Record<Presence, string> = {
   online: "Online",
@@ -57,7 +58,10 @@ export function ChatView({ contactId }: ChatViewProps) {
 
   function handleSend(file?: File) {
     if (!roomId) return;
-    void sendMessage(roomId, [contactId], draft, file);
+    sendMessage(roomId, [contactId], draft, file).catch((err) => {
+      console.error("Failed to send message:", err);
+      toast.error("Message not sent", "Please try again.");
+    });
   }
 
   if (!contact) {

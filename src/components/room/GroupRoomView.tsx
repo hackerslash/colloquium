@@ -12,6 +12,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
 import { RoomMembersModal } from "./RoomMembersModal";
+import { toast } from "../../stores/useToastStore";
 
 type GroupRoomViewProps = {
   roomId: string;
@@ -48,7 +49,10 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
 
   function handleSend(file?: File) {
     if (!room) return;
-    void sendMessage(roomId, memberIds, draft, file);
+    sendMessage(roomId, memberIds, draft, file).catch((err) => {
+      console.error("Failed to send message:", err);
+      toast.error("Message not sent", "Please try again.");
+    });
   }
 
 
