@@ -1,10 +1,11 @@
 import { motion } from "motion/react";
-import { Mic, MicOff, MonitorUp, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, Phone, PhoneOff, Video, VideoOff } from "lucide-react";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
 import { CallControlBar } from "./CallControlBar";
+import { ScreenShareButton } from "./ScreenShareButton";
 import { IconButton } from "../ui/IconButton";
 import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
@@ -31,6 +32,8 @@ export function CallOverlay() {
   const toggleMic = useCallStore((s) => s.toggleMic);
   const toggleCam = useCallStore((s) => s.toggleCam);
   const toggleScreenShare = useCallStore((s) => s.toggleScreenShare);
+  const screenConfig = useCallStore((s) => s.screenConfig);
+  const setScreenConfig = useCallStore((s) => s.setScreenConfig);
 
   const remoteName = useRemoteName(activeCall?.remoteId);
 
@@ -181,14 +184,14 @@ export function CallOverlay() {
             variant={camOn ? "accent" : "solid"}
             onClick={toggleCam}
           />
-          <IconButton
-            icon={MonitorUp}
-            label={screenOn ? "Stop sharing" : "Share screen"}
-            size="lg"
-            variant={screenOn ? "accent" : "solid"}
-            active={screenOn}
-            onClick={() => void toggleScreenShare()}
-          />
+          {activeCall.status === "active" && (
+            <ScreenShareButton
+              screenOn={screenOn}
+              currentConfig={screenConfig}
+              onConfigChange={setScreenConfig}
+              onToggle={() => void toggleScreenShare()}
+            />
+          )}
           <IconButton
             icon={PhoneOff}
             label="Leave"

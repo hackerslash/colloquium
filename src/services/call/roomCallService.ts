@@ -21,6 +21,7 @@ import {
   SLOT_COUNT,
 } from "./PresenterSlotManager";
 import { captureDisplay, releaseDisplayAudio } from "./displayMedia";
+import type { ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useCallStore } from "../../stores/useCallStore";
@@ -423,7 +424,7 @@ function stopCameraLocal() {
 
 // --- Screen share: coordinated via the 2 presenter slots ---
 
-export async function startScreenShare() {
+export async function startScreenShare(config: ScreenShareQualityOption) {
   if (!session || session.screenStream) return;
   const now = Date.now();
   const freeIndex = ([0, 1] as const).find((i) => session!.slots.isFree(i, now));
@@ -437,7 +438,7 @@ export async function startScreenShare() {
   // never got.
   let stream: MediaStream;
   try {
-    ({ stream } = await captureDisplay());
+    ({ stream } = await captureDisplay(config));
   } catch (err) {
     const name = (err as Error)?.name;
     useRoomCallStore
@@ -463,11 +464,17 @@ export async function startScreenShare() {
   // Fires when the user clicks the OS/browser "Stop sharing" control.
   videoTrack.onended = () => stopScreenShare();
 
+  const customTier = config.id !== "auto" && config.maxBitrate ? {
+    maxBitrate: config.maxBitrate,
+    scaleResolutionDownBy: 1,
+    maxFramerate: config.frameRate ?? 30,
+  } : undefined;
+
   for (const wrapper of session.wrappers.values()) {
     if (wrapper.hasVideoSender("screen")) {
       void wrapper.replaceVideoTrack(videoTrack, "screen");
     } else {
-      wrapper.addVideoTrack(videoTrack, stream, "screen", screenCeiling());
+      wrapper.addVideoTrack(videoTrack, stream, "screen", screenCeiling(), customTier);
     }
     // System audio only (never the mic); rides the screen stream's msid.
     for (const audioTrack of stream.getAudioTracks()) {

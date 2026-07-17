@@ -5,6 +5,7 @@ import type { ConnectionQuality } from "../services/call/PeerConnectionWrapper";
 import * as roomCallService from "../services/call/roomCallService";
 import * as roomMembersRepo from "../services/db/roomMembersRepo";
 import { useIdentityStore } from "./useIdentityStore";
+import { SCREEN_SHARE_OPTIONS, type ScreenShareQualityOption } from "../services/call/screenShareConfig";
 
 type RoomCallState = {
   roomId: string | null;
@@ -25,12 +26,14 @@ type RoomCallState = {
    * hasVideo from live MediaStream objects (same refs, changed contents). */
   mediaVersion: number;
   speakingIds: Set<string>;
+  screenConfig: ScreenShareQualityOption;
 
   join: (roomId: string) => Promise<void>;
   leave: () => void;
   toggleMic: () => void;
   toggleCam: () => Promise<void>;
   toggleScreenShare: () => Promise<void>;
+  setScreenConfig: (config: ScreenShareQualityOption) => void;
 
   _setSession: (roomId: string) => void;
   _setParticipants: (ids: string[]) => void;
@@ -71,6 +74,7 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   presentError: null,
   mediaVersion: 0,
   speakingIds: new Set<string>(),
+  screenConfig: SCREEN_SHARE_OPTIONS[0],
 
   join: async (roomId) => {
     const self = requireSelf();
@@ -82,8 +86,9 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   toggleCam: () => roomCallService.toggleCam(),
   toggleScreenShare: async () => {
     if (useRoomCallStore.getState().screenOn) roomCallService.stopScreenShare();
-    else await roomCallService.startScreenShare();
+    else await roomCallService.startScreenShare(useRoomCallStore.getState().screenConfig);
   },
+  setScreenConfig: (config) => set({ screenConfig: config }),
 
   _setSession: (roomId) => set({ roomId, presentError: null }),
   _setParticipants: (ids) => set({ participants: ids }),

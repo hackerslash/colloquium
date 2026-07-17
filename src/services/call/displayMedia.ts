@@ -16,6 +16,7 @@
  * so "only system audio is shared" holds by construction.
  */
 import { isMacOS, startSystemAudioTrack, stopSystemAudioTrack } from "./systemAudio";
+import type { ScreenShareQualityOption } from "./screenShareConfig";
 
 export type DisplayCapture = {
   stream: MediaStream;
@@ -33,9 +34,19 @@ const SYSTEM_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   autoGainControl: false,
 };
 
-export async function captureDisplay(): Promise<DisplayCapture> {
+export async function captureDisplay(config?: ScreenShareQualityOption): Promise<DisplayCapture> {
+  const videoConstraints: MediaTrackConstraints = {};
+
+  if (config && config.id !== "auto") {
+    if (config.frameRate) videoConstraints.frameRate = { ideal: config.frameRate };
+    if (config.width) videoConstraints.width = { ideal: config.width };
+    if (config.height) videoConstraints.height = { ideal: config.height };
+  } else {
+    videoConstraints.frameRate = { ideal: 30 };
+  }
+
   const stream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: { ideal: 30 } },
+    video: Object.keys(videoConstraints).length > 0 ? videoConstraints : true,
     audio: SYSTEM_AUDIO_CONSTRAINTS,
   });
 

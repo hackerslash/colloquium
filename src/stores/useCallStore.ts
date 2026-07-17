@@ -3,6 +3,7 @@ import type { Identity } from "../types/domain";
 import type { ConnectionQuality } from "../services/call/PeerConnectionWrapper";
 import * as callService from "../services/call/callService";
 import { useIdentityStore } from "./useIdentityStore";
+import { SCREEN_SHARE_OPTIONS, type ScreenShareQualityOption } from "../services/call/screenShareConfig";
 
 export type CallStatus =
   | "idle"
@@ -32,6 +33,7 @@ type CallState = {
   connectionState: RTCPeerConnectionState;
   quality: ConnectionQuality;
   speakingIds: Set<string>;
+  screenConfig: ScreenShareQualityOption;
 
   // User actions
   startCall: (roomId: string, remoteId: string, withVideo: boolean) => Promise<void>;
@@ -41,6 +43,7 @@ type CallState = {
   toggleMic: () => void;
   toggleCam: () => void;
   toggleScreenShare: () => Promise<void>;
+  setScreenConfig: (config: ScreenShareQualityOption) => void;
 
   // Internal setters, driven by callService (prefixed _ by convention).
   _setActiveCall: (call: ActiveCall) => void;
@@ -73,6 +76,7 @@ export const useCallStore = create<CallState>((set) => ({
   connectionState: "new",
   quality: "unknown",
   speakingIds: new Set<string>(),
+  screenConfig: SCREEN_SHARE_OPTIONS[0],
 
   startCall: (roomId, remoteId, withVideo) =>
     callService.startCall(requireSelf(), roomId, remoteId, withVideo),
@@ -83,8 +87,9 @@ export const useCallStore = create<CallState>((set) => ({
   toggleCam: () => callService.toggleCam(),
   toggleScreenShare: async () => {
     if (useCallStore.getState().screenOn) await callService.stopScreenShare();
-    else await callService.startScreenShare();
+    else await callService.startScreenShare(useCallStore.getState().screenConfig);
   },
+  setScreenConfig: (config) => set({ screenConfig: config }),
 
   _setActiveCall: (call) => set({ activeCall: call }),
   _setStatus: (status) =>

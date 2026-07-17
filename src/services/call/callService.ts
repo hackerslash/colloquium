@@ -13,6 +13,7 @@ import { derivePeerId } from "../peer/derivePeerId";
 import { PeerConnectionWrapper } from "./PeerConnectionWrapper";
 import { SpeakingMonitor } from "./speakingMonitor";
 import { captureDisplay, releaseDisplayAudio, type DisplayCapture } from "./displayMedia";
+import type { ScreenShareQualityOption } from "./screenShareConfig";
 import { emitCallEvent } from "./callEvents";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
@@ -275,11 +276,11 @@ function endCallLocal() {
   useCallStore.getState()._clear();
 }
 
-export async function startScreenShare() {
+export async function startScreenShare(config: ScreenShareQualityOption) {
   if (!ctx?.wrapper) return;
   let capture: DisplayCapture;
   try {
-    capture = await captureDisplay();
+    capture = await captureDisplay(config);
   } catch (err) {
     const name = (err as Error)?.name;
     useCallStore
@@ -297,10 +298,16 @@ export async function startScreenShare() {
 
   // Screen rides its own sender (and stream/msid), so camera and screen can
   // run at the same time and the remote can tell them apart.
+  const customTier = config.id !== "auto" && config.maxBitrate ? {
+    maxBitrate: config.maxBitrate,
+    scaleResolutionDownBy: 1,
+    maxFramerate: config.frameRate ?? 30,
+  } : undefined;
+
   if (ctx.wrapper.hasVideoSender("screen")) {
     await ctx.wrapper.replaceVideoTrack(track, "screen");
   } else {
-    ctx.wrapper.addVideoTrack(track, stream, "screen");
+    ctx.wrapper.addVideoTrack(track, stream, "screen", 0, customTier);
   }
 
   // Forward the system audio the OS returned (never the mic — that's a

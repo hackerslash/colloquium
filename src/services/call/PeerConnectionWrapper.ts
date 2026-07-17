@@ -60,6 +60,7 @@ type SenderAdaptation = {
   ceiling: number;
   goodStreak: number;
   badStreak: number;
+  customTier?: Tier;
 };
 
 /**
@@ -147,6 +148,7 @@ export class PeerConnectionWrapper {
     stream: MediaStream,
     kind: VideoKind,
     ceiling = 0,
+    customTier?: Tier,
   ): RTCRtpSender {
     const tiers = TIERS[kind];
     const startTier = Math.min(Math.max(ceiling, 0), tiers.length - 1);
@@ -156,14 +158,15 @@ export class PeerConnectionWrapper {
       // contentHint is advisory; absence is fine
     }
 
+    const initialTier = customTier ?? tiers[startTier];
     const transceiver = this.pc.addTransceiver(track, {
       direction: "sendrecv",
       streams: [stream],
       sendEncodings: [
         {
-          maxBitrate: tiers[startTier].maxBitrate,
-          scaleResolutionDownBy: tiers[startTier].scaleResolutionDownBy,
-          maxFramerate: tiers[startTier].maxFramerate,
+          maxBitrate: initialTier.maxBitrate,
+          scaleResolutionDownBy: initialTier.scaleResolutionDownBy,
+          maxFramerate: initialTier.maxFramerate,
         },
       ],
     });
@@ -193,6 +196,7 @@ export class PeerConnectionWrapper {
       ceiling: startTier,
       goodStreak: 0,
       badStreak: 0,
+      customTier,
     });
     return sender;
   }
@@ -376,7 +380,7 @@ export class PeerConnectionWrapper {
         nextTier = state.tier - 1;
         state.goodStreak = 0;
       }
-      if (nextTier !== state.tier) this.applyTier(sender, state, nextTier);
+      if (nextTier !== state.tier && !state.customTier) this.applyTier(sender, state, nextTier);
     }
   }
 

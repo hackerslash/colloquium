@@ -1,9 +1,10 @@
-import { Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Video, VideoOff } from "lucide-react";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
 import { CallControlBar } from "./CallControlBar";
+import { ScreenShareButton } from "./ScreenShareButton";
 import { IconButton } from "../ui/IconButton";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
 
@@ -39,6 +40,8 @@ export function RoomCallView() {
   const toggleMic = useRoomCallStore((s) => s.toggleMic);
   const toggleCam = useRoomCallStore((s) => s.toggleCam);
   const toggleScreenShare = useRoomCallStore((s) => s.toggleScreenShare);
+  const screenConfig = useRoomCallStore((s) => s.screenConfig);
+  const setScreenConfig = useRoomCallStore((s) => s.setScreenConfig);
 
   const nameOf = useNameLookup();
 
@@ -175,14 +178,13 @@ export function RoomCallView() {
             variant={camOn ? "accent" : "solid"}
             onClick={() => void toggleCam()}
           />
-          <IconButton
-            icon={MonitorUp}
-            label={slotsFull ? "Both screen-share slots are taken" : screenOn ? "Stop presenting" : "Present screen"}
-            size="lg"
-            variant={screenOn ? "accent" : "solid"}
-            active={screenOn}
+          <ScreenShareButton
+            screenOn={screenOn}
             disabled={slotsFull}
-            onClick={() => void toggleScreenShare()}
+            currentConfig={screenConfig}
+            onConfigChange={setScreenConfig}
+            onToggle={() => void toggleScreenShare()}
+            label={slotsFull ? "Both screen-share slots are taken" : screenOn ? "Stop presenting" : "Present screen"}
           />
           <IconButton
             icon={PhoneOff}
