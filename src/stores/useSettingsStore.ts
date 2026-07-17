@@ -2,6 +2,7 @@ import { create } from "zustand";
 import * as settingsRepo from "../services/db/settingsRepo";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
+import { setCloseToTray as syncCloseToTray } from "../services/window";
 
 export type ThemePref = "system" | "light" | "dark";
 
@@ -115,6 +116,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     applyTheme(theme);
     applyAccent(accent);
     set({ theme, accent, pushToTalk, closeToTray, noiseSuppression, voiceIsolation, loaded: true });
+    void syncCloseToTray(closeToTray);
   },
 
   setTheme: async (theme) => {
@@ -138,6 +140,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setCloseToTray: async (on) => {
     set({ closeToTray: on });
+    void syncCloseToTray(on);
     await settingsRepo.set("closeToTray", on);
   },
 

@@ -4,8 +4,21 @@ mod keychain;
 mod sysaudio;
 mod tray;
 
+use std::sync::Mutex;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
+
+/// Mirrors the frontend's `closeToTray` setting so the window-close handler
+/// (which runs on the Rust side, ahead of any JS listener) knows whether to
+/// hide to tray or let the app quit normally. Defaults to the setting's own
+/// default so a fresh app matches current behavior before the frontend loads
+/// the persisted value and syncs it via `set_close_to_tray`.
+struct CloseToTray(Mutex<bool>);
+
+#[tauri::command]
+fn set_close_to_tray(state: tauri::State<CloseToTray>, enabled: bool) {
+    *state.0.lock().unwrap() = enabled;
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,6 +52,7 @@ pub fn run() {
                 .with_state_flags(StateFlags::all() & !StateFlags::VISIBLE)
                 .build(),
         )
+        .manage(CloseToTray(Mutex::new(true)))
         .setup(|app| {
             tray::build(app)?;
             Ok(())
@@ -46,10 +60,15 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Close-to-tray: hide the window instead of quitting so calls and
             // the P2P connection survive. Quit is available from the tray menu.
+            // Skipped when the user has turned the setting off, in which case
+            // this falls through to Tauri's default close behavior.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
+                    let close_to_tray = *window.state::<CloseToTray>().0.lock().unwrap();
+                    if close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                 }
             }
         })
@@ -62,6 +81,7 @@ pub fn run() {
             identity::identity_delete_keypair,
             sysaudio::sysaudio_start,
             sysaudio::sysaudio_stop,
+            set_close_to_tray,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
