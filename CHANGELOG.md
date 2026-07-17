@@ -3,6 +3,10 @@
 All notable changes to Haven are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+Section headers must match the release tag (`vX.Y.Z`) or bare version
+(`X.Y.Z`) so the release workflow can pull the matching section into the
+GitHub Release notes.
+
 ## v2
 
 ### Added
