@@ -133,6 +133,13 @@ function pushSlotsToStore() {
   useRoomCallStore.getState()._setSlots(session.slots.effective(Date.now()));
 }
 
+/** The raw capture stays hot while muted (see setMic) — don't show ourselves
+ * as speaking off audio that isn't transmitted. */
+function pushSpeaking(ids: Set<string>, selfId: string) {
+  const store = useRoomCallStore.getState();
+  store._setSpeaking(store.micOn ? ids : new Set([...ids].filter((id) => id !== selfId)));
+}
+
 function pushParticipantsToStore() {
   if (!session) return;
   const present = [session.self.identityId, ...session.wrappers.keys()];
@@ -411,7 +418,7 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
       }
       return receivers;
     },
-    (ids) => useRoomCallStore.getState()._setSpeaking(ids),
+    (ids) => pushSpeaking(ids, self.identityId),
   );
   speakingMonitor.start();
   session.speakingMonitor = speakingMonitor;
@@ -509,16 +516,24 @@ export function leaveRoomCall() {
 
 export function toggleMic() {
   if (!session) return;
-  const track = session.localStream.getAudioTracks()[0];
-  if (!track) return;
-  setMic(!track.enabled);
+  setMic(!useRoomCallStore.getState().micOn);
 }
 
 export function setMic(enabled: boolean) {
   if (!session) return;
-  const track = session.localStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = enabled;
+  const raw = session.localStream.getAudioTracks()[0];
+  if (!raw) return;
+  // Mute the transmitted (processed) track, not the raw capture: disabling
+  // the raw mic makes WebKit stop the shared capture unit, and that
+  // voice-processing teardown/rebuild audibly changes how the remotes'
+  // playback sounds on every mute/unmute.
+  const processed = session.micProcessor?.track;
+  if (processed) {
+    processed.enabled = enabled;
+    raw.enabled = true;
+  } else {
+    raw.enabled = enabled;
+  }
   useRoomCallStore.getState()._setMicOn(enabled);
 }
 
@@ -540,6 +555,12 @@ async function initMicProcessing(): Promise<void> {
     return;
   }
   active.micProcessor = processor;
+  // The user may have muted while the wasm loaded — carry that onto the
+  // processed track and re-enable the raw capture (see setMic).
+  if (processor) {
+    processor.track.enabled = useRoomCallStore.getState().micOn;
+    rawAudio.enabled = true;
+  }
 }
 
 /** The audio track we transmit: the RNNoise-processed track when available,
@@ -584,9 +605,6 @@ export async function switchMicDevice(): Promise<void> {
     return;
   }
 
-  // Preserve mute state across the swap so switching device doesn't unmute.
-  if (call.localStream.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
-
   // Release the old mic NOW, not after the swap: two simultaneously-open
   // echo-cancelled captures make macOS rebuild its voice-processing unit
   // across both devices, audibly changing how the remotes' playback sounds.
@@ -610,6 +628,8 @@ export async function switchMicDevice(): Promise<void> {
   }
   call.micProcessor = newProcessor;
   const outgoing = newProcessor?.track ?? newTrack;
+  // Preserve mute state across the swap so switching device doesn't unmute.
+  outgoing.enabled = useRoomCallStore.getState().micOn;
 
   // Replace the mic sender track on every peer connection in the mesh. Match
   // the previous outgoing track exactly; fall back to any audio sender that
@@ -660,7 +680,7 @@ export async function switchMicDevice(): Promise<void> {
       }
       return receivers;
     },
-    (ids) => useRoomCallStore.getState()._setSpeaking(ids),
+    (ids) => pushSpeaking(ids, self.identityId),
   );
   speakingMonitor.start();
   if (session === call) {

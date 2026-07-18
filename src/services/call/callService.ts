@@ -146,6 +146,10 @@ async function initMicProcessing(): Promise<void> {
     return;
   }
   call.micProcessor = processor;
+  if (processor) {
+    processor.track.enabled = useCallStore.getState().micOn;
+    rawAudio.enabled = true;
+  }
 }
 
 /** The audio track we transmit: the RNNoise-processed track when available,
@@ -190,9 +194,6 @@ export async function switchMicDevice(): Promise<void> {
     return;
   }
 
-  // Preserve mute state across the swap so switching device doesn't unmute.
-  if (call.localStream?.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
-
   // Release the old mic NOW, not after the swap: two simultaneously-open
   // echo-cancelled captures make macOS rebuild its voice-processing unit
   // across both devices, audibly changing how the remote's playback sounds.
@@ -216,6 +217,8 @@ export async function switchMicDevice(): Promise<void> {
   }
   call.micProcessor = newProcessor;
   const outgoing = newProcessor?.track ?? newTrack;
+  // Preserve mute state across the swap so switching device doesn't unmute.
+  outgoing.enabled = useCallStore.getState().micOn;
 
   // Replace the mic sender's track on the peer connection. Match the previous
   // outgoing track exactly; fall back to any audio sender that isn't carrying
@@ -376,6 +379,7 @@ function attachLocalTracks() {
 function startSpeakingMonitor() {
   if (!ctx || ctx.speakingMonitor) return;
   const remoteId = ctx.remoteId;
+  const selfId = ctx.self.identityId;
   const monitor = new SpeakingMonitor(
     ctx.self.identityId,
     ctx.localStream,
@@ -388,7 +392,12 @@ function startSpeakingMonitor() {
       if (audioReceivers.length > 0) receivers.set(remoteId, audioReceivers);
       return receivers;
     },
-    (ids) => useCallStore.getState()._setSpeaking(ids),
+    (ids) => {
+      const store = useCallStore.getState();
+      // The raw capture stays hot while muted (see setMic) — don't show
+      // ourselves as speaking off what isn't transmitted.
+      store._setSpeaking(store.micOn ? ids : new Set([...ids].filter((id) => id !== selfId)));
+    },
   );
   monitor.start();
   ctx.speakingMonitor = monitor;
@@ -702,16 +711,24 @@ export async function stopScreenShare(source: ScreenStopSource = "user") {
 
 export function toggleMic() {
   if (!ctx?.localStream) return;
-  const track = ctx.localStream.getAudioTracks()[0];
-  if (!track) return;
-  setMic(!track.enabled);
+  setMic(!useCallStore.getState().micOn);
 }
 
 export function setMic(enabled: boolean) {
   if (!ctx?.localStream) return;
-  const track = ctx.localStream.getAudioTracks()[0];
-  if (!track) return;
-  track.enabled = enabled;
+  const raw = ctx.localStream.getAudioTracks()[0];
+  if (!raw) return;
+  // Mute the transmitted (processed) track, not the raw capture: disabling
+  // the raw mic makes WebKit stop the shared capture unit, and that
+  // voice-processing teardown/rebuild audibly changes how the remote's
+  // playback sounds on every mute/unmute.
+  const processed = ctx.micProcessor?.track;
+  if (processed) {
+    processed.enabled = enabled;
+    raw.enabled = true;
+  } else {
+    raw.enabled = enabled;
+  }
   const store = useCallStore.getState();
   store._setMediaFlags(enabled, store.camOn);
 }
