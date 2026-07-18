@@ -37,6 +37,28 @@ export async function createGroupRoom(
   return roomId;
 }
 
+export async function renameGroupRoom(
+  self: Identity,
+  roomId: string,
+  name: string,
+): Promise<void> {
+  await roomRepo.updateRoomName(roomId, name);
+  await announceRoom(self, roomId);
+}
+
+export async function addMembersToGroupRoom(
+  self: Identity,
+  roomId: string,
+  memberIds: string[],
+): Promise<void> {
+  const now = Date.now();
+  for (const m of memberIds) {
+    const contact = await rosterRepo.getContact(m);
+    await roomMembersRepo.addMember(roomId, m, "member", now, contact?.displayName ?? null);
+  }
+  await announceRoom(self, roomId);
+}
+
 async function buildAnnounce(
   self: Identity,
   roomId: string,

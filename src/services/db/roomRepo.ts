@@ -84,3 +84,12 @@ export async function touchLastMessage(roomId: string, at: number): Promise<void
     [at, roomId],
   );
 }
+
+export async function updateRoomName(roomId: string, name: string): Promise<void> {
+  const db = await getDb();
+  await db.execute(
+    "UPDATE rooms SET name = $1 WHERE id = $2 AND type = 'group'",
+    [name, roomId],
+  );
+}
+
