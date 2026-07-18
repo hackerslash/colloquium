@@ -53,11 +53,16 @@ keyUsage = critical, digitalSignature
 extendedKeyUsage = critical, codeSigning
 EOF
 
-  openssl req -x509 -newkey rsa:2048 -keyout "$WORKDIR/key.pem" -out "$WORKDIR/cert.pem" \
+  # Use the system openssl (LibreSSL), not a Homebrew OpenSSL 3.x that may be
+  # ahead in PATH: OpenSSL 3.x defaults to a PKCS12 MAC/cipher that macOS's
+  # `security import` can't verify, failing with "MAC verification failed".
+  OPENSSL=/usr/bin/openssl
+
+  "$OPENSSL" req -x509 -newkey rsa:2048 -keyout "$WORKDIR/key.pem" -out "$WORKDIR/cert.pem" \
     -days 3650 -nodes -config "$WORKDIR/codesign.cnf" >/dev/null 2>&1
 
-  PASSWORD="$(openssl rand -base64 24)"
-  openssl pkcs12 -export -out "$WORKDIR/cert.p12" \
+  PASSWORD="$("$OPENSSL" rand -base64 24)"
+  "$OPENSSL" pkcs12 -export -out "$WORKDIR/cert.p12" \
     -inkey "$WORKDIR/key.pem" -in "$WORKDIR/cert.pem" -passout "pass:$PASSWORD" >/dev/null 2>&1
 
   security import "$WORKDIR/cert.p12" -k "$HOME/Library/Keychains/login.keychain-db" \
