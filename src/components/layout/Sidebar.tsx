@@ -7,7 +7,6 @@ import {
   Inbox,
   Mic,
   MicOff,
-  Phone,
   Plus,
   Settings,
   Video,
@@ -64,7 +63,6 @@ export function Sidebar({
   const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
   const micOn = useRoomCallStore((s) => s.micOn);
   const camOn = useRoomCallStore((s) => s.camOn);
-  const joinCall = useRoomCallStore((s) => s.join);
 
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -229,24 +227,7 @@ export function Sidebar({
               </button>
 
               {inCallCount > 0 && (
-                <div className="ml-5 mt-1 border-l-2 border-success/30 pl-2.5 pr-1 py-1 space-y-1">
-                  <div className="flex items-center justify-between px-1.5 py-0.5 text-[11px] font-semibold text-success">
-                    <span className="flex items-center gap-0.5"></span>
-                    {!inThisCall && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void joinCall(room.id);
-                        }}
-                        className="flex items-center gap-1 rounded bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success hover:bg-success/25 transition-colors"
-                        title="Join call"
-                      >
-                        <Phone size={10} aria-hidden="true" />
-                        Join
-                      </button>
-                    )}
-                  </div>
+                <div className="ml-5 mt-0.5 border-l-2 border-success/30 pl-2 pr-1 py-0.5 space-y-0.5">
                   <ul className="space-y-0.5">
                     {callParticipants.map((id) => {
                       const isSelf = id === self?.identityId;
