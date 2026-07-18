@@ -55,22 +55,21 @@ to weaken it — so we disable the redundant per-script reinstall check instead)
 ## Installing on macOS (unsigned build)
 
 Haven's macOS builds are ad-hoc signed, not notarized (that requires a paid
-Apple Developer ID). Gatekeeper therefore quarantines the downloaded app, and
-macOS **App Translocation** then runs it from a randomized, read-only path on
-every launch. Because macOS ties Accessibility and Screen Recording grants to a
-stable path + signature, a translocated app never matches the grant you gave it
-last time — so it re-prompts for Accessibility on each relaunch, and
-ScreenCaptureKit (screen-share audio) silently returns nothing.
+Apple Developer ID). An ad-hoc signature has no Team Identifier, so macOS can't
+bind a stable identity to it — Screen Recording, Camera, and Mic grants don't
+persist across relaunches even after you approve them and clear the quarantine
+flag, since each launch of the ad-hoc-signed binary looks unverified to macOS.
 
-To fix this, install to `/Applications` and clear the quarantine flag once:
+Fix this once after installing to `/Applications` by running:
 
 ```sh
-xattr -cr /Applications/Haven.app
+curl -fsSL https://raw.githubusercontent.com/hackerslash/Haven/main/scripts/fix-macos-permissions.sh | bash
 ```
 
-(Alternatively, right-click Haven.app ▸ **Open** the first time.) After that the
-app runs from a stable path, and the Accessibility / Screen Recording
-permissions you grant persist across relaunches and screen-share audio works.
+This clears the quarantine flag and re-signs the app with a local certificate
+(generated on first run) so macOS has a stable identity to bind permission
+grants to. Fully quit Haven and reopen it, grant permissions once more, and
+they'll persist across future relaunches.
 
 ## Recommended IDE Setup
 
