@@ -16,6 +16,7 @@ pub fn migrations() -> Vec<Migration> {
         (10, "friend_requests_dedup", include_str!("../migrations/0010_friend_requests_dedup.sql")),
         (11, "avatars", include_str!("../migrations/0011_avatars.sql")),
         (12, "message_reactions", include_str!("../migrations/0012_message_reactions.sql")),
+        (13, "message_read_receipts", include_str!("../migrations/0013_message_read_receipts.sql")),
     ];
     DEFS.iter()
         .map(|&(version, description, sql)| Migration {

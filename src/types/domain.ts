@@ -63,4 +63,7 @@ export type Message = {
   deletedAt: number | null;
   sig: string;
   deliveryStatus: DeliveryStatus;
+  /** When a peer's read receipt confirmed this (own-authored) message was
+   * seen. Local-only state — never crosses the wire inside the message. */
+  readAt: number | null;
 };

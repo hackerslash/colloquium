@@ -32,14 +32,17 @@ function daySeparatorLabel(ms: number): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function DeliveryTick({ status }: { status: DeliveryStatus }) {
+function DeliveryTick({ status, readAt }: { status: DeliveryStatus; readAt: number | null }) {
+  if (readAt) {
+    return <CheckCheck size={12} className="text-accent" aria-label="Read" />;
+  }
   switch (status) {
     case "pending":
       return <Clock size={12} className="text-text-muted" aria-label="Sending" />;
     case "sent":
       return <Check size={12} className="text-text-muted" aria-label="Sent" />;
     case "delivered":
-      return <CheckCheck size={12} className="text-accent" aria-label="Delivered" />;
+      return <CheckCheck size={12} className="text-text-muted" aria-label="Delivered" />;
     case "failed":
       return <AlertCircle size={12} className="text-danger" aria-label="Failed to send" />;
   }
@@ -362,7 +365,7 @@ const MessageRow = memo(function MessageRow({
                 <Reply size={14} />
               </button>
               {timeOf(message.sentAt)}
-              {isOwn && <DeliveryTick status={message.deliveryStatus} />}
+              {isOwn && <DeliveryTick status={message.deliveryStatus} readAt={message.readAt} />}
             </span>
           </div>
           {pills.length > 0 && (

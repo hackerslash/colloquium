@@ -19,6 +19,7 @@ type MessageRow = {
   deleted_at: number | null;
   sig: string;
   delivery_status: Message["deliveryStatus"];
+  read_at: number | null;
 };
 
 function fromRow(row: MessageRow): Message {
@@ -40,6 +41,7 @@ function fromRow(row: MessageRow): Message {
     deletedAt: row.deleted_at,
     sig: row.sig,
     deliveryStatus: row.delivery_status,
+    readAt: row.read_at,
   };
 }
 
@@ -109,6 +111,40 @@ export async function markDeliveredUpTo(
     [roomId, authorId, maxSeq],
   );
   return result.rowsAffected;
+}
+
+/** Marks this author's messages up to a seq as read — used when a peer's
+ * read receipt (live or ridden on a sync request) covers them. */
+export async function markReadUpTo(
+  roomId: string,
+  authorId: string,
+  maxSeq: number,
+  at: number,
+): Promise<number> {
+  if (maxSeq <= 0) return 0;
+  const db = await getDb();
+  const result = await db.execute(
+    `UPDATE messages SET read_at = $1, delivery_status = 'delivered'
+     WHERE room_id = $2 AND author_id = $3 AND author_seq <= $4 AND read_at IS NULL`,
+    [at, roomId, authorId, maxSeq],
+  );
+  return result.rowsAffected;
+}
+
+/** Per-author highest seq covered by this room's local read cursor — what the
+ * user has actually seen, sent to authors as their read receipt. Empty if the
+ * room was never opened. */
+export async function readVector(roomId: string): Promise<Record<string, number>> {
+  const db = await getDb();
+  const rows = await db.select<{ author_id: string; max_seq: number }[]>(
+    `SELECT m.author_id AS author_id, MAX(m.author_seq) AS max_seq
+       FROM messages m
+       JOIN room_read_state rs ON rs.room_id = m.room_id
+      WHERE m.room_id = $1 AND m.sent_at <= rs.last_read_at
+      GROUP BY m.author_id`,
+    [roomId],
+  );
+  return Object.fromEntries(rows.map((r) => [r.author_id, r.max_seq]));
 }
 
 /** Highest author_seq this device holds for each author in a room — the

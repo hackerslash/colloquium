@@ -3,6 +3,7 @@ import type {
   ChatMessageMessage,
   ChatMessageWire,
   ReactionMessage,
+  ReadReceiptMessage,
   RoomSyncRequestMessage,
   RoomSyncResponseMessage,
   FileChunkMessage,
@@ -92,7 +93,7 @@ function canonicalMessage(m: Omit<ChatMessageWire, "sig">): string {
 }
 
 function wireToMessage(w: ChatMessageWire, deliveryStatus: Message["deliveryStatus"]): Message {
-  return { ...w, deliveryStatus };
+  return { ...w, deliveryStatus, readAt: null };
 }
 
 function messageToWire(m: Message): ChatMessageWire {
@@ -248,6 +249,36 @@ export async function handleChatMessage(
   physicalNow: number,
 ): Promise<Message | null> {
   return verifyAndStore(msg.message, physicalNow, self.identityId);
+}
+
+/** Tells each author whose messages our read cursor covers that we've seen
+ * them. Sent when the local user actually views a room; authors who are
+ * offline converge via the read vector on the next sync request instead. */
+export async function sendReadReceipt(selfId: string, roomId: string): Promise<void> {
+  const upTo = await messageRepo.readVector(roomId);
+  delete upTo[selfId];
+  if (Object.keys(upTo).length === 0) return;
+  const payload: ReadReceiptMessage = { type: "read_receipt", roomId, upTo };
+  const registry = getPeerRegistry();
+  for (const authorId of Object.keys(upTo)) {
+    registry.send(derivePeerId(authorId), payload);
+  }
+}
+
+/** Flips our own messages covered by a peer's read receipt to read. Returns
+ * true if anything changed. Same DM guard as messages. */
+export async function handleReadReceipt(
+  selfId: string,
+  senderId: string,
+  msg: ReadReceiptMessage,
+): Promise<boolean> {
+  if (msg.roomId.startsWith("dm_")) {
+    const expected = await dmRoomId(selfId, senderId);
+    if (msg.roomId !== expected) return false;
+  }
+  const upTo = msg.upTo[selfId];
+  if (!upTo) return false;
+  return (await messageRepo.markReadUpTo(msg.roomId, selfId, upTo, Date.now())) > 0;
 }
 
 /** Longest ZWJ emoji sequences are ~15 UTF-16 units; anything past this is a
@@ -411,6 +442,11 @@ export async function handleRoomSyncRequest(
     selfId,
     msg.have[selfId] ?? 0,
   );
+  // Their read cursor doubles as a receipt for anything of ours it covers —
+  // reads that happened while we were offline converge here.
+  const readFlipped = msg.read?.[selfId]
+    ? await messageRepo.markReadUpTo(msg.roomId, selfId, msg.read[selfId], Date.now())
+    : 0;
 
   const missing = await messageRepo.messagesSince(msg.roomId, msg.have);
   // Reactions always ride along as our full current set — an empty set still
@@ -427,7 +463,7 @@ export async function handleRoomSyncRequest(
     })),
   };
   getPeerRegistry().send(fromPeerId, response);
-  return flipped > 0;
+  return flipped + readFlipped > 0;
 }
 
 export async function handleRoomSyncResponse(
@@ -469,6 +505,7 @@ export async function handleRoomSyncResponse(
  * missing. Called when a room's peer (re)connects. */
 export async function requestRoomSync(roomId: string, toPeerId: string): Promise<void> {
   const have = await messageRepo.highestSeqPerAuthor(roomId);
-  const request: RoomSyncRequestMessage = { type: "room_sync_request", roomId, have };
+  const read = await messageRepo.readVector(roomId);
+  const request: RoomSyncRequestMessage = { type: "room_sync_request", roomId, have, read };
   getPeerRegistry().send(toPeerId, request);
 }

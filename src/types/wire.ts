@@ -119,6 +119,16 @@ export type MsgAckMessage = {
   messageId: string;
 };
 
+/** Sent to a room's message authors when the local user actually views the
+ * room (read cursor advances). `upTo` is the highest author_seq per author
+ * covered by the reader's cursor; each author flips their own messages at or
+ * below their seq to "read". Attributed to the authenticated peer. */
+export type ReadReceiptMessage = {
+  type: "read_receipt";
+  roomId: string;
+  upTo: Record<string, number>;
+};
+
 /** DM rooms have deterministic IDs derived from the two member identityIds
  * (see roomService.dmRoomId), so both sides independently agree on the room a
  * message belongs to without exchanging room metadata. This carries the
@@ -128,6 +138,9 @@ export type RoomSyncRequestMessage = {
   type: "room_sync_request";
   roomId: string;
   have: Record<string, number>;
+  /** The requester's read cursor as a per-author seq vector — doubles as a
+   * read receipt for messages read while their authors were offline. */
+  read?: Record<string, number>;
 };
 
 export type RoomSyncResponseMessage = {
@@ -402,6 +415,7 @@ export type HavenMessage =
   | PingMessage
   | PongMessage
   | MsgAckMessage
+  | ReadReceiptMessage
   | RoomSyncRequestMessage
   | RoomSyncResponseMessage
   | CallInviteMessage

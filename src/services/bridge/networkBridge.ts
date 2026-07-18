@@ -168,6 +168,12 @@ export function initNetworkBridge(self: Identity): () => void {
     console.error("failed to register with the signaling broker", err);
   });
 
+  // Release our broker id the moment the window goes away (quit or reload).
+  // Without this the broker holds the id as a ghost until its heartbeat
+  // timeout, and the next launch can't register under the canonical id.
+  const onPageHide = () => registry.stop();
+  window.addEventListener("pagehide", onPageHide);
+
   function ackMessage(toPeerId: string, roomId: string, messageId: string) {
     const ack: MsgAckMessage = { type: "msg_ack", roomId, messageId };
     registry.send(toPeerId, ack);
@@ -252,6 +258,16 @@ export function initNetworkBridge(self: Identity): () => void {
         await messageRepo.setDeliveryStatus(msg.messageId, "delivered");
         useChatStore.getState().updateMessageStatus(msg.roomId, msg.messageId, "delivered");
         break;
+      case "read_receipt": {
+        if (!sender) break;
+        const changed = await chatService.handleReadReceipt(
+          self.identityId,
+          sender.identityId,
+          msg,
+        );
+        if (changed) await useChatStore.getState().refreshRoom(msg.roomId);
+        break;
+      }
       case "typing":
         // Attribute to the authenticated peer, not the spoofable wire fromId.
         if (sender) useTypingStore.getState().setTyping(msg.roomId, sender.identityId, msg.typing);
@@ -411,6 +427,7 @@ export function initNetworkBridge(self: Identity): () => void {
   return () => {
     clearInterval(intervalId);
     clearInterval(reannounceId);
+    window.removeEventListener("pagehide", onPageHide);
     registry.stop();
   };
 }

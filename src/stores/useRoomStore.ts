@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Room } from "../types/domain";
 import * as roomRepo from "../services/db/roomRepo";
 import * as readStateRepo from "../services/db/readStateRepo";
+import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
 import { setAppBadge } from "../services/badge";
 
@@ -66,6 +67,12 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   markRead: async (roomId) => {
     const now = Date.now();
     await readStateRepo.markRead(roomId, now);
+    const self = useIdentityStore.getState().self;
+    if (self) {
+      void chatService
+        .sendReadReceipt(self.identityId, roomId)
+        .catch((err) => console.error("failed to send read receipt", roomId, err));
+    }
     set((s) => {
       const nextLastRead = { ...s.lastReadAtByRoom, [roomId]: now };
       if (!s.unreadByRoom[roomId]) return { lastReadAtByRoom: nextLastRead };

@@ -17,7 +17,6 @@ type Listener<E extends keyof PeerRegistryEvents> = (
   ...args: PeerRegistryEvents[E]
 ) => void;
 
-const MAX_ID_SUFFIX_ATTEMPTS = 5;
 const CONNECT_TIMEOUT_MS = 10_000;
 const BROKER_BACKOFF_BASE_MS = 1_000;
 const BROKER_BACKOFF_MAX_MS = 30_000;
@@ -84,18 +83,15 @@ export class PeerRegistry {
 
   start(): Promise<string> {
     return new Promise((resolve, reject) => {
-      this.registerWithBroker(0, resolve, reject);
+      this.registerWithBroker(resolve, reject);
     });
   }
 
   private registerWithBroker(
-    suffix: number,
     resolve: (id: string) => void,
     reject: (err: unknown) => void,
   ) {
-    const candidateId =
-      suffix === 0 ? this.selfPeerId : `${this.selfPeerId}-${suffix + 1}`;
-    const peer = new Peer(candidateId, { config: { iceServers: ICE_SERVERS } });
+    const peer = new Peer(this.selfPeerId, { config: { iceServers: ICE_SERVERS } });
     this.peer = peer;
     let openedOnce = false;
 
@@ -113,19 +109,25 @@ export class PeerRegistry {
     });
 
     peer.on("error", (err: { type?: string } & Error) => {
-      if (err.type === "unavailable-id" && suffix < MAX_ID_SUFFIX_ATTEMPTS) {
+      if (err.type === "unavailable-id") {
+        // Our canonical id is held by a ghost of a previous session (unclean
+        // exit — the broker frees it after its heartbeat timeout) or by
+        // another running instance. Never fall back to a suffixed id: peers
+        // only ever dial the canonical id and drop traffic from any other, so
+        // a suffixed session looks online while all its sends are discarded.
+        // Waiting out the ghost and retrying is strictly better.
         peer.destroy();
-        this.registerWithBroker(suffix + 1, resolve, reject);
+        this.scheduleBrokerRecovery(() => this.registerWithBroker(resolve, reject));
         return;
       }
       this.emit("error", err);
       if (!openedOnce) reject(err);
-      // Fatal broker errors (server-error/socket-error/network, or id-suffix
-      // attempts exhausted) can destroy the underlying Peer. A destroyed
-      // Peer's reconnect() is a permanent no-op, so without recreating it
-      // here the device stays signaling-dead until the app is restarted.
+      // Fatal broker errors (server-error/socket-error/network) can destroy
+      // the underlying Peer. A destroyed Peer's reconnect() is a permanent
+      // no-op, so without recreating it here the device stays signaling-dead
+      // until the app is restarted.
       if (this.peer === peer && peer.destroyed) {
-        this.scheduleBrokerRecovery(() => this.registerWithBroker(0, () => {}, () => {}));
+        this.scheduleBrokerRecovery(() => this.registerWithBroker(() => {}, () => {}));
       }
     });
 
