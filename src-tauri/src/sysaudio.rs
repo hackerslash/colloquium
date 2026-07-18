@@ -5,9 +5,11 @@
 //! taps a whole-system loopback that recaptures Haven's own playback of the
 //! other participants — sending their voices back to them (echo). So we tap
 //! system audio natively and stream PCM to the frontend, which feeds it into
-//! the WebRTC audio graph, **excluding Haven's own process** so the call
+//! the WebRTC audio graph, **excluding Haven's own audio** so the call
 //! doesn't echo:
-//!   - macOS: ScreenCaptureKit with `excludesCurrentProcessAudio`.
+//!   - macOS: ScreenCaptureKit, excluding Haven's application (incl. the
+//!     WKWebView helper processes that actually render the call audio) from
+//!     the content filter, plus `excludesCurrentProcessAudio`.
 //!   - Windows: WASAPI process loopback in EXCLUDE-target-process-tree mode.
 //!
 //! Wire format to the frontend: base64 of interleaved stereo i16 LE at 48 kHz.
@@ -73,10 +75,22 @@ mod imp {
     use objc2_core_media::{CMBlockBuffer, CMSampleBuffer};
     use objc2_foundation::{NSArray, NSError, NSObjectProtocol};
     use objc2_screen_capture_kit::{
-        SCContentFilter, SCShareableContent, SCStream, SCStreamConfiguration, SCStreamDelegate,
-        SCStreamOutput, SCStreamOutputType,
+        SCContentFilter, SCRunningApplication, SCShareableContent, SCStream,
+        SCStreamConfiguration, SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
     };
     use tauri::ipc::Channel;
+
+    // WKWebView renders the call's audio in a separate helper process
+    // (com.apple.WebKit.GPU), so `excludesCurrentProcessAudio` — which only
+    // covers the capturing process itself — never excludes Haven's own
+    // playback of the other participants, and their voices echo back through
+    // the share. macOS attributes those helpers to the app that spawned them
+    // via the "responsible process"; this (libquarantine, part of the
+    // libSystem umbrella) resolves it so the app-level filter below can
+    // exclude them too.
+    extern "C" {
+        fn responsibility_get_pid_responsible_for_pid(pid: i32) -> i32;
+    }
 
     const SAMPLE_RATE: isize = 48_000;
     const CHANNELS: isize = 2;
@@ -281,13 +295,40 @@ mod imp {
         let displays = unsafe { content.displays() };
         let display = displays.firstObject().ok_or("no display to capture")?;
 
-        let empty = NSArray::new();
-        let filter = unsafe {
-            SCContentFilter::initWithDisplay_excludingWindows(
-                SCContentFilter::alloc(),
-                &display,
-                &empty,
-            )
+        // Exclude Haven at the APPLICATION level (audio filtering is
+        // per-application), catching the WKWebView helper processes that
+        // actually play the call audio — see the responsibility note above.
+        let our_pid = std::process::id() as i32;
+        let apps = unsafe { content.applications() };
+        let own_apps: Vec<_> = apps
+            .iter()
+            .filter(|app| {
+                let pid = unsafe { app.processID() };
+                pid == our_pid
+                    || unsafe { responsibility_get_pid_responsible_for_pid(pid) } == our_pid
+            })
+            .collect();
+
+        let filter = if own_apps.is_empty() {
+            let empty = NSArray::new();
+            unsafe {
+                SCContentFilter::initWithDisplay_excludingWindows(
+                    SCContentFilter::alloc(),
+                    &display,
+                    &empty,
+                )
+            }
+        } else {
+            let excluded = NSArray::<SCRunningApplication>::from_retained_slice(&own_apps);
+            let no_windows = NSArray::<SCWindow>::new();
+            unsafe {
+                SCContentFilter::initWithDisplay_excludingApplications_exceptingWindows(
+                    SCContentFilter::alloc(),
+                    &display,
+                    &excluded,
+                    &no_windows,
+                )
+            }
         };
 
         let config = unsafe { SCStreamConfiguration::new() };

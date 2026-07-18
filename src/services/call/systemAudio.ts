@@ -7,8 +7,10 @@ import { Channel, invoke } from "@tauri-apps/api/core";
  * returns no audio at all, and on Windows it taps a whole-system loopback that
  * recaptures Haven's own playback of the other participants — sending their
  * voices back to them (echo). So the Rust side taps system audio natively,
- * EXCLUDING Haven's own process (ScreenCaptureKit's `excludesCurrentProcessAudio`
- * on macOS, WASAPI process-loopback exclude on Windows), and streams PCM here;
+ * EXCLUDING Haven's own audio (ScreenCaptureKit app-level filter exclusion on
+ * macOS — the webview helper processes render the call audio, so excluding
+ * just the current process isn't enough — WASAPI process-loopback exclude on
+ * Windows), and streams PCM here;
  * we replay it into a MediaStream track that gets added to the screen share.
  * Everything degrades to null on failure — screen share then proceeds
  * video-only.

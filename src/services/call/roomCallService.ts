@@ -561,6 +561,9 @@ export async function applyMicSettings(): Promise<void> {
 export async function switchMicDevice(): Promise<void> {
   const call = session;
   if (!call) return;
+  // Captured before the processor swap: identifies the exact sender carrying
+  // the mic, so the replace can never land on a screen-share audio sender.
+  const previousOutgoing = outgoingAudioTrack();
   let newStream: MediaStream;
   try {
     newStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
@@ -599,9 +602,15 @@ export async function switchMicDevice(): Promise<void> {
   call.micProcessor = newProcessor;
   const outgoing = newProcessor?.track ?? newTrack;
 
-  // Replace the audio sender track on every peer connection in the mesh.
+  // Replace the mic sender track on every peer connection in the mesh. Match
+  // the previous outgoing track exactly; fall back to any audio sender that
+  // isn't carrying screen-share (system) audio.
+  const screenAudio = new Set(call.screenStream?.getAudioTracks() ?? []);
   for (const wrapper of call.wrappers.values()) {
-    const sender = wrapper.pc.getSenders().find((s) => s.track?.kind === "audio");
+    const senders = wrapper.pc.getSenders();
+    const sender =
+      senders.find((s) => s.track !== null && s.track === previousOutgoing) ??
+      senders.find((s) => s.track?.kind === "audio" && !screenAudio.has(s.track));
     if (sender) {
       try {
         await sender.replaceTrack(outgoing);

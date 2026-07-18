@@ -32,6 +32,10 @@ type CallState = {
   activeCall: ActiveCall | null;
   localStream: MediaStream | null;
   remoteStream: MediaStream | null;
+  /** The remote's screen share (own msid), separate from mic+camera — a single
+   * <video> only plays a stream's first video track, so screen must not share
+   * a stream with the camera. */
+  remoteScreenStream: MediaStream | null;
   mediaVersion: number;
   micOn: boolean;
   camOn: boolean;
@@ -59,6 +63,7 @@ type CallState = {
   _setStatus: (status: CallStatus) => void;
   _setLocalStream: (stream: MediaStream | null) => void;
   _setRemoteStream: (stream: MediaStream | null) => void;
+  _setRemoteScreenStream: (stream: MediaStream | null) => void;
   _setMediaFlags: (micOn: boolean, camOn: boolean) => void;
   _setScreenOn: (on: boolean) => void;
   _setScreenError: (error: string | null) => void;
@@ -79,6 +84,7 @@ export const useCallStore = create<CallState>((set) => ({
   activeCall: null,
   localStream: null,
   remoteStream: null,
+  remoteScreenStream: null,
   mediaVersion: 0,
   micOn: true,
   camOn: false,
@@ -141,6 +147,8 @@ export const useCallStore = create<CallState>((set) => ({
     set((s) => ({ activeCall: s.activeCall ? { ...s.activeCall, status } : s.activeCall })),
   _setLocalStream: (stream) => set((s) => ({ localStream: stream, mediaVersion: s.mediaVersion + 1 })),
   _setRemoteStream: (stream) => set((s) => ({ remoteStream: stream, mediaVersion: s.mediaVersion + 1 })),
+  _setRemoteScreenStream: (stream) =>
+    set((s) => ({ remoteScreenStream: stream, mediaVersion: s.mediaVersion + 1 })),
   _setMediaFlags: (micOn, camOn) => set({ micOn, camOn }),
   _setScreenOn: (on) => set({ screenOn: on }),
   _setScreenError: (error) => set({ screenError: error }),
@@ -153,6 +161,7 @@ export const useCallStore = create<CallState>((set) => ({
       activeCall: null,
       localStream: null,
       remoteStream: null,
+      remoteScreenStream: null,
       micOn: true,
       camOn: false,
       screenOn: false,

@@ -63,6 +63,14 @@ type CallContext = {
   wrapper: PeerConnectionWrapper | null;
   localStream: MediaStream | null;
   screenStream: MediaStream | null;
+  /** Remote tracks re-grouped by their wire (msid) stream: mic+camera vs
+   * screen. A single <video> plays only a stream's FIRST video track, so if
+   * screen shared a stream with the camera it would never render. */
+  remoteMainStream: MediaStream;
+  remoteScreenStream: MediaStream;
+  /** msid of the remote's mic+camera stream — the first stream to arrive
+   * (both sides attach the mic before any video); any other msid is screen. */
+  remoteMainStreamId: string | null;
   ringTimer: ReturnType<typeof setTimeout> | null;
   dropTimer: ReturnType<typeof setTimeout> | null;
   speakingMonitor: SpeakingMonitor | null;
@@ -144,6 +152,9 @@ export async function applyMicSettings(): Promise<void> {
 export async function switchMicDevice(): Promise<void> {
   const call = ctx;
   if (!call) return;
+  // Captured before the processor swap: identifies the exact sender carrying
+  // the mic, so the replace can never land on a screen-share audio sender.
+  const previousOutgoing = outgoingAudioTrack();
   let newStream: MediaStream;
   try {
     newStream = await navigator.mediaDevices.getUserMedia({ audio: buildMicConstraints() });
@@ -182,8 +193,14 @@ export async function switchMicDevice(): Promise<void> {
   call.micProcessor = newProcessor;
   const outgoing = newProcessor?.track ?? newTrack;
 
-  // Replace the audio sender's track on the peer connection.
-  const sender = call.wrapper?.pc.getSenders().find((s) => s.track?.kind === "audio");
+  // Replace the mic sender's track on the peer connection. Match the previous
+  // outgoing track exactly; fall back to any audio sender that isn't carrying
+  // screen-share (system) audio.
+  const senders = call.wrapper?.pc.getSenders() ?? [];
+  const screenAudio = new Set(call.screenStream?.getAudioTracks() ?? []);
+  const sender =
+    senders.find((s) => s.track !== null && s.track === previousOutgoing) ??
+    senders.find((s) => s.track?.kind === "audio" && !screenAudio.has(s.track));
   if (sender) {
     try {
       await sender.replaceTrack(outgoing);
@@ -260,6 +277,29 @@ export async function switchCameraDevice(): Promise<void> {
   }
 }
 
+/** Routes a remote track into the main (mic+camera) or screen stream by msid
+ * and pushes both to the store. Re-fired on mute/unmute/ended so the UI can
+ * react to a share stopping (replaceTrack(null) far-side mutes the track). */
+function routeRemoteTrack(
+  remoteId: string,
+  track: MediaStreamTrack,
+  streams: readonly MediaStream[],
+) {
+  const call = ctx;
+  if (!call || call.remoteId !== remoteId) return;
+  const streamId = streams[0]?.id ?? "";
+  if (call.remoteMainStreamId === null) call.remoteMainStreamId = streamId;
+  const target =
+    streamId === call.remoteMainStreamId ? call.remoteMainStream : call.remoteScreenStream;
+  if (track.readyState === "ended") target.removeTrack(track);
+  else if (!target.getTracks().includes(track)) target.addTrack(track);
+  const store = useCallStore.getState();
+  store._setRemoteStream(call.remoteMainStream);
+  store._setRemoteScreenStream(
+    call.remoteScreenStream.getTracks().length > 0 ? call.remoteScreenStream : null,
+  );
+}
+
 function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {
   // Lexicographically-greater identityId is the polite peer — both ends
   // compute this identically, no coordination needed.
@@ -279,7 +319,7 @@ function buildWrapper(self: Identity, remoteId: string): PeerConnectionWrapper {
         fromId: self.identityId,
         candidate,
       } satisfies RtcCandidateMessage),
-    onRemoteStream: (stream) => useCallStore.getState()._setRemoteStream(stream),
+    onTrack: (track, streams) => routeRemoteTrack(remoteId, track, streams),
     onQuality: (quality) => useCallStore.getState()._setQuality(quality),
     onScreenBitrate: (bps) => useCallStore.getState()._setScreenLinkBps(bps),
     onConnectionStateChange: (state) => {
@@ -360,6 +400,9 @@ export async function startCall(self: Identity, roomId: string, remoteId: string
     wrapper: null,
     localStream,
     screenStream: null,
+    remoteMainStream: new MediaStream(),
+    remoteScreenStream: new MediaStream(),
+    remoteMainStreamId: null,
     ringTimer: null,
     dropTimer: null,
     speakingMonitor: null,
@@ -450,6 +493,9 @@ export async function acceptCall(self: Identity) {
     wrapper: null,
     localStream,
     screenStream: null,
+    remoteMainStream: new MediaStream(),
+    remoteScreenStream: new MediaStream(),
+    remoteMainStreamId: null,
     ringTimer: null,
     dropTimer: null,
     speakingMonitor: null,

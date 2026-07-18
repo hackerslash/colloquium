@@ -23,6 +23,7 @@ export function CallOverlay() {
   const activeCall = useCallStore((s) => s.activeCall);
   const localStream = useCallStore((s) => s.localStream);
   const remoteStream = useCallStore((s) => s.remoteStream);
+  const remoteScreenStream = useCallStore((s) => s.remoteScreenStream);
   // Subscribe to mediaVersion so a track mute/unmute re-renders the tiles (their
   // <video> reattaches srcObject) without remounting them via a changing key —
   // a key change destroys the element, black-flashing and dropping tile state.
@@ -125,6 +126,9 @@ export function CallOverlay() {
                 : connectionState;
 
   const localHasVideo = (camOn || screenOn) && (localStream?.getVideoTracks().length ?? 0) > 0;
+  // Remote screen takes the stage; the remote camera/mic tile then moves to a
+  // small tile but stays mounted — unmounting it would silence their mic.
+  const remoteScreenLive = hasLiveVideo(remoteScreenStream);
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-bg-primary">
@@ -164,16 +168,39 @@ export function CallOverlay() {
           </div>
         )}
         <div className="h-full w-full max-w-5xl">
-          <VideoTile
-            stream={remoteStream}
-            label={remoteName}
-            participantId={activeCall.remoteId}
-            hasVideo={hasLiveVideo(remoteStream)}
-            quality={quality}
-            fit="fill"
-            speaking={speakingIds.has(activeCall.remoteId)}
-          />
+          {remoteScreenLive ? (
+            <VideoTile
+              stream={remoteScreenStream}
+              label={`${remoteName} (screen)`}
+              participantId={activeCall.remoteId}
+              hasVideo
+              quality={quality}
+              fit="fill"
+            />
+          ) : (
+            <VideoTile
+              stream={remoteStream}
+              label={remoteName}
+              participantId={activeCall.remoteId}
+              hasVideo={hasLiveVideo(remoteStream)}
+              quality={quality}
+              fit="fill"
+              speaking={speakingIds.has(activeCall.remoteId)}
+            />
+          )}
         </div>
+        {/* Remote camera/mic picture-in-picture while their screen has the stage */}
+        {remoteScreenLive && (
+          <div className="absolute bottom-[16.5rem] right-6 h-32 w-48">
+            <VideoTile
+              stream={remoteStream}
+              label={remoteName}
+              participantId={activeCall.remoteId}
+              hasVideo={hasLiveVideo(remoteStream)}
+              speaking={speakingIds.has(activeCall.remoteId)}
+            />
+          </div>
+        )}
         {/* Local picture-in-picture */}
         <div className="absolute bottom-28 right-6 h-32 w-48">
           <VideoTile
