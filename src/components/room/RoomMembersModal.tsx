@@ -6,7 +6,6 @@ import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import * as roomService from "../../services/room/roomService";
-import * as friendRequestService from "../../services/roster/friendRequestService";
 import type { RoomMemberWire } from "../../types/wire";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
@@ -175,7 +174,6 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
         <ul className="flex max-h-56 flex-col gap-1 overflow-y-auto">
           {members.map((member) => {
             const isSelf = member.id === self?.identityId;
-            const inRoster = !!contactsById[member.id];
             const name = displayNameFor(member);
 
             return (
@@ -200,20 +198,6 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
                     </span>
                   )}
                 </span>
-                {!isSelf && !inRoster && (
-                  <IconButton
-                    icon={UserPlus}
-                    label="Add friend"
-                    size="sm"
-                    onClick={() => {
-                      if (self) {
-                        friendRequestService.sendFriendRequest(self, member.id).catch((err) => {
-                          console.error("Failed to send friend request:", err);
-                        });
-                      }
-                    }}
-                  />
-                )}
               </li>
             );
           })}

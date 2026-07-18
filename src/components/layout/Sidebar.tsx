@@ -4,7 +4,6 @@ import {
   Copy,
   Hash,
   Home,
-  Inbox,
   Mic,
   MicOff,
   Plus,
@@ -17,7 +16,6 @@ import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
-import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
@@ -26,7 +24,6 @@ import { cx } from "../../lib/cx";
 
 export type Selection =
   | { kind: "home" }
-  | { kind: "inbox" }
   | { kind: "dm"; contactId: string }
   | { kind: "group"; roomId: string };
 
@@ -55,7 +52,6 @@ export function Sidebar({
   const roomsById = useRoomStore((s) => s.roomsById);
   const callParticipantsByRoom = useRoomStore((s) => s.callParticipantsByRoom);
   const unreadByRoom = useRoomStore((s) => s.unreadByRoom);
-  const pendingRequests = useFriendRequestStore((s) => s.pending.length);
 
   const activeCallRoomId = useRoomCallStore((s) => s.roomId);
   const activeCallParticipants = useRoomCallStore((s) => s.participants);
@@ -134,29 +130,6 @@ export function Sidebar({
             }
           />
           Home &amp; invites
-        </button>
-      </div>
-
-      <div className="mx-4 mt-1">
-        <button
-          onClick={() => onSelect({ kind: "inbox" })}
-          aria-current={selection.kind === "inbox" ? "true" : undefined}
-          className={cx(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
-            selection.kind === "inbox"
-              ? "bg-bg-primary text-text-primary shadow-sm"
-              : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
-          )}
-        >
-          <Inbox
-            size={18}
-            aria-hidden="true"
-            className={
-              selection.kind === "inbox" ? "text-accent" : "text-text-muted"
-            }
-          />
-          <span className="flex-1">Inbox</span>
-          <UnreadBadge count={pendingRequests} />
         </button>
       </div>
 

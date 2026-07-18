@@ -5,7 +5,6 @@ import { derivePeerId } from "../peer/derivePeerId";
 import * as messageRepo from "../db/messageRepo";
 import * as rosterService from "../roster/rosterService";
 import * as avatarService from "../avatar/avatarService";
-import * as friendRequestService from "../roster/friendRequestService";
 import * as rosterRepo from "../db/rosterRepo";
 import * as roomRepo from "../db/roomRepo";
 import * as roomMembersRepo from "../db/roomMembersRepo";
@@ -191,8 +190,6 @@ export function initNetworkBridge(self: Identity): () => void {
   const TRUST_ESTABLISHING = new Set<HavenMessage["type"]>([
     "invite_consume",
     "invite_ack",
-    "friend_request",
-    "friend_request_response",
   ]);
 
   async function routeMessage(peerId: string, data: unknown) {
@@ -224,14 +221,6 @@ export function initNetworkBridge(self: Identity): () => void {
       case "avatar_data":
         if (sender) await avatarService.handleAvatarData(sender, msg);
         break;
-      case "friend_request":
-        await friendRequestService.handleFriendRequest(self, msg);
-        break;
-      case "friend_request_response": {
-        const addedId = await friendRequestService.handleFriendRequestResponse(self, msg);
-        if (addedId) await reflectNewContactLocally(self, addedId, peerId);
-        break;
-      }
       case "file_chunk":
         await chatService.handleFileChunk(msg);
         break;

@@ -3,11 +3,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
-import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
 import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar, type Selection } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
-import { InboxView } from "../invite/InboxView";
 import { ChatView } from "../chat/ChatView";
 import { GroupRoomView } from "../room/GroupRoomView";
 import { CreateGroupModal } from "../room/CreateGroupModal";
@@ -27,7 +25,6 @@ export function MainShell() {
   const loadRoster = useRosterStore((s) => s.loadRoster);
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const loadUnread = useRoomStore((s) => s.loadUnread);
-  const refreshFriendRequests = useFriendRequestStore((s) => s.refresh);
   const markRead = useRoomStore((s) => s.markRead);
   const activeRoomId = useRoomStore((s) => s.activeRoomId);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
@@ -39,8 +36,7 @@ export function MainShell() {
   useEffect(() => {
     void loadRoster();
     void loadRooms().then(() => loadUnread());
-    void refreshFriendRequests();
-  }, [loadRoster, loadRooms, loadUnread, refreshFriendRequests]);
+  }, [loadRoster, loadRooms, loadUnread]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;
@@ -78,8 +74,6 @@ export function MainShell() {
               <ChatView contactId={selection.contactId} />
             ) : selection.kind === "group" ? (
               <GroupRoomView roomId={selection.roomId} onLeft={() => setSelection({ kind: "home" })} />
-            ) : selection.kind === "inbox" ? (
-              <InboxView />
             ) : (
               <div className="flex-1 overflow-y-auto">
                 <HomeView />
