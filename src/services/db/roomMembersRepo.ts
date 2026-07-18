@@ -65,7 +65,11 @@ export async function addMember(
   await db.execute(
     `INSERT INTO room_members (room_id, contact_id, role, joined_at, updated_at, display_name)
      VALUES ($1, $2, $3, $4, $4, $5)
-     ON CONFLICT(room_id, contact_id) DO NOTHING`,
+     ON CONFLICT(room_id, contact_id) DO UPDATE SET
+       role = excluded.role,
+       left_at = NULL,
+       updated_at = excluded.updated_at,
+       display_name = COALESCE(excluded.display_name, room_members.display_name)`,
     [roomId, contactId, role, joinedAt, displayName],
   );
 }
