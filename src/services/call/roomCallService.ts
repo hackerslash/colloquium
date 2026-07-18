@@ -577,11 +577,44 @@ export async function applyMicSettings(): Promise<void> {
   await applyMicProcessing(session?.localStream);
 }
 
+/** Watches a freshly-acquired mic: WebKit can hand back a track whose capture
+ * unit then fails to start (goes `muted` shortly after) when a unit was torn
+ * down moments earlier — the echo-cancellation toggle's same-device
+ * re-acquire. Logs the state and re-acquires once if the track is dead. */
+function watchMicHealth(track: MediaStreamTrack, wasRecovery: boolean) {
+  const call = session;
+  track.onmute = () => logCallDebug("room-mic-health:muted", trackDebugInfo(track));
+  track.onunmute = () => logCallDebug("room-mic-health:unmuted", trackDebugInfo(track));
+  const check = (label: string) => {
+    if (session !== call || !call) return;
+    if (call.localStream.getAudioTracks()[0] !== track) return;
+    logCallDebug(`room-mic-health:${label}`, trackDebugInfo(track));
+    if (!wasRecovery && (track.muted || track.readyState === "ended")) {
+      logCallDebug("room-mic-health:re-acquiring", {});
+      void switchMicDevice(true);
+    }
+  };
+  setTimeout(() => check("check-1s"), 1_000);
+  setTimeout(() => check("check-3s"), 3_000);
+}
+
+let micSwitchInFlight = false;
+
 /** Switches the live microphone to the device currently selected in settings.
  * Replaces the audio tracks on all peer connection senders and restarts the
  * speaking monitor so it analyses the new input stream. No-op when not in a
  * room call or when the mic cannot be re-acquired. */
-export async function switchMicDevice(): Promise<void> {
+export async function switchMicDevice(isRecovery = false): Promise<void> {
+  if (micSwitchInFlight) return;
+  micSwitchInFlight = true;
+  try {
+    await switchMicDeviceInner(isRecovery);
+  } finally {
+    micSwitchInFlight = false;
+  }
+}
+
+async function switchMicDeviceInner(isRecovery: boolean): Promise<void> {
   const call = session;
   if (!call) return;
   // Captured before the processor swap: identifies the exact sender carrying
@@ -602,6 +635,10 @@ export async function switchMicDevice(): Promise<void> {
   if (oldRaw && (!targetDevice || oldRaw.getSettings().deviceId === targetDevice)) {
     call.localStream.removeTrack(oldRaw);
     oldRaw.stop();
+    // Give the unit teardown a beat — an immediate same-device re-open can
+    // hand back a track whose capture unit never starts (silent mic).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (session !== call) return;
   }
   let newStream: MediaStream;
   try {
@@ -710,6 +747,7 @@ export async function switchMicDevice(): Promise<void> {
   } else {
     speakingMonitor.stop();
   }
+  watchMicHealth(newTrack, isRecovery);
 }
 
 /** Re-opens the camera with the device currently selected in settings and
