@@ -7,7 +7,6 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { MessageList } from "../chat/MessageList";
 import { Composer } from "../chat/Composer";
-import { RoomCallView } from "../call/RoomCallView";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { EmptyState } from "../ui/EmptyState";
@@ -45,15 +44,10 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
     setActiveRoom(roomId);
     void loadMessages(roomId);
     return () => {
-      // Clear the active room on leave so its messages aren't marked read while
-      // the user is elsewhere — unless a newer view already claimed it.
       if (useRoomStore.getState().activeRoomId === roomId) setActiveRoom(null);
     };
   }, [roomId, loadMessages, setActiveRoom]);
 
-  // Refresh the member list on room change and whenever activity arrives, so a
-  // join/leave that happened while this view stayed open is reflected. The
-  // guard drops a previous room's late-resolving lookup.
   useEffect(() => {
     let cancelled = false;
     void roomMembersRepo.listMembers(roomId).then((ids) => {
@@ -66,14 +60,12 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
 
   async function handleSend(file?: File) {
     if (!room) return;
-    // Address the current member set: someone may have joined or left while
-    // this view was open, and the cached list would miss (or over-target) them.
     let currentMembers = memberIds;
     try {
       currentMembers = await roomMembersRepo.listMembers(roomId);
       setMemberIds(currentMembers);
     } catch {
-      // Fall back to the last-known list.
+      // Fall back to last known
     }
     return sendMessage(roomId, currentMembers, draft, file).catch((err) => {
       console.error("Failed to send message:", err);
@@ -97,12 +89,21 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
           <h1 className="text-sm font-semibold">{room.name ?? "Room"}</h1>
           <Badge>{memberIds.length} members</Badge>
         </button>
+
+        {inThisCall && (
+          <span className="flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">
+            <span className="h-2 w-2 rounded-full bg-success animate-pulse" aria-hidden="true" />
+            Connected to call
+          </span>
+        )}
+
         {callActive && !inThisCall && (
           <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-xs font-medium text-success">
             <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />
             {othersInCall.length} in call
           </span>
         )}
+
         <div className="ml-auto flex items-center gap-2">
           {!inThisCall && (
             <Button
@@ -120,19 +121,13 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         </div>
       </header>
 
-      {inThisCall ? (
-        <RoomCallView />
-      ) : (
-        <>
-          <MessageList messages={messages} />
-          <Composer
-            value={draft}
-            placeholder={`Message ${room.name ?? "the room"}`}
-            onChange={(v) => setDraft(roomId, v)}
-            onSend={handleSend}
-          />
-        </>
-      )}
+      <MessageList messages={messages} />
+      <Composer
+        value={draft}
+        placeholder={`Message ${room.name ?? "the room"}`}
+        onChange={(v) => setDraft(roomId, v)}
+        onSend={handleSend}
+      />
 
       <RoomMembersModal
         open={membersOpen}

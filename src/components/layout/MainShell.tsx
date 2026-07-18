@@ -12,6 +12,7 @@ import { ChatView } from "../chat/ChatView";
 import { GroupRoomView } from "../room/GroupRoomView";
 import { CreateGroupModal } from "../room/CreateGroupModal";
 import { CallOverlay } from "../call/CallOverlay";
+import { RoomCallWindow } from "../call/RoomCallWindow";
 import { SettingsModal } from "../settings/SettingsModal";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
@@ -98,6 +99,7 @@ export function MainShell() {
       />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <CallOverlay />
+      <RoomCallWindow />
     </div>
   );
 }

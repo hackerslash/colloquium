@@ -7,9 +7,9 @@ import { VideoTile } from "./VideoTile";
 import { CallControlBar } from "./CallControlBar";
 import { ScreenShareButton } from "./ScreenShareButton";
 import { ScreenQualityBadge } from "./ScreenQualityBadge";
+import { FloatingCallWindow } from "./FloatingCallWindow";
 import { IconButton } from "../ui/IconButton";
 import { Avatar } from "../ui/Avatar";
-import { cx } from "../../lib/cx";
 import { QUALITY_DOT } from "./qualityDot";
 import { hasLiveVideo } from "../../lib/mediaTracks";
 import { useRingtone } from "../../hooks/useRingtone";
@@ -24,9 +24,7 @@ export function CallOverlay() {
   const localStream = useCallStore((s) => s.localStream);
   const remoteStream = useCallStore((s) => s.remoteStream);
   const remoteScreenStream = useCallStore((s) => s.remoteScreenStream);
-  // Subscribe to mediaVersion so a track mute/unmute re-renders the tiles (their
-  // <video> reattaches srcObject) without remounting them via a changing key —
-  // a key change destroys the element, black-flashing and dropping tile state.
+
   useCallStore((s) => s.mediaVersion);
   const micOn = useCallStore((s) => s.micOn);
   const camOn = useCallStore((s) => s.camOn);
@@ -50,11 +48,11 @@ export function CallOverlay() {
   const remoteName = useRemoteName(activeCall?.remoteId);
 
   useRingtone(
-    activeCall?.status === "incoming" 
-      ? "incoming" 
-      : activeCall?.status === "ringing" 
-        ? "outgoing" 
-        : null
+    activeCall?.status === "incoming"
+      ? "incoming"
+      : activeCall?.status === "ringing"
+        ? "outgoing"
+        : null,
   );
 
   if (!activeCall) return null;
@@ -94,7 +92,7 @@ export function CallOverlay() {
               <button
                 onClick={acceptCall}
                 aria-label="Accept"
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-success text-white hover:opacity-90"
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-success text-white hover:opacity-90 transition-opacity"
               >
                 <Phone size={22} aria-hidden="true" />
               </button>
@@ -126,39 +124,60 @@ export function CallOverlay() {
                 : connectionState;
 
   const localHasVideo = (camOn || screenOn) && (localStream?.getVideoTracks().length ?? 0) > 0;
-  // Remote screen takes the stage; the remote camera/mic tile then moves to a
-  // small tile but stays mounted — unmounting it would silence their mic.
   const remoteScreenLive = hasLiveVideo(remoteScreenStream);
 
+  const controls = (
+    <CallControlBar>
+      <IconButton
+        icon={micOn ? Mic : MicOff}
+        label={micOn ? "Mute" : "Unmute"}
+        size="lg"
+        variant={micOn ? "solid" : "danger"}
+        onClick={toggleMic}
+      />
+      <IconButton
+        icon={camOn ? Video : VideoOff}
+        label={camOn ? "Stop video" : "Start video"}
+        size="lg"
+        variant={camOn ? "accent" : "solid"}
+        onClick={toggleCam}
+      />
+      {activeCall.status === "active" && (
+        <ScreenShareButton screenOn={screenOn} onToggle={() => void toggleScreenShare()} />
+      )}
+      <IconButton
+        icon={PhoneOff}
+        label="Leave"
+        size="lg"
+        variant="danger"
+        tooltip={false}
+        onClick={hangUp}
+      />
+    </CallControlBar>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg-primary">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-6">
-        <p className="text-sm font-semibold text-text-primary">{remoteName}</p>
-        <p
-          className="flex items-center gap-1.5 text-xs text-text-secondary"
-          role="status"
-          aria-live="polite"
-        >
-          {activeCall.status === "active" && !reconnecting && (
-            <span className={cx("h-2 w-2 rounded-full", QUALITY_DOT[quality])} aria-hidden="true" />
-          )}
-          {statusLabel}
-        </p>
-      </header>
+    <FloatingCallWindow
+      title={remoteName}
+      statusLabel={statusLabel}
+      statusDotColor={activeCall.status === "active" && !reconnecting ? QUALITY_DOT[quality] : undefined}
+      onHangUp={hangUp}
+      controls={controls}
+    >
       {reconnecting && (
-        <div className="bg-warning/10 py-1.5 text-center text-xs text-warning" role="status">
+        <div className="bg-warning/10 py-1.5 text-center text-xs text-warning shrink-0" role="status">
           Connection interrupted — trying to reconnect…
         </div>
       )}
       {screenError && (
-        <div className="bg-danger/10 py-1.5 text-center text-xs text-danger" role="alert">
+        <div className="bg-danger/10 py-1.5 text-center text-xs text-danger shrink-0" role="alert">
           {screenError}
         </div>
       )}
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center p-6 pb-28">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center p-4 pb-20">
         {screenOn && (
-          <div className="absolute right-4 top-4 z-30">
+          <div className="absolute right-3 top-3 z-30">
             <ScreenQualityBadge
               currentConfig={screenConfig}
               onConfigChange={setScreenConfig}
@@ -167,7 +186,7 @@ export function CallOverlay() {
             />
           </div>
         )}
-        <div className="h-full w-full max-w-5xl">
+        <div className="h-full w-full">
           {remoteScreenLive ? (
             <VideoTile
               stream={remoteScreenStream}
@@ -189,9 +208,10 @@ export function CallOverlay() {
             />
           )}
         </div>
+
         {/* Remote camera/mic picture-in-picture while their screen has the stage */}
         {remoteScreenLive && (
-          <div className="absolute bottom-[16.5rem] right-6 h-32 w-48">
+          <div className="absolute bottom-20 right-4 h-24 w-36 sm:h-28 sm:w-44">
             <VideoTile
               stream={remoteStream}
               label={remoteName}
@@ -201,8 +221,9 @@ export function CallOverlay() {
             />
           </div>
         )}
+
         {/* Local picture-in-picture */}
-        <div className="absolute bottom-28 right-6 h-32 w-48">
+        <div className="absolute bottom-20 right-4 h-24 w-36 sm:h-28 sm:w-44 z-20">
           <VideoTile
             stream={localStream}
             label={screenOn ? "You (screen)" : "You"}
@@ -213,36 +234,6 @@ export function CallOverlay() {
           />
         </div>
       </div>
-
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
-        <CallControlBar>
-          <IconButton
-            icon={micOn ? Mic : MicOff}
-            label={micOn ? "Mute" : "Unmute"}
-            size="lg"
-            variant={micOn ? "solid" : "danger"}
-            onClick={toggleMic}
-          />
-          <IconButton
-            icon={camOn ? Video : VideoOff}
-            label={camOn ? "Stop video" : "Start video"}
-            size="lg"
-            variant={camOn ? "accent" : "solid"}
-            onClick={toggleCam}
-          />
-          {activeCall.status === "active" && (
-            <ScreenShareButton screenOn={screenOn} onToggle={() => void toggleScreenShare()} />
-          )}
-          <IconButton
-            icon={PhoneOff}
-            label="Leave"
-            size="lg"
-            variant="danger"
-            tooltip={false}
-            onClick={hangUp}
-          />
-        </CallControlBar>
-      </div>
-    </div>
+    </FloatingCallWindow>
   );
 }
