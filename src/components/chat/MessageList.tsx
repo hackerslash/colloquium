@@ -1,10 +1,11 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { AlertCircle, Check, CheckCheck, Clock, Download, MessageSquare, Paperclip, X } from "lucide-react";
 import type { DeliveryStatus, Message } from "../../types/domain";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
+import { useRoomStore } from "../../stores/useRoomStore";
 import { Avatar } from "../ui/Avatar";
 import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
@@ -57,8 +58,6 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
       const id = message.attachmentId!;
       if (isImage) {
         fileRepo.getFile(id).then((file) => {
-          // Guard against resolving after unmount — otherwise we'd create an
-          // object URL the cleanup has already run past and never revoke it.
           if (cancelled || !file) return;
           const blob = new Blob([file.data], { type: file.mimeType });
           if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -105,7 +104,6 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
   }
 
-  // Handle escape key to close lightbox
   useEffect(() => {
     if (!expanded) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -131,7 +129,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.15 }}
-                className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 p-8 backdrop-blur-sm cursor-zoom-out"
+                className="fixed inset-0 z-[200] flex cursor-zoom-out items-center justify-center bg-black/80 p-8 backdrop-blur-sm"
                 onClick={() => setExpanded(false)}
               >
                 <motion.img
@@ -141,7 +139,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
                   transition={{ type: "spring", damping: 25, stiffness: 300 }}
                   src={url}
                   alt={message.attachmentName ?? "Attachment"}
-                  className="max-h-full max-w-full rounded-md object-contain shadow-2xl cursor-default"
+                  className="max-h-full max-w-full cursor-default rounded-md object-contain shadow-2xl"
                   onClick={(e) => e.stopPropagation()}
                 />
                 <button
@@ -192,9 +190,6 @@ type MessageRowProps = {
   animateIn: boolean;
 };
 
-/** Memoized so appending one message re-renders only the new row, not the whole
- * (spring-animated) history — the derived props are all primitives + a stable
- * message identity, so unchanged rows bail out of reconciliation. */
 const MessageRow = memo(function MessageRow({
   message,
   isOwn,
@@ -224,7 +219,6 @@ const MessageRow = memo(function MessageRow({
           isOwn ? "flex-row-reverse" : "flex-row",
         )}
       >
-        {/* Avatar column (others only); spacer keeps continuations aligned */}
         {!isOwn &&
           (startsGroup ? (
             <Avatar id={message.authorId} name={authorName} size="md" />
@@ -279,36 +273,118 @@ const MessageRow = memo(function MessageRow({
 type MessageListProps = {
   /** undefined = still loading; [] = loaded and empty. */
   messages: Message[] | undefined;
+  roomId?: string;
 };
 
-export function MessageList({ messages }: MessageListProps) {
+export function MessageList({ messages, roomId }: MessageListProps) {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
+  const sessionState = useRoomStore((s) => (roomId ? s.roomSessionState[roomId] : undefined));
+
   const bottomRef = useRef<HTMLDivElement>(null);
+  const unreadBannerRef = useRef<HTMLLIElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const prevRoomIdRef = useRef<string | undefined>(undefined);
+  const isStabilizingRef = useRef(false);
   const didInitialRender = useRef(false);
-  // Tracks whether the user was pinned to the bottom BEFORE the latest message
-  // landed — measuring after the append is wrong, since a tall new message can
-  // itself push the scroll distance past the threshold and suppress autoscroll.
   const wasNearBottom = useRef(true);
+
+  // Determine first unread message index from roomSessionState
+  const initialUnread = sessionState?.initialUnread ?? 0;
+  const lastReadAt = sessionState?.lastReadAt ?? 0;
+
+  let firstUnreadIndex = -1;
+  if (initialUnread > 0 && messages && messages.length > 0) {
+    if (lastReadAt > 0) {
+      firstUnreadIndex = messages.findIndex(
+        (m) => m.authorId !== self?.identityId && m.sentAt > lastReadAt,
+      );
+    }
+    if (firstUnreadIndex === -1) {
+      firstUnreadIndex = Math.max(0, messages.length - initialUnread);
+    }
+  }
+
+  // Detect room change
+  useEffect(() => {
+    if (roomId !== prevRoomIdRef.current) {
+      prevRoomIdRef.current = roomId;
+      isStabilizingRef.current = true;
+      didInitialRender.current = false;
+    }
+  }, [roomId]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+
     const onScroll = () => {
       wasNearBottom.current =
         container.scrollHeight - container.scrollTop - container.clientHeight < 120;
     };
+    const onUserInteraction = () => {
+      isStabilizingRef.current = false;
+    };
+
     container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    container.addEventListener("wheel", onUserInteraction, { passive: true });
+    container.addEventListener("touchmove", onUserInteraction, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      container.removeEventListener("wheel", onUserInteraction);
+      container.removeEventListener("touchmove", onUserInteraction);
+    };
   }, []);
 
   useEffect(() => {
-    if (wasNearBottom.current || !didInitialRender.current) {
+    if (!messages || messages.length === 0) return;
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const scrollToTarget = () => {
+      if (unreadBannerRef.current) {
+        unreadBannerRef.current.scrollIntoView({ block: "start" });
+      } else if (bottomRef.current) {
+        bottomRef.current.scrollIntoView({ block: "end" });
+      }
+    };
+
+    if (isStabilizingRef.current || !didInitialRender.current) {
+      didInitialRender.current = true;
+      scrollToTarget();
+
+      let animationFrameId: number;
+      const startTime = performance.now();
+
+      const stabilize = () => {
+        if (!isStabilizingRef.current) return;
+        scrollToTarget();
+        if (performance.now() - startTime < 350) {
+          animationFrameId = requestAnimationFrame(stabilize);
+        } else {
+          isStabilizingRef.current = false;
+        }
+      };
+
+      animationFrameId = requestAnimationFrame(stabilize);
+
+      const resizeObserver = new ResizeObserver(() => {
+        if (isStabilizingRef.current) {
+          scrollToTarget();
+        }
+      });
+      resizeObserver.observe(container);
+
+      return () => {
+        cancelAnimationFrame(animationFrameId);
+        resizeObserver.disconnect();
+      };
+    } else if (wasNearBottom.current) {
       bottomRef.current?.scrollIntoView({ block: "end" });
     }
-    didInitialRender.current = true;
-  }, [messages]);
+  }, [messages, roomId]);
 
   function authorName(authorId: string): string {
     if (authorId === self?.identityId) return self.displayName;
@@ -357,16 +433,28 @@ export function MessageList({ messages }: MessageListProps) {
             prev.authorId !== message.authorId ||
             message.sentAt - prev.sentAt > GROUP_GAP_MS;
 
+          const isFirstUnread = i === firstUnreadIndex;
+
           return (
-            <MessageRow
-              key={message.id}
-              message={message}
-              isOwn={isOwn}
-              authorName={authorName(message.authorId)}
-              startsGroup={startsGroup}
-              newDay={newDay}
-              animateIn={didInitialRender.current}
-            />
+            <Fragment key={message.id}>
+              {isFirstUnread && (
+                <li ref={unreadBannerRef} className="my-4 flex items-center gap-3">
+                  <span className="h-px flex-1 bg-accent/40" />
+                  <span className="rounded-full bg-accent/15 px-3 py-1 text-xs font-semibold text-accent shadow-sm">
+                    New Messages
+                  </span>
+                  <span className="h-px flex-1 bg-accent/40" />
+                </li>
+              )}
+              <MessageRow
+                message={message}
+                isOwn={isOwn}
+                authorName={authorName(message.authorId)}
+                startsGroup={startsGroup}
+                newDay={newDay}
+                animateIn={didInitialRender.current}
+              />
+            </Fragment>
           );
         })}
       </ul>
