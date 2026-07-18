@@ -10,7 +10,6 @@ import { ScreenQualityBadge } from "./ScreenQualityBadge";
 import { FloatingCallWindow } from "./FloatingCallWindow";
 import { IconButton } from "../ui/IconButton";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
-import { QUALITY_DOT } from "./qualityDot";
 import { hasLiveVideo } from "../../lib/mediaTracks";
 
 function useNameLookup() {
@@ -30,6 +29,7 @@ export function RoomCallWindow() {
   const streamsByParticipant = useRoomCallStore((s) => s.streamsByParticipant);
   const screenStreamsByParticipant = useRoomCallStore((s) => s.screenStreamsByParticipant);
   const qualityByParticipant = useRoomCallStore((s) => s.qualityByParticipant);
+  const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
   const localStream = useRoomCallStore((s) => s.localStream);
   const micOn = useRoomCallStore((s) => s.micOn);
   const camOn = useRoomCallStore((s) => s.camOn);
@@ -61,14 +61,17 @@ export function RoomCallWindow() {
   const screenShares = Object.entries(screenStreamsByParticipant);
   const hasScreens = screenShares.length > 0;
 
-  function dotFor(id: string): string {
-    if (id === self?.identityId) return "bg-success";
-    return QUALITY_DOT[qualityByParticipant[id] ?? "unknown"];
-  }
-
   function qualityFor(id: string): ConnectionQuality | undefined {
     if (id === self?.identityId) return undefined;
     return qualityByParticipant[id];
+  }
+
+  // Announced camera state (room_call_media_state) overrides track-mute
+  // detection — WebKit doesn't reliably mute remote tracks when the sender
+  // stops, which otherwise leaves a frozen last frame.
+  function hasVideoFor(id: string, stream: MediaStream | null): boolean {
+    if (id === self?.identityId) return camOn;
+    return hasLiveVideo(stream) && camOnByParticipant[id] !== false;
   }
 
   const gridCols =
@@ -162,8 +165,9 @@ export function RoomCallWindow() {
                     label={nameOf(id)}
                     participantId={id}
                     quality={qualityFor(id)}
-                    hasVideo={id === self?.identityId ? camOn : hasLiveVideo(stream)}
+                    hasVideo={hasVideoFor(id, stream)}
                     speaking={speakingIds.has(id)}
+                    avatarSize="md"
                   />
                 </div>
               );
@@ -183,7 +187,7 @@ export function RoomCallWindow() {
                 label={nameOf(id)}
                 participantId={id}
                 quality={qualityFor(id)}
-                hasVideo={id === self?.identityId ? camOn : hasLiveVideo(stream)}
+                hasVideo={hasVideoFor(id, stream)}
                 speaking={speakingIds.has(id)}
               />
             );
@@ -191,24 +195,8 @@ export function RoomCallWindow() {
         </div>
       )}
 
-      {/* Participant strip */}
-      <div className="absolute bottom-20 left-4 right-4 flex gap-1.5 overflow-x-auto pointer-events-auto z-20">
-        {participants.map((id) => (
-          <span
-            key={id}
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-bg-tertiary/90 backdrop-blur-sm px-2.5 py-1 text-xs shadow-sm"
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${dotFor(id)}`} aria-hidden="true" />
-            {nameOf(id)}
-            {screenStreamsByParticipant[id] && (
-              <span className="font-medium text-accent">LIVE</span>
-            )}
-          </span>
-        ))}
-      </div>
-
       {presentError && (
-        <p role="alert" className="absolute bottom-16 left-4 right-4 text-center text-xs text-danger z-20">
+        <p role="alert" className="absolute bottom-24 left-4 right-4 text-center text-xs text-danger z-20">
           {presentError}
         </p>
       )}

@@ -17,6 +17,10 @@ type RoomCallState = {
   /** Screen-share stream per participant (absent = not sharing). */
   screenStreamsByParticipant: Record<string, MediaStream>;
   qualityByParticipant: Record<string, ConnectionQuality>;
+  /** Announced camera state per remote (absent = unknown, fall back to
+   * track-mute detection). WebKit receivers don't reliably fire `mute` when
+   * a sender replaceTrack(null)s, so this drops frozen last frames. */
+  camOnByParticipant: Record<string, boolean>;
   localStream: MediaStream | null;
   micOn: boolean;
   camOn: boolean;
@@ -45,6 +49,7 @@ type RoomCallState = {
   _setParticipantStream: (id: string, stream: MediaStream) => void;
   _setParticipantScreenStream: (id: string, stream: MediaStream | null) => void;
   _setParticipantQuality: (id: string, quality: ConnectionQuality) => void;
+  _setParticipantCamOn: (id: string, on: boolean) => void;
   _setLocalStream: (stream: MediaStream | null) => void;
   _setMicOn: (on: boolean) => void;
   _setCamOn: (on: boolean) => void;
@@ -69,6 +74,7 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   streamsByParticipant: {},
   screenStreamsByParticipant: {},
   qualityByParticipant: {},
+  camOnByParticipant: {},
   localStream: null,
   micOn: true,
   camOn: false,
@@ -110,14 +116,17 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
       const streams = { ...s.streamsByParticipant };
       const screens = { ...s.screenStreamsByParticipant };
       const quals = { ...s.qualityByParticipant };
+      const cams = { ...s.camOnByParticipant };
       delete streams[id];
       delete screens[id];
       delete quals[id];
+      delete cams[id];
       return {
         participants: s.participants.filter((p) => p !== id),
         streamsByParticipant: streams,
         screenStreamsByParticipant: screens,
         qualityByParticipant: quals,
+        camOnByParticipant: cams,
       };
     }),
   _setSlots: (slots) => set({ slots }),
@@ -132,6 +141,11 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
     }),
   _setParticipantQuality: (id, quality) =>
     set((s) => ({ qualityByParticipant: { ...s.qualityByParticipant, [id]: quality } })),
+  _setParticipantCamOn: (id, on) =>
+    set((s) => ({
+      camOnByParticipant: { ...s.camOnByParticipant, [id]: on },
+      mediaVersion: s.mediaVersion + 1,
+    })),
   _setLocalStream: (stream) => set({ localStream: stream }),
   _setMicOn: (on) => set({ micOn: on }),
   _setCamOn: (on) => set({ camOn: on }),
@@ -148,6 +162,7 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
       streamsByParticipant: {},
       screenStreamsByParticipant: {},
       qualityByParticipant: {},
+      camOnByParticipant: {},
       localStream: null,
       micOn: true,
       camOn: false,

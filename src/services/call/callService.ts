@@ -4,6 +4,7 @@ import type {
   CallDeclineMessage,
   CallHangupMessage,
   CallInviteMessage,
+  CallMediaStateMessage,
   CallRingingMessage,
   RtcCandidateMessage,
   RtcDescriptionMessage,
@@ -85,6 +86,21 @@ let incomingTimer: ReturnType<typeof setTimeout> | null = null;
 
 function sendToRemote(remoteId: string, data: unknown) {
   getPeerRegistry().send(derivePeerId(remoteId), data);
+}
+
+/** Announces our camera/screen state so the remote drops its frozen last
+ * frame immediately — WebKit receivers don't reliably fire `mute` when our
+ * sender replaceTrack(null)s. */
+function sendMediaState() {
+  if (!ctx) return;
+  const store = useCallStore.getState();
+  sendToRemote(ctx.remoteId, {
+    type: "call_media_state",
+    roomId: ctx.roomId,
+    fromId: ctx.self.identityId,
+    camOn: store.camOn,
+    screenOn: store.screenOn,
+  } satisfies CallMediaStateMessage);
 }
 
 function clearIncomingTimer() {
@@ -177,6 +193,14 @@ export async function switchMicDevice(): Promise<void> {
   // Preserve mute state across the swap so switching device doesn't unmute.
   if (call.localStream?.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
 
+  // Release the old mic NOW, not after the swap: two simultaneously-open
+  // echo-cancelled captures make macOS rebuild its voice-processing unit
+  // across both devices, audibly changing how the remote's playback sounds.
+  for (const old of call.localStream?.getAudioTracks() ?? []) {
+    call.localStream?.removeTrack(old);
+    old.stop();
+  }
+
   // Rebuild RNNoise around the new mic and transmit the processed track (raw
   // fallback), so noise suppression survives a device change instead of the
   // sender reverting to the unprocessed mic.
@@ -217,12 +241,6 @@ export async function switchMicDevice(): Promise<void> {
   // The old processor's processed track is no longer sent — tear it down.
   void oldProcessor?.dispose();
 
-  // Stop old audio tracks and swap them out of localStream.
-  const oldAudioTracks = call.localStream?.getAudioTracks() ?? [];
-  for (const old of oldAudioTracks) {
-    call.localStream?.removeTrack(old);
-    old.stop();
-  }
   if (!call.localStream) call.localStream = new MediaStream();
   call.localStream.addTrack(newTrack);
 
@@ -651,6 +669,7 @@ async function startScreenShareInner(
   store._setScreenError(null);
   store._setScreenOn(true);
   store._setLocalStream(stream); // preview the shared screen locally
+  sendMediaState();
 }
 
 export async function stopScreenShare(source: ScreenStopSource = "user") {
@@ -671,6 +690,7 @@ export async function stopScreenShare(source: ScreenStopSource = "user") {
   store._setScreenOn(false);
   store._setScreenLinkBps(null);
   store._setLocalStream(call.localStream); // back to the camera/mic stream
+  sendMediaState();
 
   // A stop we didn't start from the in-app control means the OS/WebView ended
   // the capture (the "Stop sharing" bar, or a dropped surface on Windows).
@@ -715,6 +735,7 @@ export async function toggleCam() {
     if (ctx === call) {
       const fresh = useCallStore.getState();
       fresh._setMediaFlags(fresh.micOn, false);
+      sendMediaState();
     }
     return;
   }
@@ -744,10 +765,16 @@ export async function toggleCam() {
     const fresh = useCallStore.getState();
     fresh._setMediaFlags(fresh.micOn, true);
     if (!fresh.screenOn) fresh._setLocalStream(call.localStream);
+    sendMediaState();
   }
 }
 
 // --- Incoming message handlers (called by the network bridge) ---
+
+export function handleCallMediaState(_self: Identity, msg: CallMediaStateMessage) {
+  if (!ctx || msg.fromId !== ctx.remoteId || msg.roomId !== ctx.roomId) return;
+  useCallStore.getState()._setRemoteMediaState(msg.camOn, msg.screenOn);
+}
 
 export function handleCallInvite(self: Identity, msg: CallInviteMessage) {
   // Busy: already in a 1:1 call OR a room call — auto-decline.

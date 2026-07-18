@@ -40,6 +40,10 @@ type CallState = {
   micOn: boolean;
   camOn: boolean;
   screenOn: boolean;
+  /** Remote's announced camera/screen state; null until the first
+   * call_media_state arrives (then falls back to track-mute detection). */
+  remoteCamOn: boolean | null;
+  remoteScreenOn: boolean | null;
   screenError: string | null;
   connectionState: RTCPeerConnectionState;
   quality: ConnectionQuality;
@@ -65,6 +69,7 @@ type CallState = {
   _setRemoteStream: (stream: MediaStream | null) => void;
   _setRemoteScreenStream: (stream: MediaStream | null) => void;
   _setMediaFlags: (micOn: boolean, camOn: boolean) => void;
+  _setRemoteMediaState: (camOn: boolean, screenOn: boolean) => void;
   _setScreenOn: (on: boolean) => void;
   _setScreenError: (error: string | null) => void;
   _setConnectionState: (state: RTCPeerConnectionState) => void;
@@ -89,6 +94,8 @@ export const useCallStore = create<CallState>((set) => ({
   micOn: true,
   camOn: false,
   screenOn: false,
+  remoteCamOn: null,
+  remoteScreenOn: null,
   screenError: null,
   connectionState: "new",
   quality: "unknown",
@@ -150,6 +157,8 @@ export const useCallStore = create<CallState>((set) => ({
   _setRemoteScreenStream: (stream) =>
     set((s) => ({ remoteScreenStream: stream, mediaVersion: s.mediaVersion + 1 })),
   _setMediaFlags: (micOn, camOn) => set({ micOn, camOn }),
+  _setRemoteMediaState: (camOn, screenOn) =>
+    set((s) => ({ remoteCamOn: camOn, remoteScreenOn: screenOn, mediaVersion: s.mediaVersion + 1 })),
   _setScreenOn: (on) => set({ screenOn: on }),
   _setScreenError: (error) => set({ screenError: error }),
   _setConnectionState: (connectionState) => set({ connectionState }),
@@ -165,6 +174,8 @@ export const useCallStore = create<CallState>((set) => ({
       micOn: true,
       camOn: false,
       screenOn: false,
+      remoteCamOn: null,
+      remoteScreenOn: null,
       screenError: null,
       connectionState: "new",
       quality: "unknown",

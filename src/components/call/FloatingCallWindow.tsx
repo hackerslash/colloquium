@@ -40,6 +40,11 @@ export function FloatingCallWindow({
   const isMaximized = windowState === "maximized";
   const isMinimized = windowState === "minimized";
 
+  // Scales with the viewport (~55% of each axis) between fixed floors and
+  // ceilings, and never exceeds the viewport minus the corner margins.
+  const windowWidth = "min(clamp(320px, 55vw, 840px), calc(100vw - 48px))";
+  const windowHeight = "min(clamp(240px, 55vh, 560px), calc(100vh - 88px))";
+
   let containerStyle: React.CSSProperties = {};
   if (isMaximized) {
     containerStyle = {
@@ -52,8 +57,8 @@ export function FloatingCallWindow({
       position: "fixed",
       bottom: "24px",
       right: "24px",
-      width: "360px",
-      height: "240px",
+      width: "min(360px, calc(100vw - 48px))",
+      height: "min(240px, calc(100vh - 48px))",
       zIndex: 60,
     };
   } else if (pos) {
@@ -61,19 +66,18 @@ export function FloatingCallWindow({
       position: "fixed",
       left: `${pos.x}px`,
       top: `${pos.y}px`,
-      width: "min(840px, calc(100vw - 32px))",
-      height: "min(560px, calc(100vh - 64px))",
+      width: windowWidth,
+      height: windowHeight,
       zIndex: 60,
     };
   } else {
-    // Initial centered default position
+    // Initial default position: bottom-right corner.
     containerStyle = {
       position: "fixed",
-      left: "50%",
-      top: "50%",
-      transform: "translate(-50%, -50%)",
-      width: "min(840px, calc(100vw - 32px))",
-      height: "min(560px, calc(100vh - 64px))",
+      bottom: "24px",
+      right: "24px",
+      width: windowWidth,
+      height: windowHeight,
       zIndex: 60,
     };
   }

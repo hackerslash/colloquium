@@ -3,6 +3,7 @@ import type {
   RoomCallBeaconMessage,
   RoomCallJoinMessage,
   RoomCallLeaveMessage,
+  RoomCallMediaStateMessage,
   RoomCallPresenceMessage,
   RtcCandidateMessage,
   RtcDescriptionMessage,
@@ -586,6 +587,14 @@ export async function switchMicDevice(): Promise<void> {
   // Preserve mute state across the swap so switching device doesn't unmute.
   if (call.localStream.getAudioTracks()[0]?.enabled === false) newTrack.enabled = false;
 
+  // Release the old mic NOW, not after the swap: two simultaneously-open
+  // echo-cancelled captures make macOS rebuild its voice-processing unit
+  // across both devices, audibly changing how the remotes' playback sounds.
+  for (const old of call.localStream.getAudioTracks()) {
+    call.localStream.removeTrack(old);
+    old.stop();
+  }
+
   // Rebuild RNNoise around the new mic and transmit the processed track (raw
   // fallback), so noise suppression survives a device change instead of the
   // senders reverting to the unprocessed mic.
@@ -628,12 +637,6 @@ export async function switchMicDevice(): Promise<void> {
   // The old processor's processed track is no longer sent — tear it down.
   void oldProcessor?.dispose();
 
-  // Stop old audio tracks and swap them out of localStream.
-  const oldAudioTracks = call.localStream.getAudioTracks();
-  for (const old of oldAudioTracks) {
-    call.localStream.removeTrack(old);
-    old.stop();
-  }
   call.localStream.addTrack(newTrack);
 
   // Restart the speaking monitor on the new stream.
@@ -709,6 +712,19 @@ export async function switchCameraDevice(): Promise<void> {
 
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---
 
+/** Announces our camera state to the mesh so receivers drop the frozen last
+ * frame immediately — WebKit doesn't reliably fire `mute` on remote tracks
+ * when our sender replaceTrack(null)s. */
+function broadcastMediaState() {
+  if (!session) return;
+  broadcast({
+    type: "room_call_media_state",
+    roomId: session.roomId,
+    fromId: session.self.identityId,
+    camOn: session.cameraTrack !== null,
+  } satisfies RoomCallMediaStateMessage);
+}
+
 export async function toggleCam() {
   const call = session;
   if (!call) return;
@@ -748,6 +764,7 @@ export async function toggleCam() {
   store._setCamOn(true);
   store._setPresentError(null);
   store._bumpMediaVersion();
+  broadcastMediaState();
 }
 
 function stopCameraLocal() {
@@ -761,6 +778,7 @@ function stopCameraLocal() {
   const store = useRoomCallStore.getState();
   store._setCamOn(false);
   store._bumpMediaVersion();
+  broadcastMediaState();
 }
 
 // --- Screen share: coordinated via the 2 presenter slots ---
@@ -960,6 +978,13 @@ export function handleSlotHeartbeat(_self: Identity, msg: SlotHeartbeatMessage) 
   reconcileOwnScreenShare();
   reclassifyAll();
   pushSlotsToStore();
+}
+
+export function handleRoomCallMediaState(_self: Identity, msg: RoomCallMediaStateMessage) {
+  if (!session || session.roomId !== msg.roomId) return;
+  if (!isMember(msg.fromId)) return;
+  touchPeer(msg.fromId);
+  useRoomCallStore.getState()._setParticipantCamOn(msg.fromId, msg.camOn);
 }
 
 export function handleSlotRelease(_self: Identity, msg: SlotReleaseMessage) {

@@ -152,6 +152,24 @@ export type CallHangupMessage = {
   reason?: "hangup" | "timeout";
 };
 
+/** Explicit camera/screen on-off state. WebKit receivers don't reliably fire
+ * `mute` on a remote track when the sender replaceTrack(null)s it, so without
+ * this the far side keeps rendering the frozen last frame. */
+export type CallMediaStateMessage = {
+  type: "call_media_state";
+  roomId: string;
+  fromId: string;
+  camOn: boolean;
+  screenOn: boolean;
+};
+
+export type RoomCallMediaStateMessage = {
+  type: "room_call_media_state";
+  roomId: string;
+  fromId: string;
+  camOn: boolean;
+};
+
 // --- Perfect-negotiation signaling (SDP + ICE), relayed over the PeerJS
 // data connection. `channel` says which session the message belongs to so a
 // 1:1 ring call and a group room mesh never cross-talk: "dm" routes to the
@@ -334,6 +352,8 @@ export type HavenMessage =
   | CallAcceptMessage
   | CallDeclineMessage
   | CallHangupMessage
+  | CallMediaStateMessage
+  | RoomCallMediaStateMessage
   | RtcDescriptionMessage
   | RtcCandidateMessage
   | RoomCallJoinMessage

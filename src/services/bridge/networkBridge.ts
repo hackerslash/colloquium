@@ -261,6 +261,12 @@ export function initNetworkBridge(self: Identity): () => void {
       case "call_hangup":
         callService.handleCallHangup(self, msg);
         break;
+      case "call_media_state":
+        callService.handleCallMediaState(self, msg);
+        break;
+      case "room_call_media_state":
+        roomCallService.handleRoomCallMediaState(self, msg);
+        break;
       case "rtc_description":
         if (msg.channel === "dm") await callService.handleRtcDescription(self, msg);
         else await roomCallService.handleRtcDescription(self, msg);

@@ -29,6 +29,8 @@ export function CallOverlay() {
   const micOn = useCallStore((s) => s.micOn);
   const camOn = useCallStore((s) => s.camOn);
   const screenOn = useCallStore((s) => s.screenOn);
+  const remoteCamOn = useCallStore((s) => s.remoteCamOn);
+  const remoteScreenOn = useCallStore((s) => s.remoteScreenOn);
   const screenError = useCallStore((s) => s.screenError);
   const connectionState = useCallStore((s) => s.connectionState);
   const quality = useCallStore((s) => s.quality);
@@ -124,7 +126,11 @@ export function CallOverlay() {
                 : connectionState;
 
   const localHasVideo = (camOn || screenOn) && (localStream?.getVideoTracks().length ?? 0) > 0;
-  const remoteScreenLive = hasLiveVideo(remoteScreenStream);
+  // The announced state (call_media_state) overrides track-mute detection —
+  // WebKit doesn't reliably mute remote tracks when the sender stops, which
+  // otherwise leaves a frozen last frame.
+  const remoteHasVideo = hasLiveVideo(remoteStream) && remoteCamOn !== false;
+  const remoteScreenLive = hasLiveVideo(remoteScreenStream) && remoteScreenOn !== false;
 
   const controls = (
     <CallControlBar>
@@ -201,7 +207,7 @@ export function CallOverlay() {
               stream={remoteStream}
               label={remoteName}
               participantId={activeCall.remoteId}
-              hasVideo={hasLiveVideo(remoteStream)}
+              hasVideo={remoteHasVideo}
               quality={quality}
               fit="fill"
               speaking={speakingIds.has(activeCall.remoteId)}
@@ -209,29 +215,33 @@ export function CallOverlay() {
           )}
         </div>
 
-        {/* Remote camera/mic picture-in-picture while their screen has the stage */}
-        {remoteScreenLive && (
-          <div className="absolute bottom-20 right-4 h-24 w-36 sm:h-28 sm:w-44">
+        {/* Picture-in-picture stack: remote camera (while their screen has the
+            stage) above the local preview. Width scales with the overlay so
+            small windows get a small PiP instead of one covering the stage. */}
+        <div className="absolute bottom-20 right-4 z-20 flex w-[clamp(88px,25%,176px)] flex-col gap-2">
+          {remoteScreenLive && (
+            <div className="aspect-video w-full">
+              <VideoTile
+                stream={remoteStream}
+                label={remoteName}
+                participantId={activeCall.remoteId}
+                hasVideo={remoteHasVideo}
+                speaking={speakingIds.has(activeCall.remoteId)}
+                avatarSize="md"
+              />
+            </div>
+          )}
+          <div className="aspect-video w-full">
             <VideoTile
-              stream={remoteStream}
-              label={remoteName}
-              participantId={activeCall.remoteId}
-              hasVideo={hasLiveVideo(remoteStream)}
-              speaking={speakingIds.has(activeCall.remoteId)}
+              stream={localStream}
+              label={screenOn ? "You (screen)" : "You"}
+              muted
+              mirror={!screenOn}
+              hasVideo={localHasVideo}
+              speaking={self ? speakingIds.has(self.identityId) : false}
+              avatarSize="md"
             />
           </div>
-        )}
-
-        {/* Local picture-in-picture */}
-        <div className="absolute bottom-20 right-4 h-24 w-36 sm:h-28 sm:w-44 z-20">
-          <VideoTile
-            stream={localStream}
-            label={screenOn ? "You (screen)" : "You"}
-            muted
-            mirror={!screenOn}
-            hasVideo={localHasVideo}
-            speaking={self ? speakingIds.has(self.identityId) : false}
-          />
         </div>
       </div>
     </FloatingCallWindow>

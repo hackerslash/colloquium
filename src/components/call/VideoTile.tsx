@@ -29,9 +29,11 @@ type VideoTileProps = {
   participantId?: string;
   quality?: ConnectionQuality;
   speaking?: boolean;
+  /** Avatar size for the no-video state; small tiles (PiP) should pass "md". */
+  avatarSize?: "md" | "xl";
 };
 
-function VideoInner({ stream, muted, mirror, label, hasVideo, participantId }: VideoTileProps) {
+function VideoInner({ stream, muted, mirror, label, hasVideo, participantId, quality, avatarSize }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioOutputDeviceId = useSettingsStore((s) => s.audioOutputDeviceId);
 
@@ -61,9 +63,15 @@ function VideoInner({ stream, muted, mirror, label, hasVideo, participantId }: V
         muted={muted}
         className={cx("h-full w-full object-contain", !hasVideo && "hidden", mirror && "-scale-x-100")}
       />
-      {!hasVideo && <Avatar id={participantId ?? label} name={label} size="xl" />}
-      <span className="absolute bottom-2 left-2 rounded-md bg-black/60 px-2 py-0.5 text-xs text-white backdrop-blur-sm">
-        {label}
+      {!hasVideo && <Avatar id={participantId ?? label} name={label} size={avatarSize ?? "xl"} />}
+      <span className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
+        {quality && quality !== "unknown" && (
+          <span
+            className={cx("h-1.5 w-1.5 shrink-0 rounded-full", QUALITY_DOT[quality])}
+            aria-hidden="true"
+          />
+        )}
+        <span className="truncate">{label}</span>
       </span>
     </>
   );
@@ -79,9 +87,10 @@ export function VideoTile({
   participantId,
   quality,
   speaking,
+  avatarSize,
 }: VideoTileProps) {
   const [expanded, setExpanded] = useState(false);
-  const inner = { stream, muted, mirror, label, hasVideo, participantId };
+  const inner = { stream, muted, mirror, label, hasVideo, participantId, quality, avatarSize };
 
   return (
     <>
@@ -94,21 +103,14 @@ export function VideoTile({
       >
         {speaking && (
           <motion.div
-            layoutId={`speaking-ring-${participantId ?? label}`}
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="absolute inset-0 z-10 rounded-lg border-2 border-success"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="pointer-events-none absolute inset-0 z-10 rounded-lg border-2 border-success"
           />
         )}
         {/* Mute the inline copy while the fullscreen portal is open, else a
             remote tile plays its audio through two <video> elements at once. */}
         <VideoInner {...inner} muted={inner.muted || expanded} />
-        {quality && quality !== "unknown" && (
-          <span
-            className={cx("absolute left-2 top-2 h-2 w-2 rounded-full", QUALITY_DOT[quality])}
-            aria-hidden="true"
-          />
-        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -128,7 +130,7 @@ export function VideoTile({
             className="fixed inset-0 z-[200] flex items-center justify-center bg-black"
             onDoubleClick={() => setExpanded(false)}
           >
-            <VideoInner {...inner} />
+            <VideoInner {...inner} avatarSize="xl" />
             <button
               onClick={(e) => {
                 e.stopPropagation();
