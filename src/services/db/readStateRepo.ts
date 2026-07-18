@@ -31,6 +31,14 @@ export async function unreadCounts(selfId: string): Promise<Record<string, numbe
   return Object.fromEntries(rows.map((r) => [r.room_id, r.n]));
 }
 
+export async function lastReadTimes(): Promise<Record<string, number>> {
+  const db = await getDb();
+  const rows = await db.select<{ room_id: string; last_read_at: number }[]>(
+    "SELECT room_id, last_read_at FROM room_read_state",
+  );
+  return Object.fromEntries(rows.map((r) => [r.room_id, r.last_read_at]));
+}
+
 /** True if no read cursors exist yet — used to seed all rooms at "now" on the
  * first load after the migration, so history doesn't light up as unread. */
 export async function isEmpty(): Promise<boolean> {

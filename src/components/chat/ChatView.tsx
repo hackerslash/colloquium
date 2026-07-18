@@ -121,7 +121,7 @@ export function ChatView({ contactId }: ChatViewProps) {
           />
         </div>
       </header>
-      <MessageList messages={messages} />
+      <MessageList messages={messages} roomId={roomId ?? undefined} />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}

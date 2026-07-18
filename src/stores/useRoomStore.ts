@@ -12,6 +12,10 @@ type RoomState = {
   callParticipantsByRoom: Record<string, string[]>;
   /** Unread message counts per room, keyed by room id. */
   unreadByRoom: Record<string, number>;
+  /** Last read timestamp per room, keyed by room id. */
+  lastReadAtByRoom: Record<string, number>;
+  /** Captured when a room becomes active, before markRead clears unreadByRoom */
+  roomSessionState: Record<string, { initialUnread: number; lastReadAt: number }>;
 
   loadRooms: () => Promise<void>;
   loadUnread: () => Promise<void>;
@@ -35,6 +39,8 @@ export const useRoomStore = create<RoomState>((set, get) => ({
   activeRoomId: null,
   callParticipantsByRoom: {},
   unreadByRoom: {},
+  lastReadAtByRoom: {},
+  roomSessionState: {},
 
   loadRooms: async () => {
     const self = useIdentityStore.getState().self;
@@ -50,18 +56,21 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     // every room doesn't light up 99+.
     if (await readStateRepo.isEmpty()) await readStateRepo.seedAll(Date.now());
     const map = await readStateRepo.unreadCounts(self.identityId);
-    set({ unreadByRoom: map });
+    const lastReadMap = await readStateRepo.lastReadTimes();
+    set({ unreadByRoom: map, lastReadAtByRoom: lastReadMap });
     refreshAppBadge(map);
   },
 
   markRead: async (roomId) => {
-    await readStateRepo.markRead(roomId, Date.now());
+    const now = Date.now();
+    await readStateRepo.markRead(roomId, now);
     set((s) => {
-      if (!s.unreadByRoom[roomId]) return s;
-      const next = { ...s.unreadByRoom };
-      delete next[roomId];
-      refreshAppBadge(next);
-      return { unreadByRoom: next };
+      const nextLastRead = { ...s.lastReadAtByRoom, [roomId]: now };
+      if (!s.unreadByRoom[roomId]) return { lastReadAtByRoom: nextLastRead };
+      const nextUnread = { ...s.unreadByRoom };
+      delete nextUnread[roomId];
+      refreshAppBadge(nextUnread);
+      return { unreadByRoom: nextUnread, lastReadAtByRoom: nextLastRead };
     });
   },
 
@@ -73,8 +82,20 @@ export const useRoomStore = create<RoomState>((set, get) => ({
     }),
 
   setActiveRoom: (id) => {
-    set({ activeRoomId: id });
-    if (id) void get().markRead(id);
+    if (id) {
+      const unread = get().unreadByRoom[id] ?? 0;
+      const lastReadAt = get().lastReadAtByRoom[id] ?? 0;
+      set((s) => ({
+        activeRoomId: id,
+        roomSessionState: {
+          ...s.roomSessionState,
+          [id]: s.roomSessionState[id] ?? { initialUnread: unread, lastReadAt },
+        },
+      }));
+      void get().markRead(id);
+    } else {
+      set({ activeRoomId: null });
+    }
   },
 
   _setRoomCallActivity: (map) => set({ callParticipantsByRoom: map }),

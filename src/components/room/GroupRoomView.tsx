@@ -208,7 +208,7 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         </div>
       </header>
 
-      <MessageList messages={messages} />
+      <MessageList messages={messages} roomId={roomId} />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}
