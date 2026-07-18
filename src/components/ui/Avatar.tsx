@@ -6,11 +6,13 @@ import { useAvatarStore } from "../../stores/useAvatarStore";
 type AvatarProps = {
   id: string;
   name: string;
-  size?: "sm" | "md" | "xl";
+  size?: "xs" | "sm" | "md" | "xl";
   presence?: Presence;
+  className?: string;
 };
 
 const SIZE: Record<NonNullable<AvatarProps["size"]>, { box: string; text: string; dot: string }> = {
+  xs: { box: "h-5 w-5", text: "text-[9px]", dot: "h-1.5 w-1.5" },
   sm: { box: "h-6 w-6", text: "text-[10px]", dot: "h-2 w-2" },
   md: { box: "h-8 w-8", text: "text-xs", dot: "h-2.5 w-2.5" },
   xl: { box: "h-20 w-20", text: "text-2xl", dot: "h-5 w-5" },
@@ -48,7 +50,7 @@ function colorFor(id: string): string {
   return PALETTE[sum];
 }
 
-export function Avatar({ id, name, size = "md", presence }: AvatarProps) {
+export function Avatar({ id, name, size = "md", presence, className }: AvatarProps) {
   const s = SIZE[size];
   const url = useAvatarStore((state) => state.urlById[id]);
   useEffect(() => {
@@ -56,7 +58,7 @@ export function Avatar({ id, name, size = "md", presence }: AvatarProps) {
   }, [id]);
 
   return (
-    <span className={cx("relative inline-flex shrink-0", s.box)}>
+    <span className={cx("relative inline-flex shrink-0 transition-all", s.box, className)}>
       {url ? (
         <img
           src={url}

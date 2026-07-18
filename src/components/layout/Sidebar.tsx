@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Copy, Hash, Home, Inbox, Plus, Settings, Volume2, X } from "lucide-react";
+import { Check, Copy, Hash, Home, Inbox, Mic, MicOff, Phone, Plus, Settings, Video, Volume2, X } from "lucide-react";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useFriendRequestStore } from "../../stores/useFriendRequestStore";
+import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
@@ -36,13 +38,45 @@ export function Sidebar({ selection, onSelect, onCreateGroup, onOpenSettings }: 
   const callParticipantsByRoom = useRoomStore((s) => s.callParticipantsByRoom);
   const unreadByRoom = useRoomStore((s) => s.unreadByRoom);
   const pendingRequests = useFriendRequestStore((s) => s.pending.length);
+
+  const activeCallRoomId = useRoomCallStore((s) => s.roomId);
+  const activeCallParticipants = useRoomCallStore((s) => s.participants);
+  const speakingIds = useRoomCallStore((s) => s.speakingIds);
+  const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
+  const micOn = useRoomCallStore((s) => s.micOn);
+  const camOn = useRoomCallStore((s) => s.camOn);
+  const joinCall = useRoomCallStore((s) => s.join);
+
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
 
   const contacts = Object.values(contactsById).filter((c) => !c.revoked);
   const groupRooms = Object.values(roomsById).filter((r) => r.type === "group");
+
+  useEffect(() => {
+    let active = true;
+    for (const room of groupRooms) {
+      const pIds = callParticipantsByRoom[room.id];
+      if (pIds && pIds.length > 0) {
+        void roomMembersRepo.listMembersFull(room.id).then((members) => {
+          if (!active) return;
+          setMemberNames((prev) => {
+            const next = { ...prev };
+            for (const m of members) {
+              if (m.displayName) next[m.id] = m.displayName;
+            }
+            return next;
+          });
+        });
+      }
+    }
+    return () => {
+      active = false;
+    };
+  }, [callParticipantsByRoom, groupRooms]);
 
   function copyId() {
     if (!self) return;
@@ -106,10 +140,15 @@ export function Sidebar({ selection, onSelect, onCreateGroup, onOpenSettings }: 
       <ul className="px-4 space-y-1">
         {groupRooms.map((room) => {
           const active = selection.kind === "group" && selection.roomId === room.id;
-          const inCall = callParticipantsByRoom[room.id]?.length ?? 0;
+          const rawInCall = callParticipantsByRoom[room.id] ?? [];
+          const inThisCall = activeCallRoomId === room.id;
+          const callParticipants = Array.from(
+            new Set([...rawInCall, ...(inThisCall ? activeCallParticipants : [])])
+          );
+          const inCallCount = callParticipants.length;
           const unread = unreadByRoom[room.id] ?? 0;
           return (
-            <li key={room.id}>
+            <li key={room.id} className="space-y-0.5">
               <button
                 onClick={() => onSelect({ kind: "group", roomId: room.id })}
                 aria-current={active ? "true" : undefined}
@@ -124,17 +163,87 @@ export function Sidebar({ selection, onSelect, onCreateGroup, onOpenSettings }: 
               >
                 <Hash size={18} className={cx("shrink-0", active ? "text-accent" : "text-text-muted")} aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">{room.name ?? "Room"}</span>
-                {inCall > 0 && (
+                {inCallCount > 0 && (
                   <span
                     className="flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success"
-                    title={`${inCall} in call`}
+                    title={`${inCallCount} in call`}
                   >
-                    <Volume2 size={12} aria-hidden="true" />
-                    {inCall}
+                    <Volume2 size={12} className="animate-pulse" aria-hidden="true" />
+                    {inCallCount}
                   </span>
                 )}
                 <UnreadBadge count={unread} />
               </button>
+
+              {inCallCount > 0 && (
+                <div className="ml-5 mt-1 border-l-2 border-success/30 pl-2.5 pr-1 py-1 space-y-1">
+                  <div className="flex items-center justify-between px-1.5 py-0.5 text-[11px] font-semibold text-success">
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" aria-hidden="true" />
+                      Active Call
+                    </span>
+                    {!inThisCall && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void joinCall(room.id);
+                        }}
+                        className="flex items-center gap-1 rounded bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success hover:bg-success/25 transition-colors"
+                        title="Join call"
+                      >
+                        <Phone size={10} aria-hidden="true" />
+                        Join
+                      </button>
+                    )}
+                  </div>
+                  <ul className="space-y-0.5">
+                    {callParticipants.map((id) => {
+                      const isSelf = id === self?.identityId;
+                      const name = isSelf
+                        ? self?.displayName ? `${self.displayName} (You)` : "You"
+                        : contactsById[id]?.displayName ?? memberNames[id] ?? shortId(id);
+                      const presence = presenceById[id] ?? "online";
+                      const isSpeaking = speakingIds.has(id);
+                      const hasCam = isSelf ? (inThisCall && camOn) : (camOnByParticipant[id] === true);
+                      const isMuted = isSelf ? (inThisCall && !micOn) : false;
+
+                      return (
+                        <li
+                          key={id}
+                          className="flex items-center justify-between rounded-lg px-2 py-1 text-[13px] text-text-secondary hover:bg-bg-secondary hover:text-text-primary transition-colors group/participant"
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            <Avatar
+                              id={id}
+                              name={name}
+                              size="xs"
+                              presence={presence}
+                              className={cx(
+                                "rounded-full transition-all",
+                                isSpeaking ? "ring-2 ring-success shadow-[0_0_8px_rgba(59,165,92,0.6)]" : undefined,
+                              )}
+                            />
+                            <span className={cx("min-w-0 flex-1 truncate text-[12px]", isSelf ? "font-semibold text-text-primary" : undefined)}>
+                              {name}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 text-text-muted">
+                            {hasCam && <span title="Camera on"><Video size={12} className="text-accent" aria-hidden="true" /></span>}
+                            {isSpeaking ? (
+                              <span title="Speaking"><Volume2 size={12} className="text-success animate-pulse" aria-hidden="true" /></span>
+                            ) : isMuted ? (
+                              <span title="Muted"><MicOff size={12} className="text-danger/80" aria-hidden="true" /></span>
+                            ) : (
+                              <span title="In call"><Mic size={12} className="text-text-muted/60 opacity-0 group-hover/participant:opacity-100 transition-opacity" aria-hidden="true" /></span>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </li>
           );
         })}
