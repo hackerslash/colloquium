@@ -4,6 +4,7 @@ import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { useRosterStore } from "../../stores/useRosterStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { MessageList } from "../chat/MessageList";
 import { Composer } from "../chat/Composer";
@@ -30,6 +31,9 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
   const setDraft = useChatStore((s) => s.setDraft);
   const messages = useChatStore((s) => s.messagesByRoom[roomId]);
   const draft = useChatStore((s) => s.draftByRoom[roomId]) ?? "";
+  const replyingTo = useChatStore((s) => s.replyingToByRoom[roomId]) ?? null;
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
+  const contactsById = useRosterStore((s) => s.contactsById);
 
   const callRoomId = useRoomCallStore((s) => s.roomId);
   const joinCall = useRoomCallStore((s) => s.join);
@@ -126,11 +130,21 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         </div>
       </header>
 
-      <MessageList messages={messages} roomId={roomId} />
+      <MessageList messages={messages} roomId={roomId} memberIds={memberIds} />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}
         placeholder={`Message ${room.name ?? "the room"}`}
+        replyingTo={
+          replyingTo && {
+            authorName:
+              replyingTo.authorId === self?.identityId
+                ? self.displayName
+                : contactsById[replyingTo.authorId]?.displayName ?? "Unknown",
+            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
+          }
+        }
+        onCancelReply={() => setReplyingTo(roomId, null)}
         onChange={(v) => {
           setDraft(roomId, v);
           if (v) notifyTyping(roomId, memberIds);

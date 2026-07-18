@@ -1,14 +1,16 @@
-import { Fragment, memo, useEffect, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, Check, CheckCheck, Clock, Download, MessageSquare, Paperclip, X } from "lucide-react";
-import type { DeliveryStatus, Message } from "../../types/domain";
+import { AlertCircle, Check, CheckCheck, Clock, Download, MessageSquare, Paperclip, Reply, SmilePlus, X } from "lucide-react";
+import type { DeliveryStatus, Message, Reaction } from "../../types/domain";
+import { useChatStore } from "../../stores/useChatStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { Avatar } from "../ui/Avatar";
 import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
+import { EmojiPicker } from "./EmojiPicker";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { cx } from "../../lib/cx";
 import * as fileRepo from "../../services/db/fileRepo";
@@ -182,6 +184,14 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   );
 }
 
+const PICKER_W = 320;
+const PICKER_H = 384;
+
+function snippetOf(message: Message | undefined): string {
+  if (!message) return "Original message unavailable";
+  return message.body || message.attachmentName || "Attachment";
+}
+
 type MessageRowProps = {
   message: Message;
   isOwn: boolean;
@@ -189,6 +199,15 @@ type MessageRowProps = {
   startsGroup: boolean;
   newDay: boolean;
   animateIn: boolean;
+  selfId: string | undefined;
+  reactions: Reaction[] | undefined;
+  /** The message this one replies to, if it's loaded in this room. */
+  replyToMessage: Message | undefined;
+  nameOf: (id: string) => string;
+  highlighted: boolean;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+  onReply: (message: Message) => void;
+  onQuoteClick: (messageId: string) => void;
 };
 
 const MessageRow = memo(function MessageRow({
@@ -198,9 +217,52 @@ const MessageRow = memo(function MessageRow({
   startsGroup,
   newDay,
   animateIn,
+  selfId,
+  reactions,
+  replyToMessage,
+  nameOf,
+  highlighted,
+  onToggleReaction,
+  onReply,
+  onQuoteClick,
 }: MessageRowProps) {
+  const [pickerPos, setPickerPos] = useState<{ left: number; top: number } | null>(null);
+
+  function openPicker(e: React.MouseEvent<HTMLButtonElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const margin = 8;
+    const left = Math.min(
+      Math.max(margin, rect.left - PICKER_W / 2),
+      window.innerWidth - PICKER_W - margin,
+    );
+    const top =
+      rect.top - PICKER_H - margin >= margin
+        ? rect.top - PICKER_H - margin
+        : Math.min(rect.bottom + margin, window.innerHeight - PICKER_H - margin);
+    setPickerPos({ left, top });
+  }
+
+  // Group reactions into pills: one per emoji, in first-reaction order.
+  const pills: { emoji: string; count: number; mine: boolean; who: string }[] = [];
+  if (reactions) {
+    const byEmoji = new Map<string, Reaction[]>();
+    for (const r of reactions) {
+      const list = byEmoji.get(r.emoji);
+      if (list) list.push(r);
+      else byEmoji.set(r.emoji, [r]);
+    }
+    for (const [emoji, list] of byEmoji) {
+      pills.push({
+        emoji,
+        count: list.length,
+        mine: list.some((r) => r.authorId === selfId),
+        who: list.map((r) => nameOf(r.authorId)).join(", "),
+      });
+    }
+  }
+
   return (
-    <li>
+    <li id={`msg-${message.id}`}>
       {newDay && (
         <div className="my-4 flex items-center gap-3">
           <span className="h-px flex-1 bg-border" />
@@ -215,9 +277,10 @@ const MessageRow = memo(function MessageRow({
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 500, damping: 40 }}
         className={cx(
-          "flex gap-2",
+          "flex gap-2 rounded-lg transition-colors duration-500",
           startsGroup ? "mt-3" : "mt-0.5",
           isOwn ? "flex-row-reverse" : "flex-row",
+          highlighted && "bg-accent/10",
         )}
       >
         {!isOwn &&
@@ -237,6 +300,24 @@ const MessageRow = memo(function MessageRow({
               <span className="text-sm font-semibold text-text-primary">{authorName}</span>
               <span className="text-[11px] text-text-muted">{timeOf(message.sentAt)}</span>
             </div>
+          )}
+          {message.replyToId && (
+            <button
+              type="button"
+              onClick={() => replyToMessage && onQuoteClick(replyToMessage.id)}
+              className={cx(
+                "mb-0.5 flex max-w-full items-center gap-1.5 rounded-md border-l-2 border-accent/60 bg-bg-tertiary/60 px-2 py-1 text-left text-xs text-text-muted transition-colors",
+                replyToMessage ? "hover:bg-bg-tertiary" : "cursor-default",
+              )}
+            >
+              <Reply size={12} className="shrink-0" />
+              {replyToMessage && (
+                <span className="shrink-0 font-semibold text-text-secondary">
+                  {nameOf(replyToMessage.authorId)}
+                </span>
+              )}
+              <span className="truncate">{snippetOf(replyToMessage)}</span>
+            </button>
           )}
           <div
             className={cx(
@@ -259,14 +340,70 @@ const MessageRow = memo(function MessageRow({
               className={cx(
                 "mb-0.5 flex shrink-0 items-center gap-1 text-[10px] text-text-muted",
                 "opacity-0 transition-opacity group-hover:opacity-100",
+                pickerPos && "opacity-100",
               )}
             >
+              <button
+                type="button"
+                title="Add reaction"
+                aria-label="Add reaction"
+                onClick={openPicker}
+                className="rounded p-1 hover:bg-bg-elevated hover:text-text-primary transition-colors"
+              >
+                <SmilePlus size={14} />
+              </button>
+              <button
+                type="button"
+                title="Reply"
+                aria-label="Reply"
+                onClick={() => onReply(message)}
+                className="rounded p-1 hover:bg-bg-elevated hover:text-text-primary transition-colors"
+              >
+                <Reply size={14} />
+              </button>
               {timeOf(message.sentAt)}
               {isOwn && <DeliveryTick status={message.deliveryStatus} />}
             </span>
           </div>
+          {pills.length > 0 && (
+            <div className={cx("mt-1 flex flex-wrap gap-1", isOwn && "justify-end")}>
+              {pills.map((pill) => (
+                <button
+                  key={pill.emoji}
+                  type="button"
+                  title={pill.who}
+                  onClick={() => onToggleReaction(message.id, pill.emoji)}
+                  className={cx(
+                    "flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors",
+                    pill.mine
+                      ? "border-accent/60 bg-accent/15 text-accent"
+                      : "border-border/60 bg-bg-elevated text-text-secondary hover:border-border",
+                  )}
+                >
+                  <span>{pill.emoji}</span>
+                  <span className="font-semibold">{pill.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </motion.div>
+      {pickerPos &&
+        createPortal(
+          <div className="fixed z-[100]" style={pickerPos}>
+            <AnimatePresence>
+              <EmojiPicker
+                className="relative"
+                onSelectEmoji={(emoji) => {
+                  onToggleReaction(message.id, emoji);
+                  setPickerPos(null);
+                }}
+                onClose={() => setPickerPos(null)}
+              />
+            </AnimatePresence>
+          </div>,
+          document.body,
+        )}
     </li>
   );
 });
@@ -275,12 +412,18 @@ type MessageListProps = {
   /** undefined = still loading; [] = loaded and empty. */
   messages: Message[] | undefined;
   roomId?: string;
+  /** Current room members — recipients for reaction broadcasts. */
+  memberIds?: string[];
 };
 
-export function MessageList({ messages, roomId }: MessageListProps) {
+export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const sessionState = useRoomStore((s) => (roomId ? s.roomSessionState[roomId] : undefined));
+  const reactionsByMessage = useChatStore((s) => (roomId ? s.reactionsByRoom[roomId] : undefined));
+  const toggleReaction = useChatStore((s) => s.toggleReaction);
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const unreadBannerRef = useRef<HTMLLIElement>(null);
@@ -387,10 +530,47 @@ export function MessageList({ messages, roomId }: MessageListProps) {
     }
   }, [messages, roomId]);
 
-  function authorName(authorId: string): string {
-    if (authorId === self?.identityId) return self.displayName;
-    return contactsById[authorId]?.displayName ?? "Unknown";
-  }
+  const selfId = self?.identityId;
+  const selfName = self?.displayName;
+  const nameOf = useCallback(
+    (authorId: string): string => {
+      if (authorId === selfId) return selfName ?? "You";
+      return contactsById[authorId]?.displayName ?? "Unknown";
+    },
+    [selfId, selfName, contactsById],
+  );
+
+  const messageById = useMemo(() => {
+    const map = new Map<string, Message>();
+    for (const m of messages ?? []) map.set(m.id, m);
+    return map;
+  }, [messages]);
+
+  const handleToggleReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      if (!roomId) return;
+      void toggleReaction(roomId, memberIds ?? [], messageId, emoji);
+    },
+    [roomId, memberIds, toggleReaction],
+  );
+
+  const handleReply = useCallback(
+    (message: Message) => {
+      if (roomId) setReplyingTo(roomId, message);
+    },
+    [roomId, setReplyingTo],
+  );
+
+  const handleQuoteClick = useCallback((messageId: string) => {
+    document
+      .getElementById(`msg-${messageId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightId(messageId);
+    window.setTimeout(
+      () => setHighlightId((cur) => (cur === messageId ? null : cur)),
+      1500,
+    );
+  }, []);
 
   if (messages === undefined) {
     return (
@@ -450,10 +630,20 @@ export function MessageList({ messages, roomId }: MessageListProps) {
               <MessageRow
                 message={message}
                 isOwn={isOwn}
-                authorName={authorName(message.authorId)}
+                authorName={nameOf(message.authorId)}
                 startsGroup={startsGroup}
                 newDay={newDay}
                 animateIn={didInitialRender.current}
+                selfId={selfId}
+                reactions={reactionsByMessage?.[message.id]}
+                replyToMessage={
+                  message.replyToId ? messageById.get(message.replyToId) : undefined
+                }
+                nameOf={nameOf}
+                highlighted={highlightId === message.id}
+                onToggleReaction={handleToggleReaction}
+                onReply={handleReply}
+                onQuoteClick={handleQuoteClick}
               />
             </Fragment>
           );

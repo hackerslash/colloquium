@@ -1,13 +1,15 @@
-import type { Identity, Message } from "../../types/domain";
+import type { Identity, Message, Reaction } from "../../types/domain";
 import type {
   ChatMessageMessage,
   ChatMessageWire,
+  ReactionMessage,
   RoomSyncRequestMessage,
   RoomSyncResponseMessage,
   FileChunkMessage,
 } from "../../types/wire";
 import * as identityService from "../identity/identity";
 import * as messageRepo from "../db/messageRepo";
+import * as reactionRepo from "../db/reactionRepo";
 import * as roomRepo from "../db/roomRepo";
 import * as rosterRepo from "../db/rosterRepo";
 import { getPeerRegistry } from "../peer/registry";
@@ -133,6 +135,7 @@ export async function sendMessage(
   physicalNow: number,
   attachment?: { id: string; name: string; size: number; type: string },
   fileBuffer?: Uint8Array,
+  replyToId?: string | null,
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));
@@ -152,7 +155,7 @@ export async function sendMessage(
       attachmentName: attachment?.name ?? undefined,
       attachmentSize: attachment?.size ?? undefined,
       attachmentType: attachment?.type ?? undefined,
-      replyToId: null,
+      replyToId: replyToId ?? null,
       sentAt: physicalNow,
       editedAt: null,
       deletedAt: null,
@@ -245,6 +248,68 @@ export async function handleChatMessage(
   physicalNow: number,
 ): Promise<Message | null> {
   return verifyAndStore(msg.message, physicalNow, self.identityId);
+}
+
+/** Longest ZWJ emoji sequences are ~15 UTF-16 units; anything past this is a
+ * peer trying to stuff arbitrary text into a reaction. */
+const MAX_REACTION_EMOJI_LEN = 32;
+
+/** Persists a local reaction toggle and broadcasts it to connected room
+ * members. Offline members converge via room sync on reconnect. */
+export async function sendReaction(
+  self: Identity,
+  roomId: string,
+  memberIds: string[],
+  messageId: string,
+  emoji: string,
+  op: "add" | "remove",
+  physicalNow: number,
+): Promise<Reaction> {
+  const reaction: Reaction = {
+    messageId,
+    roomId,
+    authorId: self.identityId,
+    emoji,
+    reactedAt: physicalNow,
+  };
+  if (op === "add") await reactionRepo.add(reaction);
+  else await reactionRepo.remove(messageId, self.identityId, emoji);
+
+  const payload: ReactionMessage = {
+    type: "reaction",
+    roomId,
+    messageId,
+    emoji,
+    op,
+    reactedAt: physicalNow,
+  };
+  broadcastToRoomMembers(memberIds.filter((id) => id !== self.identityId), payload);
+  return reaction;
+}
+
+/** Applies a live reaction toggle, attributed to the authenticated sender.
+ * Same DM guard as messages: a trusted contact can't inject reactions into
+ * our DM with a third party. */
+export async function handleReaction(
+  selfId: string,
+  senderId: string,
+  msg: ReactionMessage,
+): Promise<Reaction | null> {
+  if (!msg.emoji || msg.emoji.length > MAX_REACTION_EMOJI_LEN) return null;
+  if (msg.roomId.startsWith("dm_")) {
+    const expected = await dmRoomId(selfId, senderId);
+    if (msg.roomId !== expected) return null;
+  }
+  const reaction: Reaction = {
+    messageId: msg.messageId,
+    roomId: msg.roomId,
+    authorId: senderId,
+    emoji: msg.emoji,
+    reactedAt: msg.reactedAt,
+  };
+  if (msg.op === "add") await reactionRepo.add(reaction);
+  else await reactionRepo.remove(msg.messageId, senderId, msg.emoji);
+  return reaction;
 }
 
 // In-memory store for incoming file chunks
@@ -348,19 +413,26 @@ export async function handleRoomSyncRequest(
   );
 
   const missing = await messageRepo.messagesSince(msg.roomId, msg.have);
-  if (missing.length > 0) {
-    const response: RoomSyncResponseMessage = {
-      type: "room_sync_response",
-      roomId: msg.roomId,
-      messages: missing.map(messageToWire),
-    };
-    getPeerRegistry().send(fromPeerId, response);
-  }
+  // Reactions always ride along as our full current set — an empty set still
+  // needs to be sent so a reaction we removed while they were offline clears.
+  const ownReactions = await reactionRepo.listByAuthor(msg.roomId, selfId);
+  const response: RoomSyncResponseMessage = {
+    type: "room_sync_response",
+    roomId: msg.roomId,
+    messages: missing.map(messageToWire),
+    reactions: ownReactions.map((r) => ({
+      messageId: r.messageId,
+      emoji: r.emoji,
+      reactedAt: r.reactedAt,
+    })),
+  };
+  getPeerRegistry().send(fromPeerId, response);
   return flipped > 0;
 }
 
 export async function handleRoomSyncResponse(
   self: Identity,
+  senderId: string,
   msg: RoomSyncResponseMessage,
   physicalNow: number,
 ): Promise<Message[]> {
@@ -368,6 +440,27 @@ export async function handleRoomSyncResponse(
   for (const wire of msg.messages) {
     const m = await verifyAndStore(wire, physicalNow, self.identityId);
     if (m) stored.push(m);
+  }
+
+  // The reaction set is attributed to the responder — same DM guard as
+  // messages so a contact can't plant reactions in our DM with someone else.
+  if (msg.reactions) {
+    let allowed = true;
+    if (msg.roomId.startsWith("dm_")) {
+      allowed = msg.roomId === (await dmRoomId(self.identityId, senderId));
+    }
+    if (allowed) {
+      const sane = msg.reactions
+        .filter((r) => r.emoji && r.emoji.length <= MAX_REACTION_EMOJI_LEN)
+        .map((r) => ({
+          messageId: r.messageId,
+          roomId: msg.roomId,
+          authorId: senderId,
+          emoji: r.emoji,
+          reactedAt: r.reactedAt,
+        }));
+      await reactionRepo.replaceForAuthor(msg.roomId, senderId, sane);
+    }
   }
   return stored;
 }

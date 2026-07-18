@@ -1,6 +1,7 @@
 import { create } from "zustand";
-import type { DeliveryStatus, Message } from "../types/domain";
+import type { DeliveryStatus, Message, Reaction } from "../types/domain";
 import * as messageRepo from "../services/db/messageRepo";
+import * as reactionRepo from "../services/db/reactionRepo";
 import * as fileRepo from "../services/db/fileRepo";
 import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
@@ -9,10 +10,28 @@ import { useRoomStore } from "./useRoomStore";
 type ChatState = {
   messagesByRoom: Record<string, Message[]>;
   draftByRoom: Record<string, string>;
+  /** roomId -> messageId -> reactions on that message (reacted_at order). */
+  reactionsByRoom: Record<string, Record<string, Reaction[]>>;
+  /** The message the composer is replying to, per room (like drafts). */
+  replyingToByRoom: Record<string, Message | null>;
 
   loadMessages: (roomId: string) => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
+  setReplyingTo: (roomId: string, message: Message | null) => void;
+  /** Adds or removes the local user's reaction, persists it, and broadcasts
+   * the toggle to connected room members. */
+  toggleReaction: (
+    roomId: string,
+    memberIds: string[],
+    messageId: string,
+    emoji: string,
+  ) => Promise<void>;
+  /** Bridge-called: a peer's reaction toggle arrived and is already persisted. */
+  ingestReaction: (reaction: Reaction, op: "add" | "remove") => void;
+  /** Reloads a room's reactions from the DB (after a sync backfill replaced
+   * an author's set wholesale). */
+  refreshReactions: (roomId: string) => Promise<void>;
   /** Bridge-called: a message arrived/backfilled from the network and was
    * already persisted; reflect it in the in-memory list if the room is loaded. */
   ingestMessage: (message: Message) => void;
@@ -42,18 +61,32 @@ function mergeById(existing: Message[], fresh: Message[]): Message[] {
   return [...byId.values()].sort(byHlc);
 }
 
+function groupByMessage(reactions: Reaction[]): Record<string, Reaction[]> {
+  const byMessage: Record<string, Reaction[]> = {};
+  for (const r of reactions) (byMessage[r.messageId] ??= []).push(r);
+  return byMessage;
+}
+
 export const useChatStore = create<ChatState>((set, get) => ({
   messagesByRoom: {},
   draftByRoom: {},
+  reactionsByRoom: {},
+  replyingToByRoom: {},
 
   loadMessages: async (roomId) => {
-    const messages = await messageRepo.listByRoom(roomId);
+    const [messages, reactions] = await Promise.all([
+      messageRepo.listByRoom(roomId),
+      reactionRepo.listByRoom(roomId),
+    ]);
     set((state) => {
       const existing = state.messagesByRoom[roomId];
       // Merge, don't overwrite: a message may have been ingested from the
       // network while this query was in flight, and it must not vanish.
       const next = existing ? mergeById(existing, messages) : messages;
-      return { messagesByRoom: { ...state.messagesByRoom, [roomId]: next } };
+      return {
+        messagesByRoom: { ...state.messagesByRoom, [roomId]: next },
+        reactionsByRoom: { ...state.reactionsByRoom, [roomId]: groupByMessage(reactions) },
+      };
     });
   },
 
@@ -86,7 +119,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       trimmed,
       Date.now(),
       attachment,
-      fileBuffer
+      fileBuffer,
+      get().replyingToByRoom[roomId]?.id ?? null
     );
     set((state) => ({
       messagesByRoom: {
@@ -94,12 +128,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [roomId]: insertOrdered(state.messagesByRoom[roomId] ?? [], message),
       },
       draftByRoom: { ...state.draftByRoom, [roomId]: "" },
+      replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
     }));
     void useRoomStore.getState().loadRooms();
   },
 
   setDraft: (roomId, draft) =>
     set((state) => ({ draftByRoom: { ...state.draftByRoom, [roomId]: draft } })),
+
+  setReplyingTo: (roomId, message) =>
+    set((state) => ({
+      replyingToByRoom: { ...state.replyingToByRoom, [roomId]: message },
+    })),
+
+  toggleReaction: async (roomId, memberIds, messageId, emoji) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) return;
+    const existing = get().reactionsByRoom[roomId]?.[messageId] ?? [];
+    const op = existing.some((r) => r.authorId === self.identityId && r.emoji === emoji)
+      ? "remove"
+      : "add";
+    const reaction = await chatService.sendReaction(
+      self,
+      roomId,
+      memberIds,
+      messageId,
+      emoji,
+      op,
+      Date.now(),
+    );
+    get().ingestReaction(reaction, op);
+  },
+
+  ingestReaction: (reaction, op) => {
+    set((state) => {
+      const room = state.reactionsByRoom[reaction.roomId] ?? {};
+      const list = room[reaction.messageId] ?? [];
+      const without = list.filter(
+        (r) => !(r.authorId === reaction.authorId && r.emoji === reaction.emoji),
+      );
+      const nextList = op === "add" ? [...without, reaction] : without;
+      return {
+        reactionsByRoom: {
+          ...state.reactionsByRoom,
+          [reaction.roomId]: { ...room, [reaction.messageId]: nextList },
+        },
+      };
+    });
+  },
+
+  refreshReactions: async (roomId) => {
+    const reactions = await reactionRepo.listByRoom(roomId);
+    set((state) => ({
+      reactionsByRoom: { ...state.reactionsByRoom, [roomId]: groupByMessage(reactions) },
+    }));
+  },
 
   ingestMessage: (message) => {
     get().ingestMessages([message]);

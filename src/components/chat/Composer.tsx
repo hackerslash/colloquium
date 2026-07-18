@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bold, Code, Italic, Paperclip, Quote, SendHorizontal, Smile, Strikethrough, Plus, X } from "lucide-react";
+import { Bold, Code, Italic, Paperclip, Quote, Reply, SendHorizontal, Smile, Strikethrough, Plus, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { IconButton } from "../ui/IconButton";
 import { MAX_FILE_SIZE } from "../../services/room/chatService";
@@ -11,9 +11,11 @@ type ComposerProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSend: (file?: File) => void | Promise<unknown>;
+  replyingTo?: { authorName: string; snippet: string } | null;
+  onCancelReply?: () => void;
 };
 
-export function Composer({ value, placeholder, onChange, onSend }: ComposerProps) {
+export function Composer({ value, placeholder, onChange, onSend, replyingTo, onCancelReply }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -40,6 +42,9 @@ export function Composer({ value, placeholder, onChange, onSend }: ComposerProps
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+    if (e.key === "Escape" && replyingTo) {
+      onCancelReply?.();
     }
   }
 
@@ -97,6 +102,30 @@ export function Composer({ value, placeholder, onChange, onSend }: ComposerProps
 
   return (
     <div className="relative px-4 pb-4 pt-1">
+      {/* Reply Banner */}
+      <AnimatePresence>
+        {replyingTo && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="mb-2.5 flex items-center gap-2 rounded-xl bg-bg-elevated px-4 py-2 text-sm text-text-primary shadow-md border border-border/60"
+          >
+            <Reply size={16} className="shrink-0 text-accent" />
+            <span className="shrink-0 text-xs text-text-muted">Replying to</span>
+            <span className="shrink-0 font-medium">{replyingTo.authorName}</span>
+            <span className="flex-1 truncate text-xs text-text-muted">{replyingTo.snippet}</span>
+            <button
+              onClick={onCancelReply}
+              aria-label="Cancel reply"
+              className="rounded-full bg-black/10 p-1 text-text-muted transition-colors hover:bg-danger/20 hover:text-danger"
+            >
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* File Attachment Badge */}
       <AnimatePresence>
         {selectedFile && (

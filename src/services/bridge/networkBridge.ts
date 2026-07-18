@@ -238,6 +238,12 @@ export function initNetworkBridge(self: Identity): () => void {
         }
         break;
       }
+      case "reaction": {
+        if (!sender) break;
+        const reaction = await chatService.handleReaction(self.identityId, sender.identityId, msg);
+        if (reaction) useChatStore.getState().ingestReaction(reaction, msg.op);
+        break;
+      }
       case "msg_ack":
         await messageRepo.setDeliveryStatus(msg.messageId, "delivered");
         useChatStore.getState().updateMessageStatus(msg.roomId, msg.messageId, "delivered");
@@ -260,9 +266,16 @@ export function initNetworkBridge(self: Identity): () => void {
         break;
       }
       case "room_sync_response": {
-        const stored = await chatService.handleRoomSyncResponse(self, msg, Date.now());
+        if (!sender) break;
+        const stored = await chatService.handleRoomSyncResponse(
+          self,
+          sender.identityId,
+          msg,
+          Date.now(),
+        );
         // Single merge + one room-list refresh for the whole backfill.
         useChatStore.getState().ingestMessages(stored);
+        await useChatStore.getState().refreshReactions(msg.roomId);
         const backfillByRoom = new Map<string, number>();
         for (const m of stored) {
           // Ack the author directly (best effort) — the relaying peer isn't

@@ -74,6 +74,26 @@ export type ChatMessageMessage = {
   message: ChatMessageWire;
 };
 
+/** Emoji reaction toggle on a message. Attributed to the authenticated peer
+ * connection (like typing), never a wire-carried sender id. */
+export type ReactionMessage = {
+  type: "reaction";
+  roomId: string;
+  messageId: string;
+  emoji: string;
+  op: "add" | "remove";
+  reactedAt: number;
+};
+
+/** A reaction carried in a room sync response. The author is implicitly the
+ * responding peer — each peer only ever syncs its OWN reactions, so a relayer
+ * can't forge someone else's. */
+export type ReactionWire = {
+  messageId: string;
+  emoji: string;
+  reactedAt: number;
+};
+
 // --- Transport-level liveness. Consumed inside PeerRegistry (never routed to
 // the app-level message switch): any traffic bumps a per-peer lastSeenAt, and
 // a peer silent past the liveness timeout is closed and marked offline. ---
@@ -114,6 +134,10 @@ export type RoomSyncResponseMessage = {
   type: "room_sync_response";
   roomId: string;
   messages: ChatMessageWire[];
+  /** The responder's own current reactions in this room — a full replacement
+   * set, so removals made while the requester was offline converge too.
+   * Absent (older peer) means "no information", not "no reactions". */
+  reactions?: ReactionWire[];
 };
 
 // --- Call control (a layer above raw negotiation). inviteId ties the whole
@@ -373,6 +397,7 @@ export type HavenMessage =
   | InviteAckMessage
   | RosterSyncMessage
   | ChatMessageMessage
+  | ReactionMessage
   | TypingMessage
   | PingMessage
   | PongMessage

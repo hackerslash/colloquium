@@ -67,6 +67,8 @@ export function ChatView({ contactId }: ChatViewProps) {
 
   const messages = useChatStore((s) => (roomId ? s.messagesByRoom[roomId] : undefined));
   const draft = useChatStore((s) => (roomId ? s.draftByRoom[roomId] : undefined)) ?? "";
+  const replyingTo = useChatStore((s) => (roomId ? s.replyingToByRoom[roomId] : null)) ?? null;
+  const setReplyingTo = useChatStore((s) => s.setReplyingTo);
 
   // Re-render once a minute while offline so a "5m ago" label keeps advancing.
   const [, setTick] = useState(0);
@@ -121,11 +123,21 @@ export function ChatView({ contactId }: ChatViewProps) {
           />
         </div>
       </header>
-      <MessageList messages={messages} roomId={roomId ?? undefined} />
+      <MessageList messages={messages} roomId={roomId ?? undefined} memberIds={[contactId]} />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}
         placeholder={`Message ${contact.displayName}`}
+        replyingTo={
+          replyingTo && {
+            authorName:
+              replyingTo.authorId === self?.identityId
+                ? self.displayName
+                : contact.displayName,
+            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
+          }
+        }
+        onCancelReply={() => roomId && setReplyingTo(roomId, null)}
         onChange={(v) => {
           if (!roomId) return;
           setDraft(roomId, v);

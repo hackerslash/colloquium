@@ -180,9 +180,16 @@ const EMOJI_KEYWORDS: Record<string, string> = {
 type EmojiPickerProps = {
   onSelectEmoji: (emoji: string) => void;
   onClose: () => void;
+  /** Positioning classes for the popover root; defaults to the composer's
+   * bottom-right anchor. */
+  className?: string;
 };
 
-export function EmojiPicker({ onSelectEmoji, onClose }: EmojiPickerProps) {
+export function EmojiPicker({
+  onSelectEmoji,
+  onClose,
+  className = "absolute bottom-16 right-0 z-50",
+}: EmojiPickerProps) {
   const [activeCategory, setActiveCategory] = useState<string>("smileys");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -219,7 +226,7 @@ export function EmojiPicker({ onSelectEmoji, onClose }: EmojiPickerProps) {
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95, y: 10 }}
       transition={{ duration: 0.15, ease: "easeOut" }}
-      className="absolute bottom-16 right-0 z-50 flex h-96 w-80 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/95 shadow-modal backdrop-blur-xl"
+      className={`${className} flex h-96 w-80 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated/95 shadow-modal backdrop-blur-xl`}
     >
       {/* Header & Search */}
       <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-bg-secondary/40 px-3 py-2.5">

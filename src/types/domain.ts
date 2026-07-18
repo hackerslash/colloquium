@@ -37,6 +37,14 @@ export type Room = {
 
 export type DeliveryStatus = "pending" | "sent" | "delivered" | "failed";
 
+export type Reaction = {
+  messageId: string;
+  roomId: string;
+  authorId: string;
+  emoji: string;
+  reactedAt: number;
+};
+
 export type Message = {
   id: string;
   roomId: string;
