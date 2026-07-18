@@ -122,7 +122,7 @@ export function Sidebar({
           onClick={() => onSelect({ kind: "home" })}
           aria-current={selection.kind === "home" ? "true" : undefined}
           className={cx(
-            "flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
             selection.kind === "home"
               ? "bg-bg-primary text-text-primary shadow-sm"
               : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
@@ -144,7 +144,7 @@ export function Sidebar({
           onClick={() => onSelect({ kind: "inbox" })}
           aria-current={selection.kind === "inbox" ? "true" : undefined}
           className={cx(
-            "flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
+            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
             selection.kind === "inbox"
               ? "bg-bg-primary text-text-primary shadow-sm"
               : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
@@ -163,7 +163,7 @@ export function Sidebar({
       </div>
 
       <div className="flex items-center justify-between px-6 pt-8 pb-3">
-        <span className="text-[12px] font-semibold tracking-[0.05em] text-text-muted uppercase">
+        <span className="text-[12px] font-semibold tracking-wider text-text-muted uppercase">
           Spaces
         </span>
         <IconButton
@@ -193,7 +193,7 @@ export function Sidebar({
                 onClick={() => onSelect({ kind: "group", roomId: room.id })}
                 aria-current={active ? "true" : undefined}
                 className={cx(
-                  "flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-[14px] transition-all duration-200",
+                  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] transition-all duration-200",
                   active
                     ? "bg-bg-primary font-medium text-text-primary shadow-sm"
                     : unread > 0
@@ -231,7 +231,7 @@ export function Sidebar({
               {inCallCount > 0 && (
                 <div className="ml-5 mt-1 border-l-2 border-success/30 pl-2.5 pr-1 py-1 space-y-1">
                   <div className="flex items-center justify-between px-1.5 py-0.5 text-[11px] font-semibold text-success">
-                    <span className="flex items-center gap-1.5"></span>
+                    <span className="flex items-center gap-0.5"></span>
                     {!inThisCall && (
                       <button
                         type="button"
@@ -345,7 +345,7 @@ export function Sidebar({
         )}
       </ul>
 
-      <div className="px-6 pt-8 pb-3 text-[12px] font-semibold tracking-[0.05em] text-text-muted uppercase">
+      <div className="px-6 pt-8 pb-3 text-[12px] font-semibold tracking-wider text-text-muted uppercase">
         Connections
       </div>
       <ul className="flex-1 overflow-y-auto px-4 space-y-1">
@@ -364,7 +364,7 @@ export function Sidebar({
                 }
                 aria-current={active ? "true" : undefined}
                 className={cx(
-                  "flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 pr-8 text-left transition-all duration-200",
+                  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pr-8 text-left transition-all duration-200",
                   active
                     ? "bg-bg-primary shadow-sm"
                     : "hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
@@ -436,7 +436,7 @@ export function Sidebar({
       </ul>
 
       {/* User footer bar */}
-      <div className="m-4 mt-2 flex shrink-0 items-center gap-3 rounded-[16px] bg-bg-secondary p-3 shadow-sm transition-colors hover:bg-bg-tertiary">
+      <div className="m-4 mt-2 flex shrink-0 items-center gap-3 rounded-2xl bg-bg-secondary p-3 shadow-sm transition-colors hover:bg-bg-tertiary">
         {self && (
           <Avatar id={self.identityId} name={self.displayName} size="md" />
         )}
