@@ -19,6 +19,7 @@ import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { useTypingStore } from "../../stores/useTypingStore";
 import { notifyIfUnfocused } from "../notify";
+import { playMessageSound } from "../sound";
 
 const DISCOVERY_INTERVAL_MS = 2_000;
 const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
@@ -173,12 +174,14 @@ export function initNetworkBridge(self: Identity): () => void {
   }
 
   /** Bumps the room's unread count unless it's the room the user is currently
-   * viewing in a focused window (in which case it's read on arrival). */
-  function markUnreadIfInactive(roomId: string, count = 1) {
+   * viewing in a focused window (in which case it's read on arrival). Returns
+   * whether the room was active, so callers can gate per-message alerts. */
+  function markUnreadIfInactive(roomId: string, count = 1): boolean {
     const roomStore = useRoomStore.getState();
     const isActive = roomStore.activeRoomId === roomId && document.hasFocus();
     if (isActive) void roomStore.markRead(roomId);
     else roomStore.bumpUnread(roomId, count);
+    return isActive;
   }
 
   // The invite handshake is how trust is first established, so it's the only
@@ -229,12 +232,13 @@ export function initNetworkBridge(self: Identity): () => void {
         if (stored) {
           ackMessage(peerId, stored.roomId, stored.id);
           useChatStore.getState().ingestMessage(stored);
-          markUnreadIfInactive(stored.roomId);
+          const isActive = markUnreadIfInactive(stored.roomId);
           const author = useRosterStore.getState().contactsById[stored.authorId];
           void notifyIfUnfocused(
             author?.displayName ?? "New message",
             stored.body ?? "",
           );
+          if (!isActive) playMessageSound();
         }
         break;
       }

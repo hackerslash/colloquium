@@ -3,6 +3,7 @@ import type { Room } from "../types/domain";
 import * as roomRepo from "../services/db/roomRepo";
 import * as readStateRepo from "../services/db/readStateRepo";
 import { useIdentityStore } from "./useIdentityStore";
+import { setAppBadge } from "../services/badge";
 
 type RoomState = {
   roomsById: Record<string, Room>;
@@ -32,6 +33,7 @@ function totalUnread(map: Record<string, number>): number {
 function refreshAppBadge(map: Record<string, number>) {
   const total = totalUnread(map);
   document.title = total > 0 ? `Haven (${total})` : "Haven";
+  void setAppBadge(total);
 }
 
 export const useRoomStore = create<RoomState>((set, get) => ({

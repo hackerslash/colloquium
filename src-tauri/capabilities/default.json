@@ -6,6 +6,9 @@
   "permissions": [
     "core:default",
     "core:window:allow-show",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-overlay-icon",
+    "core:image:allow-new",
     "sql:default",
     "sql:allow-execute",
     "notification:default",

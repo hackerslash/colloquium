@@ -312,6 +312,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setPushToTalk = useSettingsStore((s) => s.setPushToTalk);
   const closeToTray = useSettingsStore((s) => s.closeToTray);
   const setCloseToTray = useSettingsStore((s) => s.setCloseToTray);
+  const desktopNotifications = useSettingsStore((s) => s.desktopNotifications);
+  const setDesktopNotifications = useSettingsStore((s) => s.setDesktopNotifications);
+  const notificationSounds = useSettingsStore((s) => s.notificationSounds);
+  const setNotificationSounds = useSettingsStore((s) => s.setNotificationSounds);
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
@@ -363,6 +367,40 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 style={{ backgroundColor: p.base }}
               />
             ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Notifications
+        </p>
+        <div className="mt-2 space-y-3">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Desktop notifications</p>
+              <p className="text-xs text-text-secondary">
+                Show an OS notification for new messages while Haven is unfocused
+              </p>
+            </div>
+            <Switch
+              checked={desktopNotifications}
+              onChange={setDesktopNotifications}
+              aria-label="Desktop notifications"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Notification sounds</p>
+              <p className="text-xs text-text-secondary">
+                Play a chime for new messages in rooms you're not viewing
+              </p>
+            </div>
+            <Switch
+              checked={notificationSounds}
+              onChange={setNotificationSounds}
+              aria-label="Notification sounds"
+            />
           </div>
         </div>
       </div>
