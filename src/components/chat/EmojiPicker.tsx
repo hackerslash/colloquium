@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Smile, Search, X } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+import { Search, X } from "lucide-react";
+import { motion } from "motion/react";
 
 type EmojiCategory = {
   id: string;
