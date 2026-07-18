@@ -48,10 +48,22 @@ function VideoInner({ stream, muted, mirror, label, hasVideo, participantId, qua
     const el = videoRef.current;
     if (!el || !el.setSinkId) return;
     const id = audioOutputDeviceId ?? "";
-    el.setSinkId(id).catch((err) => {
-      // Device may have been unplugged or the id is stale — fail silently.
-      console.warn("VideoTile: setSinkId failed", err);
-    });
+    let disposed = false;
+    const apply = () => {
+      el.setSinkId(id).catch((err) => {
+        // WebKit rejects setSinkId outside a user gesture — without a retry
+        // the tile falls back to the default device and the remote's voice
+        // audibly jumps devices. Retry on the next interaction.
+        if (disposed) return;
+        window.addEventListener("pointerdown", apply, { once: true });
+        console.warn("VideoTile: setSinkId failed, will retry on next click", err);
+      });
+    };
+    apply();
+    return () => {
+      disposed = true;
+      window.removeEventListener("pointerdown", apply);
+    };
   }, [audioOutputDeviceId]);
 
   return (

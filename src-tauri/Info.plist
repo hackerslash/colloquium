@@ -6,5 +6,7 @@
 	<string>Haven uses your camera for video calls.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Haven uses your microphone for voice and video calls.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Haven captures system audio so screen shares can include sound.</string>
 </dict>
 </plist>

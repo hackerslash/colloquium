@@ -25,10 +25,23 @@ use tauri::ipc::Channel;
 pub async fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        tauri::async_runtime::spawn_blocking(move || imp::start(channel))
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|inner| inner)
+        tauri::async_runtime::spawn_blocking(move || {
+            // Prefer CoreAudio process taps (macOS 14.4+): unlike the
+            // ScreenCaptureKit app filter, taps can exclude the WKWebView GPU
+            // helper that actually plays the call audio — SCK never enumerates
+            // it (it owns no windows), so its playback leaked into the share
+            // and echoed the participants back at themselves.
+            match tap::start(channel.clone()) {
+                Ok(()) => Ok(()),
+                Err(e) => {
+                    eprintln!("[sysaudio] CoreAudio tap unavailable ({e}); falling back to ScreenCaptureKit");
+                    imp::start(channel)
+                }
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|inner| inner)
     }
     #[cfg(target_os = "windows")]
     {
@@ -48,6 +61,7 @@ pub async fn sysaudio_start(channel: Channel<String>) -> Result<(), String> {
 pub fn sysaudio_stop() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        tap::stop();
         imp::stop();
     }
     #[cfg(target_os = "windows")]
@@ -55,6 +69,530 @@ pub fn sysaudio_stop() -> Result<(), String> {
         win::stop();
     }
     Ok(())
+}
+
+/// CoreAudio process-tap capture (macOS 14.4+). Captures ALL system audio
+/// except an exclusion list we build ourselves: Haven's own process plus its
+/// WKWebView helpers (which render the call audio). Identified three ways so
+/// it works both bundled and in dev:
+///   - pid == ours
+///   - responsible pid == ours (bundled app: helpers belong to Haven.app)
+///   - bundle starts with com.apple.WebKit AND shares our responsible pid
+///     (dev: everything terminal-launched is "responsible to" the terminal,
+///     so ours and our helpers share it; Safari's helpers don't)
+#[cfg(target_os = "macos")]
+mod tap {
+    use std::ffi::c_void;
+    use std::sync::Mutex;
+
+    use base64::Engine as _;
+    use objc2::rc::{Allocated, Retained};
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::msg_send;
+    use objc2_core_audio_types::{AudioBufferList, AudioStreamBasicDescription, AudioTimeStamp};
+    use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
+    use tauri::ipc::Channel;
+
+    extern "C" {
+        fn responsibility_get_pid_responsible_for_pid(pid: i32) -> i32;
+    }
+
+    type OSStatus = i32;
+    type AudioObjectID = u32;
+
+    #[repr(C)]
+    struct AudioObjectPropertyAddress {
+        selector: u32,
+        scope: u32,
+        element: u32,
+    }
+
+    const SYSTEM_OBJECT: AudioObjectID = 1;
+    const SCOPE_GLOBAL: u32 = u32::from_be_bytes(*b"glob");
+    const ELEMENT_MAIN: u32 = 0;
+    const PROP_PROCESS_LIST: u32 = u32::from_be_bytes(*b"prs#");
+    const PROP_PROCESS_PID: u32 = u32::from_be_bytes(*b"ppid");
+    const PROP_PROCESS_BUNDLE: u32 = u32::from_be_bytes(*b"pbid");
+    const PROP_TAP_FORMAT: u32 = u32::from_be_bytes(*b"tfmt");
+    const PROP_NOMINAL_RATE: u32 = u32::from_be_bytes(*b"nsrt");
+
+    type AudioDeviceIOProc = unsafe extern "C" fn(
+        AudioObjectID,
+        *const AudioTimeStamp,
+        *const AudioBufferList,
+        *const AudioTimeStamp,
+        *mut AudioBufferList,
+        *const AudioTimeStamp,
+        *mut c_void,
+    ) -> OSStatus;
+    type AudioDeviceIOProcID = Option<AudioDeviceIOProc>;
+
+    #[link(name = "CoreAudio", kind = "framework")]
+    extern "C" {
+        fn AudioObjectGetPropertyDataSize(
+            object: AudioObjectID,
+            address: *const AudioObjectPropertyAddress,
+            qualifier_size: u32,
+            qualifier: *const c_void,
+            out_size: *mut u32,
+        ) -> OSStatus;
+        fn AudioObjectGetPropertyData(
+            object: AudioObjectID,
+            address: *const AudioObjectPropertyAddress,
+            qualifier_size: u32,
+            qualifier: *const c_void,
+            io_size: *mut u32,
+            out_data: *mut c_void,
+        ) -> OSStatus;
+        fn AudioObjectSetPropertyData(
+            object: AudioObjectID,
+            address: *const AudioObjectPropertyAddress,
+            qualifier_size: u32,
+            qualifier: *const c_void,
+            size: u32,
+            data: *const c_void,
+        ) -> OSStatus;
+        fn AudioHardwareCreateProcessTap(
+            description: *mut AnyObject,
+            out_tap: *mut AudioObjectID,
+        ) -> OSStatus;
+        fn AudioHardwareDestroyProcessTap(tap: AudioObjectID) -> OSStatus;
+        fn AudioHardwareCreateAggregateDevice(
+            description: *const c_void,
+            out_device: *mut AudioObjectID,
+        ) -> OSStatus;
+        fn AudioHardwareDestroyAggregateDevice(device: AudioObjectID) -> OSStatus;
+        fn AudioDeviceCreateIOProcID(
+            device: AudioObjectID,
+            io_proc: AudioDeviceIOProc,
+            client_data: *mut c_void,
+            out_id: *mut AudioDeviceIOProcID,
+        ) -> OSStatus;
+        fn AudioDeviceDestroyIOProcID(device: AudioObjectID, id: AudioDeviceIOProcID) -> OSStatus;
+        fn AudioDeviceStart(device: AudioObjectID, id: AudioDeviceIOProcID) -> OSStatus;
+        fn AudioDeviceStop(device: AudioObjectID, id: AudioDeviceIOProcID) -> OSStatus;
+    }
+
+    fn addr(selector: u32) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress {
+            selector,
+            scope: SCOPE_GLOBAL,
+            element: ELEMENT_MAIN,
+        }
+    }
+
+    fn list_audio_processes() -> Result<Vec<AudioObjectID>, String> {
+        let address = addr(PROP_PROCESS_LIST);
+        let mut size: u32 = 0;
+        let status = unsafe {
+            AudioObjectGetPropertyDataSize(
+                SYSTEM_OBJECT,
+                &address,
+                0,
+                core::ptr::null(),
+                &mut size,
+            )
+        };
+        if status != 0 {
+            return Err(format!("process list size failed ({status})"));
+        }
+        let count = size as usize / core::mem::size_of::<AudioObjectID>();
+        let mut ids = vec![0u32; count];
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                SYSTEM_OBJECT,
+                &address,
+                0,
+                core::ptr::null(),
+                &mut size,
+                ids.as_mut_ptr() as *mut c_void,
+            )
+        };
+        if status != 0 {
+            return Err(format!("process list failed ({status})"));
+        }
+        ids.truncate(size as usize / core::mem::size_of::<AudioObjectID>());
+        Ok(ids)
+    }
+
+    fn pid_of(object: AudioObjectID) -> Option<i32> {
+        let address = addr(PROP_PROCESS_PID);
+        let mut pid: i32 = 0;
+        let mut size = core::mem::size_of::<i32>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                object,
+                &address,
+                0,
+                core::ptr::null(),
+                &mut size,
+                &mut pid as *mut i32 as *mut c_void,
+            )
+        };
+        (status == 0).then_some(pid)
+    }
+
+    fn bundle_of(object: AudioObjectID) -> String {
+        let address = addr(PROP_PROCESS_BUNDLE);
+        let mut string_ptr: *mut NSString = core::ptr::null_mut();
+        let mut size = core::mem::size_of::<*mut NSString>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                object,
+                &address,
+                0,
+                core::ptr::null(),
+                &mut size,
+                &mut string_ptr as *mut *mut NSString as *mut c_void,
+            )
+        };
+        if status != 0 || string_ptr.is_null() {
+            return String::new();
+        }
+        // The property returns a +1 CFString; from_raw takes that ownership.
+        unsafe { Retained::from_raw(string_ptr) }
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+    }
+
+    /// Linear resampler for interleaved stereo f32 (tap rate -> 48 kHz).
+    struct Resampler {
+        ratio: f64,
+        pos: f64,
+    }
+
+    impl Resampler {
+        fn new(src_rate: f64) -> Self {
+            Self {
+                ratio: src_rate / 48_000.0,
+                pos: 0.0,
+            }
+        }
+
+        fn process(&mut self, input: &[f32]) -> Vec<f32> {
+            let frames_in = input.len() / 2;
+            if (self.ratio - 1.0).abs() < 1e-9 || frames_in == 0 {
+                return input.to_vec();
+            }
+            let mut out = Vec::with_capacity(((frames_in as f64 / self.ratio) as usize + 2) * 2);
+            let mut pos = self.pos;
+            while pos < frames_in as f64 {
+                let i = pos as usize;
+                let frac = (pos - i as f64) as f32;
+                let i1 = (i + 1).min(frames_in - 1);
+                out.push(input[i * 2] + (input[i1 * 2] - input[i * 2]) * frac);
+                out.push(input[i * 2 + 1] + (input[i1 * 2 + 1] - input[i * 2 + 1]) * frac);
+                pos += self.ratio;
+            }
+            self.pos = pos - frames_in as f64;
+            out
+        }
+    }
+
+    struct TapCtx {
+        channel: Channel<String>,
+        resampler: Resampler,
+    }
+
+    unsafe extern "C" fn io_proc(
+        _device: AudioObjectID,
+        _now: *const AudioTimeStamp,
+        input: *const AudioBufferList,
+        _input_time: *const AudioTimeStamp,
+        _output: *mut AudioBufferList,
+        _output_time: *const AudioTimeStamp,
+        client_data: *mut c_void,
+    ) -> OSStatus {
+        let ctx = &mut *(client_data as *mut TapCtx);
+        let Some(abl) = input.as_ref() else { return 0 };
+        let n = abl.mNumberBuffers as usize;
+        if n == 0 {
+            return 0;
+        }
+        let buffers = core::slice::from_raw_parts(abl.mBuffers.as_ptr(), n.min(2));
+        let interleaved = super::pcm::interleave_stereo_f32(buffers);
+        if interleaved.is_empty() {
+            return 0;
+        }
+        let resampled = ctx.resampler.process(&interleaved);
+        let out: Vec<i16> = resampled
+            .iter()
+            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect();
+        let bytes: &[u8] =
+            core::slice::from_raw_parts(out.as_ptr() as *const u8, out.len() * 2);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let _ = ctx.channel.send(encoded);
+        0
+    }
+
+    struct Capture {
+        tap: AudioObjectID,
+        aggregate: AudioObjectID,
+        proc_id: AudioDeviceIOProcID,
+        ctx: *mut TapCtx,
+    }
+    unsafe impl Send for Capture {}
+
+    static STATE: Mutex<Option<Capture>> = Mutex::new(None);
+
+    unsafe fn nsdict(
+        keys: &[&NSString],
+        values: &[&AnyObject],
+    ) -> Retained<NSDictionary<NSString, AnyObject>> {
+        msg_send![
+            objc2::class!(NSDictionary),
+            dictionaryWithObjects: values.as_ptr(),
+            forKeys: keys.as_ptr() as *const *const NSString,
+            count: keys.len(),
+        ]
+    }
+
+    pub fn start(channel: Channel<String>) -> Result<(), String> {
+        stop();
+
+        let Some(tap_class) = AnyClass::get(c"CATapDescription") else {
+            return Err("CATapDescription unavailable (needs macOS 14.4+)".into());
+        };
+
+        // Build the exclusion list from CoreAudio's own process objects.
+        let our_pid = std::process::id() as i32;
+        let our_responsible = unsafe { responsibility_get_pid_responsible_for_pid(our_pid) };
+        let mut excluded: Vec<Retained<NSNumber>> = Vec::new();
+        for object in list_audio_processes()? {
+            let Some(pid) = pid_of(object) else { continue };
+            let bundle = bundle_of(object);
+            let responsible = unsafe { responsibility_get_pid_responsible_for_pid(pid) };
+            let ours = pid == our_pid
+                || responsible == our_pid
+                || (bundle.starts_with("com.apple.WebKit")
+                    && responsible > 0
+                    && responsible == our_responsible);
+            if ours || bundle.to_lowercase().contains("webkit") {
+                eprintln!(
+                    "[sysaudio] tap: audio process pid={pid} responsible={responsible} bundle={bundle} excluded={ours}"
+                );
+            }
+            if ours {
+                excluded.push(NSNumber::new_u32(object));
+            }
+        }
+        eprintln!(
+            "[sysaudio] tap: our pid={our_pid} responsible={our_responsible}; excluding {} audio processes",
+            excluded.len()
+        );
+
+        let excluded_array = NSArray::from_retained_slice(&excluded);
+        let description: Retained<AnyObject> = unsafe {
+            let allocated: Allocated<AnyObject> = msg_send![tap_class, alloc];
+            msg_send![allocated, initStereoGlobalTapButExcludeProcesses: &*excluded_array]
+        };
+        unsafe {
+            let _: () = msg_send![&*description, setPrivate: true];
+            let _: () = msg_send![&*description, setName: &*NSString::from_str("Haven screen-share audio")];
+        }
+        let tap_uuid: Retained<NSString> = unsafe {
+            let uuid: Retained<AnyObject> = msg_send![&*description, UUID];
+            msg_send![&*uuid, UUIDString]
+        };
+
+        let mut tap_id: AudioObjectID = 0;
+        let status = unsafe {
+            AudioHardwareCreateProcessTap(
+                Retained::as_ptr(&description) as *mut AnyObject,
+                &mut tap_id,
+            )
+        };
+        if status != 0 {
+            return Err(format!("AudioHardwareCreateProcessTap failed ({status})"));
+        }
+
+        // Aggregate device wrapping just the tap, so a standard device IOProc
+        // can pull its audio.
+        let aggregate_id = (|| -> Result<AudioObjectID, String> {
+            let sub_tap = unsafe {
+                nsdict(
+                    &[&NSString::from_str("uid"), &NSString::from_str("drift")],
+                    &[&*tap_uuid, &*NSNumber::new_i32(1)],
+                )
+            };
+            let taps = NSArray::from_retained_slice(&[sub_tap]);
+            let agg_uid = NSString::from_str("havenapp.sysaudio.aggregate");
+            let agg_name = NSString::from_str("Haven sysaudio");
+            let desc = unsafe {
+                nsdict(
+                    &[
+                        &NSString::from_str("uid"),
+                        &NSString::from_str("name"),
+                        &NSString::from_str("private"),
+                        &NSString::from_str("stacked"),
+                        &NSString::from_str("taps"),
+                    ],
+                    &[
+                        &*agg_uid,
+                        &*agg_name,
+                        &*NSNumber::new_i32(1),
+                        &*NSNumber::new_i32(0),
+                        &*taps,
+                    ],
+                )
+            };
+            let mut aggregate: AudioObjectID = 0;
+            let status = unsafe {
+                AudioHardwareCreateAggregateDevice(
+                    Retained::as_ptr(&desc) as *const c_void,
+                    &mut aggregate,
+                )
+            };
+            if status != 0 {
+                return Err(format!("AudioHardwareCreateAggregateDevice failed ({status})"));
+            }
+            Ok(aggregate)
+        })()
+        .inspect_err(|_| unsafe {
+            AudioHardwareDestroyProcessTap(tap_id);
+        })?;
+
+        // Ask for 48 kHz; if the device won't take it, the resampler handles it.
+        let wanted_rate: f64 = 48_000.0;
+        let rate_address = addr(PROP_NOMINAL_RATE);
+        unsafe {
+            AudioObjectSetPropertyData(
+                aggregate_id,
+                &rate_address,
+                0,
+                core::ptr::null(),
+                core::mem::size_of::<f64>() as u32,
+                &wanted_rate as *const f64 as *const c_void,
+            );
+        }
+
+        // Read the tap's actual stream format for the resampler.
+        let mut asbd = AudioStreamBasicDescription {
+            mSampleRate: 48_000.0,
+            mFormatID: 0,
+            mFormatFlags: 0,
+            mBytesPerPacket: 0,
+            mFramesPerPacket: 0,
+            mBytesPerFrame: 0,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 0,
+            mReserved: 0,
+        };
+        let format_address = addr(PROP_TAP_FORMAT);
+        let mut asbd_size = core::mem::size_of::<AudioStreamBasicDescription>() as u32;
+        unsafe {
+            AudioObjectGetPropertyData(
+                tap_id,
+                &format_address,
+                0,
+                core::ptr::null(),
+                &mut asbd_size,
+                &mut asbd as *mut AudioStreamBasicDescription as *mut c_void,
+            );
+        }
+        eprintln!(
+            "[sysaudio] tap: capturing at {} Hz, {} ch",
+            asbd.mSampleRate, asbd.mChannelsPerFrame
+        );
+
+        let ctx = Box::into_raw(Box::new(TapCtx {
+            channel,
+            resampler: Resampler::new(if asbd.mSampleRate > 0.0 {
+                asbd.mSampleRate
+            } else {
+                48_000.0
+            }),
+        }));
+
+        let mut proc_id: AudioDeviceIOProcID = None;
+        let status = unsafe {
+            AudioDeviceCreateIOProcID(aggregate_id, io_proc, ctx as *mut c_void, &mut proc_id)
+        };
+        if status != 0 {
+            unsafe {
+                drop(Box::from_raw(ctx));
+                AudioHardwareDestroyAggregateDevice(aggregate_id);
+                AudioHardwareDestroyProcessTap(tap_id);
+            }
+            return Err(format!("AudioDeviceCreateIOProcID failed ({status})"));
+        }
+        let status = unsafe { AudioDeviceStart(aggregate_id, proc_id) };
+        if status != 0 {
+            unsafe {
+                AudioDeviceDestroyIOProcID(aggregate_id, proc_id);
+                drop(Box::from_raw(ctx));
+                AudioHardwareDestroyAggregateDevice(aggregate_id);
+                AudioHardwareDestroyProcessTap(tap_id);
+            }
+            return Err(format!("AudioDeviceStart failed ({status})"));
+        }
+
+        *STATE.lock().unwrap() = Some(Capture {
+            tap: tap_id,
+            aggregate: aggregate_id,
+            proc_id,
+            ctx,
+        });
+        Ok(())
+    }
+
+    pub fn stop() {
+        let capture = STATE.lock().unwrap().take();
+        if let Some(capture) = capture {
+            unsafe {
+                AudioDeviceStop(capture.aggregate, capture.proc_id);
+                AudioDeviceDestroyIOProcID(capture.aggregate, capture.proc_id);
+                AudioHardwareDestroyAggregateDevice(capture.aggregate);
+                AudioHardwareDestroyProcessTap(capture.tap);
+                drop(Box::from_raw(capture.ctx));
+            }
+        }
+    }
+}
+
+/// Shared PCM helpers for the macOS capture paths.
+#[cfg(target_os = "macos")]
+mod pcm {
+    use objc2_core_audio_types::AudioBuffer;
+
+    /// Converts an AudioBufferList's buffers (f32, interleaved stereo OR two
+    /// mono planes OR mono) into interleaved stereo f32.
+    pub fn interleave_stereo_f32(buffers: &[AudioBuffer]) -> Vec<f32> {
+        if buffers.len() >= 2 {
+            let left = f32_slice(&buffers[0]);
+            let right = f32_slice(&buffers[1]);
+            let frames = left.len().min(right.len());
+            let mut out = Vec::with_capacity(frames * 2);
+            for i in 0..frames {
+                out.push(left[i]);
+                out.push(right[i]);
+            }
+            out
+        } else {
+            let buf = &buffers[0];
+            let data = f32_slice(buf);
+            let ch = buf.mNumberChannels.max(1) as usize;
+            if ch >= 2 {
+                data[..data.len() - data.len() % 2].to_vec()
+            } else {
+                let mut out = Vec::with_capacity(data.len() * 2);
+                for &s in data {
+                    out.push(s);
+                    out.push(s);
+                }
+                out
+            }
+        }
+    }
+
+    pub fn f32_slice(buf: &AudioBuffer) -> &[f32] {
+        if buf.mData.is_null() {
+            return &[];
+        }
+        let len = buf.mDataByteSize as usize / core::mem::size_of::<f32>();
+        unsafe { core::slice::from_raw_parts(buf.mData as *const f32, len) }
+    }
 }
 
 #[cfg(target_os = "macos")]

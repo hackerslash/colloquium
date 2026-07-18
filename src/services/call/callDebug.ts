@@ -3,7 +3,9 @@
  * output is only visible with devtools open, and these events are rare. */
 
 export function logCallDebug(tag: string, data?: unknown) {
-  console.info(`[call-debug] ${tag}`, data ?? "");
+  // Stringified so the values survive a copy/paste from the inspector
+  // (Safari shows objects as a collapsed "Object" otherwise).
+  console.info(`[call-debug] ${tag} ${data === undefined ? "" : JSON.stringify(data)}`);
 }
 
 export function trackDebugInfo(track: MediaStreamTrack | null | undefined) {
