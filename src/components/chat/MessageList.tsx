@@ -208,6 +208,8 @@ type MessageRowProps = {
   replyToMessage: Message | undefined;
   nameOf: (id: string) => string;
   highlighted: boolean;
+  /** Whether this row is the single currently-hovered message. */
+  hovered: boolean;
   onToggleReaction: (messageId: string, emoji: string) => void;
   onReply: (message: Message) => void;
   onQuoteClick: (messageId: string) => void;
@@ -225,6 +227,7 @@ const MessageRow = memo(function MessageRow({
   replyToMessage,
   nameOf,
   highlighted,
+  hovered,
   onToggleReaction,
   onReply,
   onQuoteClick,
@@ -324,9 +327,10 @@ const MessageRow = memo(function MessageRow({
           )}
           <div
             className={cx(
-              "group flex items-end gap-1.5",
+              "flex items-end gap-1.5",
               isOwn ? "flex-row-reverse" : "flex-row",
             )}
+            data-message-id={message.id}
           >
             <div
               className={cx(
@@ -342,8 +346,8 @@ const MessageRow = memo(function MessageRow({
             <span
               className={cx(
                 "mb-0.5 flex shrink-0 items-center gap-1 text-[10px] text-text-muted",
-                "opacity-0 transition-opacity group-hover:opacity-100",
-                pickerPos && "opacity-100",
+                "transition-opacity",
+                hovered || pickerPos ? "opacity-100" : "opacity-0",
               )}
             >
               <button
@@ -427,6 +431,14 @@ export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
   const toggleReaction = useChatStore((s) => s.toggleReaction);
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Delegated on the container: every mouseover recomputes which message is
+  // under the cursor, so a stale row self-corrects even if its own
+  // mouseleave was dropped (Chromium misses it on fast moves/re-renders).
+  const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const row = (e.target as HTMLElement).closest("[data-message-id]");
+    setHoveredId(row ? row.getAttribute("data-message-id") : null);
+  }, []);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const unreadBannerRef = useRef<HTMLLIElement>(null);
@@ -604,7 +616,13 @@ export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
   }
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-4" role="log">
+    <div
+      ref={containerRef}
+      className="flex-1 overflow-y-auto px-4 py-4"
+      role="log"
+      onMouseOver={handleMouseOver}
+      onMouseLeave={() => setHoveredId(null)}
+    >
       <ul>
         {messages.map((message, i) => {
           const prev = messages[i - 1];
@@ -644,6 +662,7 @@ export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
                 }
                 nameOf={nameOf}
                 highlighted={highlightId === message.id}
+                hovered={hoveredId === message.id}
                 onToggleReaction={handleToggleReaction}
                 onReply={handleReply}
                 onQuoteClick={handleQuoteClick}
