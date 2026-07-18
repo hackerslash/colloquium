@@ -14,6 +14,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { UserX } from "lucide-react";
 import type { Presence } from "../../types/domain";
 import { toast } from "../../stores/useToastStore";
+import { formatLastSeen } from "../../lib/time";
 
 const PRESENCE_LABEL: Record<Presence, string> = {
   online: "Online",
@@ -64,6 +65,15 @@ export function ChatView({ contactId }: ChatViewProps) {
   const messages = useChatStore((s) => (roomId ? s.messagesByRoom[roomId] : undefined));
   const draft = useChatStore((s) => (roomId ? s.draftByRoom[roomId] : undefined)) ?? "";
 
+  // Re-render once a minute while offline so a "5m ago" label keeps advancing.
+  const [, setTick] = useState(0);
+  const offline = presence === "offline";
+  useEffect(() => {
+    if (!offline) return;
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, [offline]);
+
   function handleSend(file?: File) {
     if (!roomId) return;
     return sendMessage(roomId, [contactId], draft, file).catch((err) => {
@@ -81,12 +91,17 @@ export function ChatView({ contactId }: ChatViewProps) {
   const callDisabled = !roomId || callInProgress || presence !== "online";
   const callHint = presence !== "online" ? `${contact.displayName} is offline` : undefined;
 
+  const statusLabel =
+    offline && contact.lastSeenAt
+      ? `Last seen ${formatLastSeen(contact.lastSeenAt)}`
+      : PRESENCE_LABEL[presence];
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
         <Avatar id={contactId} name={contact.displayName} size="sm" presence={presence} />
         <h1 className="text-sm font-semibold">{contact.displayName}</h1>
-        <span className="text-xs text-text-secondary">{PRESENCE_LABEL[presence]}</span>
+        <span className="text-xs text-text-secondary">{statusLabel}</span>
         <div className="ml-auto flex gap-1">
           <IconButton
             icon={Phone}

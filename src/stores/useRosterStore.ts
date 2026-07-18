@@ -17,6 +17,7 @@ type RosterState = {
   acceptInvite: (inviteString: string) => Promise<void>;
   removeContact: (contactId: string) => Promise<void>;
   setPresence: (identityId: string, presence: Presence) => void;
+  noteSeen: (identityId: string, seenAt: number) => void;
 };
 
 // A DM room id is a stable SHA-256 of the two identity ids, so cache it per
@@ -93,6 +94,19 @@ export const useRosterStore = create<RosterState>((set, get) => ({
     if (get().presenceById[identityId] === presence) return;
     set((state) => ({
       presenceById: { ...state.presenceById, [identityId]: presence },
+    }));
+  },
+
+  // Bumps a contact's persisted lastSeenAt in the store so the UI updates live,
+  // without the full-roster SQLite re-read loadRoster does.
+  noteSeen: (identityId: string, seenAt: number) => {
+    const contact = get().contactsById[identityId];
+    if (!contact) return;
+    set((state) => ({
+      contactsById: {
+        ...state.contactsById,
+        [identityId]: { ...contact, lastSeenAt: seenAt },
+      },
     }));
   },
 }));

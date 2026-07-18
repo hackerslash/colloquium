@@ -334,7 +334,28 @@ export type FileChunkMessage = {
   data: string;
 };
 
+/** Sent to a trusted peer on connect and after a local avatar change, so they
+ * can tell whether the copy they hold is current without transferring bytes. */
+export type ProfileAnnounceMessage = {
+  type: "profile_announce";
+  avatarHash: string | null;
+  updatedAt: number;
+};
+
+export type AvatarRequestMessage = { type: "avatar_request" };
+
+export type AvatarDataMessage = {
+  type: "avatar_data";
+  hash: string;
+  mimeType: string;
+  updatedAt: number;
+  data: string;
+};
+
 export type HavenMessage =
+  | ProfileAnnounceMessage
+  | AvatarRequestMessage
+  | AvatarDataMessage
   | FileChunkMessage
   | FriendRequestMessage
   | FriendRequestResponseMessage

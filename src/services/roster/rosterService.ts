@@ -296,7 +296,7 @@ export async function sendRosterSync(self: Identity, toPeerId: string): Promise<
 /** Broadcasts our full roster (including revocations) to every connected
  * trusted peer — used right after a local change so it converges quickly
  * instead of waiting for the next reconnect. */
-async function broadcastRosterSync(self: Identity): Promise<void> {
+export async function broadcastRosterSync(self: Identity): Promise<void> {
   const contacts = await rosterRepo.listContacts();
   const entries = [buildSelfEntry(self), ...contacts.map(toWire)];
   const message: RosterSyncMessage = { type: "roster_sync", entries };

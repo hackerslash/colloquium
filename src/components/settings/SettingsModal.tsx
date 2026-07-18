@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSettingsStore, type ThemePref, ACCENT_PRESETS } from "../../stores/useSettingsStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { useAvatarStore } from "../../stores/useAvatarStore";
 import { Modal } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
 import { Button } from "../ui/Button";
+import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
 import { toast } from "../../stores/useToastStore";
+import * as avatarService from "../../services/avatar/avatarService";
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -174,6 +177,81 @@ function DevicesSection() {
   );
 }
 
+function AvatarSection() {
+  const self = useIdentityStore((s) => s.self);
+  const displayName = useIdentityStore((s) => s.self?.displayName ?? "");
+  const hasAvatar = useAvatarStore((s) => (self ? !!s.urlById[self.identityId] : false));
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (!self) return null;
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !self) return;
+    setBusy(true);
+    try {
+      await avatarService.setSelfAvatar(self, file);
+      toast.success("Avatar updated");
+    } catch (err) {
+      console.error("Failed to set avatar:", err);
+      toast.error("Couldn't update your avatar", "Please pick a smaller image.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRemove() {
+    if (!self) return;
+    setBusy(true);
+    try {
+      await avatarService.clearSelfAvatar(self);
+    } catch (err) {
+      console.error("Failed to remove avatar:", err);
+      toast.error("Couldn't remove your avatar", "Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-60"
+        aria-label="Change avatar"
+      >
+        <Avatar id={self.identityId} name={displayName} size="xl" />
+      </button>
+      <div className="flex flex-col gap-1">
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => fileRef.current?.click()}>
+          Change
+        </Button>
+        {hasAvatar && (
+          <button
+            type="button"
+            onClick={onRemove}
+            disabled={busy}
+            className="text-xs text-text-muted transition-colors hover:text-text-secondary disabled:opacity-60"
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPick}
+      />
+    </div>
+  );
+}
+
 function ProfileSection() {
   const displayName = useIdentityStore((s) => s.self?.displayName ?? "");
   const updateDisplayName = useIdentityStore((s) => s.updateDisplayName);
@@ -205,7 +283,10 @@ function ProfileSection() {
       <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
         Profile
       </p>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-3">
+        <AvatarSection />
+      </div>
+      <div className="mt-3 flex items-center gap-2">
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}

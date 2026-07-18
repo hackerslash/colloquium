@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import type { Presence } from "../../types/domain";
 import { cx } from "../../lib/cx";
+import { useAvatarStore } from "../../stores/useAvatarStore";
 
 type AvatarProps = {
   id: string;
@@ -48,18 +50,33 @@ function colorFor(id: string): string {
 
 export function Avatar({ id, name, size = "md", presence }: AvatarProps) {
   const s = SIZE[size];
+  const url = useAvatarStore((state) => state.urlById[id]);
+  useEffect(() => {
+    void useAvatarStore.getState().loadAvatar(id);
+  }, [id]);
+
   return (
     <span className={cx("relative inline-flex shrink-0", s.box)}>
-      <span
-        className={cx(
-          "flex h-full w-full items-center justify-center rounded-full font-semibold text-white",
-          s.text,
-        )}
-        style={{ backgroundColor: colorFor(id) }}
-        aria-hidden="true"
-      >
-        {initials(name)}
-      </span>
+      {url ? (
+        <img
+          src={url}
+          alt=""
+          className="h-full w-full rounded-full object-cover"
+          draggable={false}
+          aria-hidden="true"
+        />
+      ) : (
+        <span
+          className={cx(
+            "flex h-full w-full items-center justify-center rounded-full font-semibold text-white",
+            s.text,
+          )}
+          style={{ backgroundColor: colorFor(id) }}
+          aria-hidden="true"
+        >
+          {initials(name)}
+        </span>
+      )}
       {presence && (
         <span
           className={cx(

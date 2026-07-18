@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { Identity } from "../types/domain";
 import * as identityService from "../services/identity/identity";
 import * as identityRepo from "../services/db/identityRepo";
+import * as rosterService from "../services/roster/rosterService";
 
 export type BootStatus =
   | "idle"
@@ -90,5 +91,13 @@ export const useIdentityStore = create<IdentityState>((set, get) => ({
     set((state) => ({
       self: state.self ? { ...state.self, displayName } : state.self,
     }));
+    // Push the change to any online peer now instead of waiting for a
+    // reconnect. Best-effort: the bridge may not be running yet (onboarding).
+    const updated = get().self;
+    if (updated) {
+      void rosterService
+        .broadcastRosterSync(updated)
+        .catch((err) => console.error("failed to broadcast name change", err));
+    }
   },
 }));

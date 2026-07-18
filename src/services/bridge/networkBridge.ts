@@ -4,6 +4,7 @@ import { initPeerRegistry, getOutbox } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
 import * as messageRepo from "../db/messageRepo";
 import * as rosterService from "../roster/rosterService";
+import * as avatarService from "../avatar/avatarService";
 import * as friendRequestService from "../roster/friendRequestService";
 import * as rosterRepo from "../db/rosterRepo";
 import * as roomRepo from "../db/roomRepo";
@@ -14,6 +15,7 @@ import * as callService from "../call/callService";
 import * as roomCallService from "../call/roomCallService";
 import { getRoomCallPresenceTracker } from "../call/RoomCallPresenceTracker";
 import { useRosterStore } from "../../stores/useRosterStore";
+import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { notifyIfUnfocused } from "../notify";
@@ -67,31 +69,54 @@ export function initNetworkBridge(self: Identity): () => void {
   const registry = initPeerRegistry(self.identityId);
   let brokerUp = false;
 
+  // The bridge starts once with the boot-time identity, but the display name
+  // (and avatar) can change mid-session. Always read the live identity so a
+  // reconnect never re-announces a stale profile with a fresher LWW timestamp,
+  // which would clobber the correct name on a peer that already received it.
+  const getSelf = () => useIdentityStore.getState().self ?? self;
+
   function setPresence(contactId: string, presence: Presence) {
     useRosterStore.getState().setPresence(contactId, presence);
+  }
+
+  // Throttles the periodic "last seen" persistence for a peer that stays
+  // online, so the timestamp survives a force-quit without writing every tick.
+  const lastSeenPersist = new Map<string, number>();
+  function recordSeen(contactId: string, peerId: string) {
+    const now = Date.now();
+    lastSeenPersist.set(contactId, now);
+    useRosterStore.getState().noteSeen(contactId, now);
+    void rosterRepo
+      .markSeen(contactId, peerId, now)
+      .catch((err) => console.error("failed to record peer seen", peerId, err));
   }
 
   registry.on("peer-connected", (peerId) => {
     const contact = findContactByPeerId(peerId);
     if (contact) {
       setPresence(contact.identityId, "online");
-      void rosterRepo
-        .markSeen(contact.identityId, peerId, Date.now())
-        .catch((err) => console.error("failed to record peer seen", peerId, err));
-      void syncDmWith(self, contact.identityId, peerId).catch((err) =>
+      recordSeen(contact.identityId, peerId);
+      void syncDmWith(getSelf(), contact.identityId, peerId).catch((err) =>
         console.error("failed to sync DM with", peerId, err),
       );
       // Only ever share the roster with a peer we already trust — otherwise any
       // stranger who dials receives every contact's id, key, and display name.
       void rosterService
-        .sendRosterSync(self, peerId)
+        .sendRosterSync(getSelf(), peerId)
         .catch((err) => console.error("failed to send roster sync to", peerId, err));
+      void avatarService
+        .announceProfileTo(getSelf(), peerId)
+        .catch((err) => console.error("failed to announce profile to", peerId, err));
     }
   });
 
   registry.on("peer-disconnected", (peerId) => {
     const contact = findContactByPeerId(peerId);
-    if (contact) setPresence(contact.identityId, "offline");
+    if (contact) {
+      setPresence(contact.identityId, "offline");
+      // Record the session end too, so "last seen" reflects when they dropped.
+      recordSeen(contact.identityId, peerId);
+    }
   });
 
   registry.on("dial-failed", (peerId) => {
@@ -181,14 +206,23 @@ export function initNetworkBridge(self: Identity): () => void {
       case "invite_consume":
       case "invite_ack":
       case "roster_sync": {
-        await rosterService.handleIncomingMessage(self, peerId, data);
+        await rosterService.handleIncomingMessage(getSelf(), peerId, data);
         await useRosterStore.getState().loadRoster();
         // A newly-trusted contact needs its DM room and a backfill pass.
         const contact = findContactByPeerId(peerId);
-        if (contact) await syncDmWith(self, contact.identityId, peerId);
+        if (contact) await syncDmWith(getSelf(), contact.identityId, peerId);
         discover();
         break;
       }
+      case "profile_announce":
+        if (sender) await avatarService.handleProfileAnnounce(sender, peerId, msg);
+        break;
+      case "avatar_request":
+        await avatarService.handleAvatarRequest(getSelf(), peerId);
+        break;
+      case "avatar_data":
+        if (sender) await avatarService.handleAvatarData(sender, msg);
+        break;
       case "friend_request":
         await friendRequestService.handleFriendRequest(self, msg);
         break;
@@ -328,6 +362,10 @@ export function initNetworkBridge(self: Identity): () => void {
       // connection to them already opened, so this covers that case too.
       if (registry.isConnected(peerId)) {
         setPresence(contact.identityId, "online");
+        // Refresh "last seen" at most once a minute while they stay online, so
+        // an abrupt quit still leaves a recent timestamp.
+        const persistedAt = lastSeenPersist.get(contact.identityId) ?? 0;
+        if (Date.now() - persistedAt > 60_000) recordSeen(contact.identityId, peerId);
         continue;
       }
 
