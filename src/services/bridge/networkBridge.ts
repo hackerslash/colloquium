@@ -22,6 +22,7 @@ import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 import { playMessageSound } from "../sound";
+import { humanizeMentions, mentionsIdentity } from "../../lib/mentions";
 
 const DISCOVERY_INTERVAL_MS = 2_000;
 const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
@@ -31,7 +32,7 @@ const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
  * previews off, never leak content — just say a message arrived. */
 function messageNotificationBody(message: Message): string {
   if (!useSettingsStore.getState().notificationPreviews) return "New message";
-  if (message.body) return message.body;
+  if (message.body) return humanizeMentions(message.body);
   if (message.contentType === "image") return "Sent an image";
   if (message.contentType === "file") {
     return message.attachmentName ? `Sent a file: ${message.attachmentName}` : "Sent a file";
@@ -254,16 +255,27 @@ export function initNetworkBridge(self: Identity): () => void {
           ackMessage(peerId, stored.roomId, stored.id);
           useChatStore.getState().ingestMessage(stored);
           const isActive = markUnreadIfInactive(stored.roomId);
-          const author = useRosterStore.getState().contactsById[stored.authorId];
-          // Chime when the message lands outside the viewed room OR whenever
-          // an OS notification fired (the banner itself is silent) — otherwise
-          // an unfocused window with the room open notifies without a sound.
-          void notifyIfUnfocused(
-            author?.displayName ?? "New message",
-            messageNotificationBody(stored),
-          ).then((notified) => {
-            if (!isActive || notified) playMessageSound();
-          });
+          const mentioned = mentionsIdentity(stored.body, self.identityId);
+          const muted = !!useRoomStore.getState().mutedByRoom[stored.roomId];
+          // A muted room stays silent — no notification, sound, or badge —
+          // unless the message @-mentions you, which always pierces mute.
+          if (!muted || mentioned) {
+            const author = useRosterStore.getState().contactsById[stored.authorId];
+            const authorName = author?.displayName ?? "Someone";
+            const previews = useSettingsStore.getState().notificationPreviews;
+            const title = mentioned ? `${authorName} mentioned you` : authorName;
+            const body = previews
+              ? messageNotificationBody(stored)
+              : mentioned
+                ? "Mentioned you"
+                : "New message";
+            // Chime when the message lands outside the viewed room OR whenever
+            // an OS notification fired (the banner itself is silent) — otherwise
+            // an unfocused window with the room open notifies without a sound.
+            void notifyIfUnfocused(title, body).then((notified) => {
+              if (!isActive || notified) playMessageSound();
+            });
+          }
         }
         break;
       }

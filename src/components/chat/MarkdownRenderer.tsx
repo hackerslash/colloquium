@@ -1,19 +1,33 @@
 import React from "react";
 import { cx } from "../../lib/cx";
 
+/** Resolves a mentioned identityId to a display name (the viewer's own roster
+ * name for that id), or null when unknown. */
+type ResolveMention = (id: string) => string | null;
+
 type MarkdownRendererProps = {
   content: string;
   isOwn?: boolean;
   className?: string;
+  resolveMention?: ResolveMention;
+  /** The viewer's identityId — mentions of it render with stronger emphasis. */
+  selfId?: string;
 };
 
-/** Parses inline markdown syntax (bold, italic, strikethrough, code, links) */
-function parseInlineMarkdown(text: string, isOwn?: boolean): React.ReactNode[] {
+/** Parses inline markdown syntax (mentions, bold, italic, strikethrough, code, links) */
+function parseInlineMarkdown(
+  text: string,
+  isOwn?: boolean,
+  resolveMention?: ResolveMention,
+  selfId?: string,
+): React.ReactNode[] {
   const elements: React.ReactNode[] = [];
   let index = 0;
 
-  // Regex matches: inline code, bold (** or __), strikethrough (~~), italic (* or _), links (http/https)
-  const inlineRegex = /(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(~~[^~]+~~)|(\*[^*]+\*|_[^_]+_)|(https?:\/\/[^\s<]+)/g;
+  // Regex matches: mention token @[Name](id), inline code, bold (** or __),
+  // strikethrough (~~), italic (* or _), links (http/https). Mentions come
+  // first so an id's characters can't be misparsed as other inline syntax.
+  const inlineRegex = /(@\[[^\]\n]{1,64}\]\([A-Za-z0-9_-]{8,128}\))|(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(~~[^~]+~~)|(\*[^*]+\*|_[^_]+_)|(https?:\/\/[^\s<]+)/g;
 
   let match: RegExpExecArray | null;
   let lastIndex = 0;
@@ -26,7 +40,35 @@ function parseInlineMarkdown(text: string, isOwn?: boolean): React.ReactNode[] {
 
     const matchedStr = match[0];
 
-    if (matchedStr.startsWith("`") && matchedStr.endsWith("`")) {
+    if (matchedStr.startsWith("@[")) {
+      // Mention pill: @[Name](id). Label from the viewer's roster when known,
+      // else the embedded name. A mention of the viewer is emphasized.
+      const m = /^@\[([^\]\n]{1,64})\]\(([A-Za-z0-9_-]{8,128})\)$/.exec(matchedStr);
+      if (m) {
+        const [, embeddedName, id] = m;
+        const label = resolveMention?.(id) ?? embeddedName;
+        const isSelf = selfId != null && id === selfId;
+        elements.push(
+          <span
+            key={index++}
+            className={cx(
+              "rounded px-1 py-0.5 font-medium",
+              isSelf
+                ? isOwn
+                  ? "bg-white/25 text-white"
+                  : "bg-accent text-white"
+                : isOwn
+                  ? "bg-white/15 text-white"
+                  : "bg-accent/15 text-accent",
+            )}
+          >
+            @{label}
+          </span>,
+        );
+      } else {
+        elements.push(matchedStr);
+      }
+    } else if (matchedStr.startsWith("`") && matchedStr.endsWith("`")) {
       // Inline code
       const code = matchedStr.slice(1, -1);
       elements.push(
@@ -100,7 +142,7 @@ function parseInlineMarkdown(text: string, isOwn?: boolean): React.ReactNode[] {
   return elements;
 }
 
-export function MarkdownRenderer({ content, isOwn, className }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, isOwn, className, resolveMention, selfId }: MarkdownRendererProps) {
   if (!content) return null;
 
   // Split into code blocks vs standard text lines
@@ -114,7 +156,7 @@ export function MarkdownRenderer({ content, isOwn, className }: MarkdownRenderer
   while ((match = codeBlockRegex.exec(content)) !== null) {
     if (match.index > lastIdx) {
       const textChunk = content.substring(lastIdx, match.index);
-      blocks.push(renderTextParagraphs(textChunk, isOwn, key++));
+      blocks.push(renderTextParagraphs(textChunk, isOwn, key++, resolveMention, selfId));
     }
 
     const lang = match[1];
@@ -138,13 +180,19 @@ export function MarkdownRenderer({ content, isOwn, className }: MarkdownRenderer
 
   if (lastIdx < content.length) {
     const remainingText = content.substring(lastIdx);
-    blocks.push(renderTextParagraphs(remainingText, isOwn, key++));
+    blocks.push(renderTextParagraphs(remainingText, isOwn, key++, resolveMention, selfId));
   }
 
   return <div className={cx("space-y-1 select-text leading-relaxed", className)}>{blocks}</div>;
 }
 
-function renderTextParagraphs(text: string, isOwn?: boolean, blockKey?: number): React.ReactNode {
+function renderTextParagraphs(
+  text: string,
+  isOwn?: boolean,
+  blockKey?: number,
+  resolveMention?: ResolveMention,
+  selfId?: string,
+): React.ReactNode {
   const lines = text.split("\n");
   const parsedLines: React.ReactNode[] = [];
 
@@ -162,7 +210,7 @@ function renderTextParagraphs(text: string, isOwn?: boolean, blockKey?: number):
             isOwn ? "border-white/40 text-white/90" : "border-accent/60 text-text-secondary",
           )}
         >
-          {parseInlineMarkdown(quoteText, isOwn)}
+          {parseInlineMarkdown(quoteText, isOwn, resolveMention, selfId)}
         </blockquote>,
       );
     } else if (line.startsWith("- ") || line.startsWith("* ")) {
@@ -171,13 +219,13 @@ function renderTextParagraphs(text: string, isOwn?: boolean, blockKey?: number):
       parsedLines.push(
         <div key={i} className="flex items-start gap-2 pl-2">
           <span className="select-none text-accent">•</span>
-          <span className="flex-1">{parseInlineMarkdown(itemText, isOwn)}</span>
+          <span className="flex-1">{parseInlineMarkdown(itemText, isOwn, resolveMention, selfId)}</span>
         </div>,
       );
     } else {
       parsedLines.push(
         <React.Fragment key={i}>
-          {parseInlineMarkdown(line, isOwn)}
+          {parseInlineMarkdown(line, isOwn, resolveMention, selfId)}
           {i < lines.length - 1 && <br />}
         </React.Fragment>,
       );

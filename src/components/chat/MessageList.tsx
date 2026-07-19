@@ -12,6 +12,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
 import { EmojiPicker } from "./EmojiPicker";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { humanizeMentions } from "../../lib/mentions";
 import { cx } from "../../lib/cx";
 import * as fileRepo from "../../services/db/fileRepo";
 
@@ -192,7 +193,9 @@ const PICKER_H = 384;
 
 function snippetOf(message: Message | undefined): string {
   if (!message) return "Original message unavailable";
-  return message.body || message.attachmentName || "Attachment";
+  return message.body
+    ? humanizeMentions(message.body)
+    : message.attachmentName || "Attachment";
 }
 
 type MessageRowProps = {
@@ -340,7 +343,14 @@ const MessageRow = memo(function MessageRow({
                   : "bg-bg-elevated text-text-primary border border-border/50 rounded-r-2xl rounded-tl-2xl rounded-bl-sm",
               )}
             >
-              {message.body && <MarkdownRenderer content={message.body} isOwn={isOwn} />}
+              {message.body && (
+                <MarkdownRenderer
+                  content={message.body}
+                  isOwn={isOwn}
+                  resolveMention={nameOf}
+                  selfId={selfId}
+                />
+              )}
               {message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />}
             </div>
             <span
