@@ -31,14 +31,18 @@ async function ensurePermission(): Promise<boolean> {
 }
 
 /** Fires an OS notification only when the window isn't focused, so an active
- * user isn't double-notified for something already on screen. */
-export async function notifyIfUnfocused(title: string, body: string): Promise<void> {
+ * user isn't double-notified for something already on screen. Returns whether
+ * a notification was actually posted, so callers can pair side effects (e.g.
+ * an audible chime) with the moments the user is actually being alerted. */
+export async function notifyIfUnfocused(title: string, body: string): Promise<boolean> {
   try {
-    if (!useSettingsStore.getState().desktopNotifications) return;
-    if (await getCurrentWindow().isFocused()) return;
-    if (!(await ensurePermission())) return;
+    if (!useSettingsStore.getState().desktopNotifications) return false;
+    if (await getCurrentWindow().isFocused()) return false;
+    if (!(await ensurePermission())) return false;
     sendNotification({ title, body });
+    return true;
   } catch {
     // Notifications are best-effort; never let them break message handling.
+    return false;
   }
 }

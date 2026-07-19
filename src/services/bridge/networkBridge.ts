@@ -1,4 +1,4 @@
-import type { Identity, Presence } from "../../types/domain";
+import type { Identity, Message, Presence } from "../../types/domain";
 import type { HavenMessage, MsgAckMessage } from "../../types/wire";
 import { initPeerRegistry, getOutbox } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
@@ -18,11 +18,26 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useChatStore } from "../../stores/useChatStore";
 import { useTypingStore } from "../../stores/useTypingStore";
+import { useRoomCallStore } from "../../stores/useRoomCallStore";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 import { playMessageSound } from "../sound";
 
 const DISCOVERY_INTERVAL_MS = 2_000;
 const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
+
+/** Notification body for an incoming message. Attachment-only messages have a
+ * null body, so describe them instead of showing an empty banner; with
+ * previews off, never leak content — just say a message arrived. */
+function messageNotificationBody(message: Message): string {
+  if (!useSettingsStore.getState().notificationPreviews) return "New message";
+  if (message.body) return message.body;
+  if (message.contentType === "image") return "Sent an image";
+  if (message.contentType === "file") {
+    return message.attachmentName ? `Sent a file: ${message.attachmentName}` : "Sent a file";
+  }
+  return "New message";
+}
 
 function findContactByPeerId(peerId: string) {
   const contacts = Object.values(useRosterStore.getState().contactsById);
@@ -240,11 +255,15 @@ export function initNetworkBridge(self: Identity): () => void {
           useChatStore.getState().ingestMessage(stored);
           const isActive = markUnreadIfInactive(stored.roomId);
           const author = useRosterStore.getState().contactsById[stored.authorId];
+          // Chime when the message lands outside the viewed room OR whenever
+          // an OS notification fired (the banner itself is silent) — otherwise
+          // an unfocused window with the room open notifies without a sound.
           void notifyIfUnfocused(
             author?.displayName ?? "New message",
-            stored.body ?? "",
-          );
-          if (!isActive) playMessageSound();
+            messageNotificationBody(stored),
+          ).then((notified) => {
+            if (!isActive || notified) playMessageSound();
+          });
         }
         break;
       }
@@ -354,10 +373,26 @@ export function initNetworkBridge(self: Identity): () => void {
           await useRoomStore.getState().loadRooms();
         }
         break;
-      case "room_call_beacon":
-        getRoomCallPresenceTracker().applyBeacon(msg);
+      case "room_call_beacon": {
+        const tracker = getRoomCallPresenceTracker();
+        // A room going idle → active is the "call started" moment. Beacons
+        // repeat for the whole call, so only this transition notifies — and
+        // not when we're the ones in it (our own beacons don't route here,
+        // but peers' beacons about our call do).
+        const wasActive = tracker.activeParticipants(msg.roomId).length > 0;
+        tracker.applyBeacon(msg);
+        const nowActive = tracker.activeParticipants(msg.roomId).length > 0;
+        if (!wasActive && nowActive && useRoomCallStore.getState().roomId !== msg.roomId) {
+          const room = useRoomStore.getState().roomsById[msg.roomId];
+          if (room) {
+            const starter =
+              useRosterStore.getState().contactsById[msg.fromId]?.displayName ?? "Someone";
+            void notifyIfUnfocused(room.name ?? "Room call", `${starter} started a call`);
+          }
+        }
         roomCallService.handleRoomCallBeacon(self, msg);
         break;
+      }
       case "room_call_join":
         roomCallService.handleRoomCallJoin(self, msg);
         break;

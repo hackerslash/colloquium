@@ -316,6 +316,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setDesktopNotifications = useSettingsStore((s) => s.setDesktopNotifications);
   const notificationSounds = useSettingsStore((s) => s.notificationSounds);
   const setNotificationSounds = useSettingsStore((s) => s.setNotificationSounds);
+  const notificationPreviews = useSettingsStore((s) => s.notificationPreviews);
+  const setNotificationPreviews = useSettingsStore((s) => s.setNotificationPreviews);
   const noiseSuppression = useSettingsStore((s) => s.noiseSuppression);
   const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
@@ -393,13 +395,26 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <div>
               <p className="text-sm text-text-primary">Notification sounds</p>
               <p className="text-xs text-text-secondary">
-                Play a chime for new messages in rooms you're not viewing
+                Play a chime when a new message arrives outside the room you're viewing
               </p>
             </div>
             <Switch
               checked={notificationSounds}
               onChange={setNotificationSounds}
               aria-label="Notification sounds"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-text-primary">Message previews</p>
+              <p className="text-xs text-text-secondary">
+                Show message text in notifications; turn off to show only the sender's name
+              </p>
+            </div>
+            <Switch
+              checked={notificationPreviews}
+              onChange={setNotificationPreviews}
+              aria-label="Message previews"
             />
           </div>
         </div>

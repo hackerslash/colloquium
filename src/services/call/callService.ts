@@ -29,6 +29,7 @@ import { emitCallEvent } from "./callEvents";
 import { logCallDebug, trackDebugInfo } from "./callDebug";
 import { useCallStore } from "../../stores/useCallStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
+import { useRosterStore } from "../../stores/useRosterStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 import { toast } from "../../stores/useToastStore";
@@ -90,6 +91,10 @@ type CallContext = {
 let ctx: CallContext | null = null;
 /** Callee-side ring state (before any ctx exists). */
 let incomingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function displayNameOf(identityId: string): string {
+  return useRosterStore.getState().contactsById[identityId]?.displayName ?? "Someone";
+}
 
 function sendToRemote(remoteId: string, data: unknown) {
   getPeerRegistry().send(derivePeerId(remoteId), data);
@@ -928,7 +933,10 @@ export function handleCallInvite(self: Identity, msg: CallInviteMessage) {
     inviteId: msg.inviteId,
   } satisfies CallRingingMessage);
 
-  void notifyIfUnfocused("Incoming call", msg.withVideo ? "Video call" : "Voice call");
+  void notifyIfUnfocused(
+    displayNameOf(msg.fromId),
+    msg.withVideo ? "Incoming video call" : "Incoming voice call",
+  );
 
   clearIncomingTimer();
   incomingTimer = setTimeout(() => {
@@ -944,6 +952,9 @@ export function handleCallInvite(self: Identity, msg: CallInviteMessage) {
     } satisfies CallDeclineMessage);
     useCallStore.getState()._clear();
     emitCallEvent({ kind: "call-missed", remoteId: msg.fromId });
+    // The in-app toast covers a focused user; someone away from the machine
+    // only saw the transient "incoming call" banner, so leave a durable trace.
+    void notifyIfUnfocused("Missed call", `${displayNameOf(msg.fromId)} tried to call you`);
   }, RING_TIMEOUT_MS);
 }
 
@@ -995,7 +1006,10 @@ export function handleCallHangup(_self: Identity, msg: CallHangupMessage) {
   endCallLocal();
   if (msg.reason === "timeout") {
     // Caller gave up ringing us — that's a missed call on our side.
-    if (wasRinging) emitCallEvent({ kind: "call-missed", remoteId: msg.fromId });
+    if (wasRinging) {
+      emitCallEvent({ kind: "call-missed", remoteId: msg.fromId });
+      void notifyIfUnfocused("Missed call", `${displayNameOf(msg.fromId)} tried to call you`);
+    }
   } else {
     emitCallEvent({ kind: "call-ended", remoteId: msg.fromId });
   }

@@ -36,6 +36,9 @@ type SettingsState = {
   desktopNotifications: boolean;
   /** Play a chime for new messages arriving in a room you're not viewing. */
   notificationSounds: boolean;
+  /** Include the sender's message text in OS notifications. Off = a generic
+   * "New message" body, for shared/visible screens. */
+  notificationPreviews: boolean;
   /** Mic noise reduction: the built-in DSP plus ML (RNNoise) suppression,
    * gated together by this one toggle. */
   noiseSuppression: boolean;
@@ -59,6 +62,7 @@ type SettingsState = {
   setCloseToTray: (on: boolean) => Promise<void>;
   setDesktopNotifications: (on: boolean) => Promise<void>;
   setNotificationSounds: (on: boolean) => Promise<void>;
+  setNotificationPreviews: (on: boolean) => Promise<void>;
   setNoiseSuppression: (on: boolean) => Promise<void>;
   setEchoCancellation: (on: boolean) => Promise<void>;
   setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
@@ -122,6 +126,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   closeToTray: true,
   desktopNotifications: true,
   notificationSounds: true,
+  notificationPreviews: true,
   noiseSuppression: true,
   echoCancellation: true,
   audioInputDeviceId: null,
@@ -137,6 +142,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const closeToTray = (all.closeToTray as boolean) ?? true;
     const desktopNotifications = (all.desktopNotifications as boolean) ?? true;
     const notificationSounds = (all.notificationSounds as boolean) ?? true;
+    const notificationPreviews = (all.notificationPreviews as boolean) ?? true;
     const noiseSuppression = (all.noiseSuppression as boolean) ?? true;
     const echoCancellation = (all.echoCancellation as boolean) ?? true;
     const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
@@ -151,6 +157,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       closeToTray,
       desktopNotifications,
       notificationSounds,
+      notificationPreviews,
       noiseSuppression,
       echoCancellation,
       audioInputDeviceId,
@@ -238,6 +245,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch (err) {
       console.error("Failed to save notification sounds setting:", err);
       set({ notificationSounds: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setNotificationPreviews: async (on) => {
+    const previous = get().notificationPreviews;
+    set({ notificationPreviews: on });
+    try {
+      await settingsRepo.set("notificationPreviews", on);
+    } catch (err) {
+      console.error("Failed to save notification previews setting:", err);
+      set({ notificationPreviews: previous });
       toast.error("Setting not saved", "Please try again.");
     }
   },
