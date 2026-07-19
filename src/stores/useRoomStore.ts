@@ -96,9 +96,11 @@ export const useRoomStore = create<RoomState>((set, get) => ({
       const lastReadAt = get().lastReadAtByRoom[id] ?? 0;
       set((s) => ({
         activeRoomId: id,
+        // Recapture on every open: the banner must reflect what was unread for
+        // THIS visit, not a snapshot from the first time the room was opened.
         roomSessionState: {
           ...s.roomSessionState,
-          [id]: s.roomSessionState[id] ?? { initialUnread: unread, lastReadAt },
+          [id]: { initialUnread: unread, lastReadAt },
         },
       }));
       void get().markRead(id);
