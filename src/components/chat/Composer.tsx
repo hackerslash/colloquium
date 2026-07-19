@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Bold, Code, Italic, Paperclip, Quote, Reply, SendHorizontal, Smile, Strikethrough, Plus, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { IconButton } from "../ui/IconButton";
@@ -15,12 +15,34 @@ type ComposerProps = {
   onCancelReply?: () => void;
 };
 
-export function Composer({ value, placeholder, onChange, onSend, replyingTo, onCancelReply }: ComposerProps) {
+/** Lets a parent (the drag-and-drop zone around the whole chat window) hand
+ * a dropped file to the composer as if it had been picked via the file input. */
+export type ComposerHandle = {
+  acceptFile: (file: File) => void;
+};
+
+export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
+  { value, placeholder, onChange, onSend, replyingTo, onCancelReply },
+  ref,
+) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [sending, setSending] = useState(false);
+
+  const acceptFile = useCallback((file: File) => {
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error(
+        "File too large",
+        `Attachments are limited to ${Math.round(MAX_FILE_SIZE / (1024 * 1024))} MB.`,
+      );
+      return;
+    }
+    setSelectedFile(file);
+  }, []);
+
+  useImperativeHandle(ref, () => ({ acceptFile }), [acceptFile]);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -177,16 +199,7 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) {
-                if (file.size > MAX_FILE_SIZE) {
-                  toast.error(
-                    "File too large",
-                    `Attachments are limited to ${Math.round(MAX_FILE_SIZE / (1024 * 1024))} MB.`,
-                  );
-                } else {
-                  setSelectedFile(file);
-                }
-              }
+              if (file) acceptFile(file);
               if (fileInputRef.current) fileInputRef.current.value = "";
             }}
           />
@@ -288,4 +301,4 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
       </div>
     </div>
   );
-}
+});

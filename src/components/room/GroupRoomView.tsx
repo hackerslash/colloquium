@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Hash, Phone } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
@@ -7,7 +7,8 @@ import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { MessageList } from "../chat/MessageList";
-import { Composer } from "../chat/Composer";
+import { Composer, type ComposerHandle } from "../chat/Composer";
+import { DropZone } from "../chat/DropZone";
 import { TypingIndicator } from "../chat/TypingIndicator";
 import { notifyTyping, stopTyping } from "../../services/room/typingService";
 import { Badge } from "../ui/Badge";
@@ -41,6 +42,7 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
 
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [membersOpen, setMembersOpen] = useState(false);
+  const composerRef = useRef<ComposerHandle>(null);
 
   const inThisCall = callRoomId === roomId;
   const inAnotherCall = callRoomId !== null && callRoomId !== roomId;
@@ -87,7 +89,7 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <DropZone onFileDrop={(file) => composerRef.current?.acceptFile(file)}>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
         <button
           type="button"
@@ -133,6 +135,7 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
       <MessageList messages={messages} roomId={roomId} memberIds={memberIds} />
       <TypingIndicator roomId={roomId} />
       <Composer
+        ref={composerRef}
         value={draft}
         placeholder={`Message ${room.name ?? "the room"}`}
         replyingTo={
@@ -160,6 +163,6 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         roomId={roomId}
         onLeft={() => onLeft?.()}
       />
-    </div>
+    </DropZone>
   );
 }
