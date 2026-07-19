@@ -123,9 +123,12 @@ async fn encrypt_plaintext(
     let _ = std::fs::remove_file(tmp);
 
     // Unkeyed connection reads the plaintext DB (SQLCipher with no key behaves
-    // as stock SQLite) and folds in any WAL.
+    // as stock SQLite) and folds in any WAL. `create_if_missing` grants this
+    // connection SQLITE_OPEN_CREATE, which ATTACH inherits — without it the
+    // `ATTACH … enc-tmp` below can't create the new file and fails CANTOPEN.
     let mut conn = SqliteConnectOptions::new()
         .filename(db)
+        .create_if_missing(true)
         .connect()
         .await
         .map_err(|e| format!("open plaintext db: {e}"))?;
