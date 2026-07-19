@@ -503,9 +503,19 @@ type MessageListProps = {
   roomId?: string;
   /** Current room members — recipients for reaction broadcasts. */
   memberIds?: string[];
+  /** A message to scroll to and highlight (e.g. from search); cleared via
+   * onJumpConsumed once the target is in the DOM. */
+  jumpToMessageId?: string | null;
+  onJumpConsumed?: () => void;
 };
 
-export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
+export function MessageList({
+  messages,
+  roomId,
+  memberIds,
+  jumpToMessageId,
+  onJumpConsumed,
+}: MessageListProps) {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const sessionState = useRoomStore((s) => (roomId ? s.roomSessionState[roomId] : undefined));
@@ -684,6 +694,16 @@ export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
       1500,
     );
   }, []);
+
+  // Jump-to-message (from search): once the target row is in the DOM, stop the
+  // room-open scroll stabilizer from fighting us, then scroll + highlight it.
+  useEffect(() => {
+    if (!jumpToMessageId) return;
+    if (!document.getElementById(`msg-${jumpToMessageId}`)) return;
+    isStabilizingRef.current = false;
+    handleQuoteClick(jumpToMessageId);
+    onJumpConsumed?.();
+  }, [messages, jumpToMessageId, handleQuoteClick, onJumpConsumed]);
 
   if (messages === undefined) {
     return (

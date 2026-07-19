@@ -29,9 +29,10 @@ function isTypingTarget(el: EventTarget | null): boolean {
 
 type Options = {
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
 };
 
-export function useGlobalShortcuts({ onOpenSettings }: Options) {
+export function useGlobalShortcuts({ onOpenSettings, onOpenSearch }: Options) {
   const pushToTalk = useSettingsStore((s) => s.pushToTalk);
 
   // In-app (DOM) shortcuts.
@@ -43,6 +44,11 @@ export function useGlobalShortcuts({ onOpenSettings }: Options) {
         onOpenSettings();
         return;
       }
+      if (mod && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        onOpenSearch();
+        return;
+      }
       // Mute toggle with "m" while in a call and not typing.
       if (!mod && (e.key === "m" || e.key === "M") && anyCallActive() && !isTypingTarget(e.target)) {
         e.preventDefault();
@@ -52,7 +58,7 @@ export function useGlobalShortcuts({ onOpenSettings }: Options) {
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onOpenSettings]);
+  }, [onOpenSettings, onOpenSearch]);
 
   // OS-level push-to-talk: hold to unmute, release to mute — works even when
   // the window is unfocused. Registered only while the setting is enabled.

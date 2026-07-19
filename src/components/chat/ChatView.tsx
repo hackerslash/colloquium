@@ -26,9 +26,11 @@ const PRESENCE_LABEL: Record<Presence, string> = {
 
 type ChatViewProps = {
   contactId: string;
+  jumpToMessageId?: string | null;
+  onJumpConsumed?: () => void;
 };
 
-export function ChatView({ contactId }: ChatViewProps) {
+export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatViewProps) {
   const self = useIdentityStore((s) => s.self);
   const contact = useRosterStore((s) => s.contactsById[contactId]);
   const presence = useRosterStore((s) => s.presenceById[contactId]) ?? "offline";
@@ -141,7 +143,13 @@ export function ChatView({ contactId }: ChatViewProps) {
           />
         </div>
       </header>
-      <MessageList messages={messages} roomId={roomId ?? undefined} memberIds={[contactId]} />
+      <MessageList
+        messages={messages}
+        roomId={roomId ?? undefined}
+        memberIds={[contactId]}
+        jumpToMessageId={jumpToMessageId}
+        onJumpConsumed={onJumpConsumed}
+      />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}

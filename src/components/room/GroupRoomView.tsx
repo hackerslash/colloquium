@@ -20,9 +20,11 @@ import { toast } from "../../stores/useToastStore";
 type GroupRoomViewProps = {
   roomId: string;
   onLeft?: () => void;
+  jumpToMessageId?: string | null;
+  onJumpConsumed?: () => void;
 };
 
-export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
+export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed }: GroupRoomViewProps) {
   const self = useIdentityStore((s) => s.self);
   const room = useRoomStore((s) => s.roomsById[roomId]);
   const setActiveRoom = useRoomStore((s) => s.setActiveRoom);
@@ -148,7 +150,13 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         </div>
       </header>
 
-      <MessageList messages={messages} roomId={roomId} memberIds={memberIds} />
+      <MessageList
+        messages={messages}
+        roomId={roomId}
+        memberIds={memberIds}
+        jumpToMessageId={jumpToMessageId}
+        onJumpConsumed={onJumpConsumed}
+      />
       <TypingIndicator roomId={roomId} />
       <Composer
         value={draft}

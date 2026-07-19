@@ -12,6 +12,7 @@ import { CreateGroupModal } from "../room/CreateGroupModal";
 import { CallOverlay } from "../call/CallOverlay";
 import { RoomCallWindow } from "../call/RoomCallWindow";
 import { SettingsModal } from "../settings/SettingsModal";
+import { SearchModal } from "../search/SearchModal";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
 let bridgeStarted = false;
@@ -28,11 +29,28 @@ export function MainShell() {
   const loadMuted = useRoomStore((s) => s.loadMuted);
   const markRead = useRoomStore((s) => s.markRead);
   const activeRoomId = useRoomStore((s) => s.activeRoomId);
+  const roomsById = useRoomStore((s) => s.roomsById);
+  const dmRoomIdByContact = useRosterStore((s) => s.dmRoomIdByContact);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [jumpTarget, setJumpTarget] = useState<{ key: string; messageId: string } | null>(null);
 
-  useGlobalShortcuts({ onOpenSettings: () => setSettingsOpen(true) });
+  useGlobalShortcuts({
+    onOpenSettings: () => setSettingsOpen(true),
+    onOpenSearch: () => setSearchOpen(true),
+  });
+
+  function selectionForRoom(roomId: string): Selection | null {
+    if (roomsById[roomId]?.type === "group") return { kind: "group", roomId };
+    const dm = Object.entries(dmRoomIdByContact).find(([, rid]) => rid === roomId);
+    return dm ? { kind: "dm", contactId: dm[0] } : null;
+  }
+
+  function jumpFor(sel: Selection): string | null {
+    return jumpTarget && jumpTarget.key === selectionKey(sel) ? jumpTarget.messageId : null;
+  }
 
   useEffect(() => {
     void loadRoster();
@@ -74,9 +92,18 @@ export function MainShell() {
             className="flex min-h-0 flex-1 flex-col"
           >
             {selection.kind === "dm" ? (
-              <ChatView contactId={selection.contactId} />
+              <ChatView
+                contactId={selection.contactId}
+                jumpToMessageId={jumpFor(selection)}
+                onJumpConsumed={() => setJumpTarget(null)}
+              />
             ) : selection.kind === "group" ? (
-              <GroupRoomView roomId={selection.roomId} onLeft={() => setSelection({ kind: "home" })} />
+              <GroupRoomView
+                roomId={selection.roomId}
+                onLeft={() => setSelection({ kind: "home" })}
+                jumpToMessageId={jumpFor(selection)}
+                onJumpConsumed={() => setJumpTarget(null)}
+              />
             ) : (
               <div className="flex-1 overflow-y-auto">
                 <HomeView />
@@ -95,6 +122,16 @@ export function MainShell() {
         }}
       />
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SearchModal
+        open={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onPick={(roomId, messageId) => {
+          const sel = selectionForRoom(roomId);
+          if (!sel) return;
+          setSelection(sel);
+          setJumpTarget({ key: selectionKey(sel), messageId });
+        }}
+      />
       <CallOverlay />
       <RoomCallWindow />
     </div>
