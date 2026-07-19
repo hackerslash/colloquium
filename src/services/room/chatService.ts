@@ -2,6 +2,8 @@ import type { Identity, Message, Reaction } from "../../types/domain";
 import type {
   ChatMessageMessage,
   ChatMessageWire,
+  MsgDeleteMessage,
+  MsgEditMessage,
   ReactionMessage,
   ReadReceiptMessage,
   RoomSyncRequestMessage,
@@ -214,7 +216,31 @@ export async function sendMessage(
   return message;
 }
 
-async function verifyAndStore(wire: ChatMessageWire, physicalNow: number, selfId: string): Promise<Message | null> {
+/** Result of ingesting a chat message wire: `new` = first time we've stored
+ * it; `updated` = an edit/tombstone applied to a row we already held;
+ * `known` = nothing changed (already have this exact state). */
+export type StoreResult = { message: Message; status: "new" | "updated" | "known" };
+
+/** Fields a tombstone clears, applied to a Message for the in-memory echo. */
+function tombstoned(m: Message, deletedAt: number, sig: string): Message {
+  return {
+    ...m,
+    body: null,
+    attachmentId: undefined,
+    attachmentName: undefined,
+    attachmentSize: undefined,
+    attachmentType: undefined,
+    editedAt: null,
+    deletedAt,
+    sig,
+  };
+}
+
+async function verifyAndStore(
+  wire: ChatMessageWire,
+  physicalNow: number,
+  selfId: string,
+): Promise<StoreResult | null> {
   const contact = await rosterRepo.getContact(wire.authorId);
   if (!contact) return null; // never store messages from untrusted identities
 
@@ -227,6 +253,8 @@ async function verifyAndStore(wire: ChatMessageWire, physicalNow: number, selfId
     if (wire.roomId !== expected) return null;
   }
 
+  // The signature covers body/editedAt/deletedAt, so it validates whatever
+  // edited/tombstoned state this wire carries against the author's key.
   const valid = await identityService.verify(
     contact.publicKey,
     utf8ToBase64(canonicalMessage(wire)),
@@ -239,16 +267,201 @@ async function verifyAndStore(wire: ChatMessageWire, physicalNow: number, selfId
 
   const message = wireToMessage(wire, "delivered");
   const inserted = await messageRepo.insertIfAbsent(message);
-  if (inserted) await roomRepo.touchLastMessage(message.roomId, message.sentAt);
-  return inserted ? message : null;
+  if (inserted) {
+    await roomRepo.touchLastMessage(message.roomId, message.sentAt);
+    return { message, status: "new" };
+  }
+
+  // A row with this (room, author, seq) already exists. If this wire is a
+  // newer edit or a tombstone of that same message, converge to it — this is
+  // how offline edits/deletes propagate (they ride along in sync responses,
+  // which resend the whole row rather than only seq-gap-new messages).
+  const existing = await messageRepo.getById(wire.id);
+  if (
+    !existing ||
+    existing.authorId !== wire.authorId ||
+    existing.authorSeq !== wire.authorSeq ||
+    existing.roomId !== wire.roomId
+  ) {
+    // The conflict was on (room, author, seq) but the id doesn't resolve to a
+    // matching row — an unrelated/spoofed id. Never mutate a mismatched row.
+    return existing ? { message: existing, status: "known" } : null;
+  }
+  if (wire.deletedAt && !existing.deletedAt) {
+    await messageRepo.applyDelete(wire.id, wire.deletedAt, wire.sig);
+    if (existing.attachmentId) await fileRepo.deleteFile(existing.attachmentId);
+    return { message: tombstoned(existing, wire.deletedAt, wire.sig), status: "updated" };
+  }
+  if (wire.editedAt && wire.editedAt > (existing.editedAt ?? 0) && !existing.deletedAt) {
+    const ok = await messageRepo.applyEdit(wire.id, wire.body ?? "", wire.editedAt, wire.sig);
+    if (ok) {
+      return {
+        message: { ...existing, body: wire.body, editedAt: wire.editedAt, sig: wire.sig },
+        status: "updated",
+      };
+    }
+  }
+  return { message: existing, status: "known" };
 }
 
 export async function handleChatMessage(
   self: Identity,
   msg: ChatMessageMessage,
   physicalNow: number,
-): Promise<Message | null> {
+): Promise<StoreResult | null> {
   return verifyAndStore(msg.message, physicalNow, self.identityId);
+}
+
+// --- Edit & delete ---
+
+/** Defensive cap on an edited body. Normal sends aren't length-bounded, so
+ * this is only an anti-abuse ceiling on a peer-supplied edit, well above any
+ * realistic message. */
+const MAX_EDIT_BODY_LEN = 64 * 1024;
+
+/** Canonical (pre-signature) form of an edited message. Sender and receiver
+ * MUST build this identically from the stored row so the signature verifies. */
+function editCanonicalBase(m: Message, body: string, editedAt: number): Omit<ChatMessageWire, "sig"> {
+  return {
+    id: m.id,
+    roomId: m.roomId,
+    authorId: m.authorId,
+    authorSeq: m.authorSeq,
+    hlc: m.hlc,
+    contentType: m.contentType,
+    body,
+    attachmentId: m.attachmentId,
+    attachmentName: m.attachmentName,
+    attachmentSize: m.attachmentSize,
+    attachmentType: m.attachmentType,
+    replyToId: m.replyToId,
+    sentAt: m.sentAt,
+    editedAt,
+    deletedAt: null,
+  };
+}
+
+/** Canonical form of a tombstone: body and attachments nulled, editedAt null. */
+function deleteCanonicalBase(m: Message, deletedAt: number): Omit<ChatMessageWire, "sig"> {
+  return {
+    id: m.id,
+    roomId: m.roomId,
+    authorId: m.authorId,
+    authorSeq: m.authorSeq,
+    hlc: m.hlc,
+    contentType: m.contentType,
+    body: null,
+    attachmentId: undefined,
+    attachmentName: undefined,
+    attachmentSize: undefined,
+    attachmentType: undefined,
+    replyToId: m.replyToId,
+    sentAt: m.sentAt,
+    editedAt: null,
+    deletedAt,
+  };
+}
+
+/** Edits one of our own text messages: re-signs the new body, applies it
+ * locally, and broadcasts a signed edit. Offline members converge later via
+ * the mutated-row ride-along in room sync. Returns the updated message for the
+ * local echo, or null if the edit is disallowed / a no-op. */
+export async function sendEdit(
+  self: Identity,
+  roomId: string,
+  memberIds: string[],
+  messageId: string,
+  newBody: string,
+  physicalNow: number,
+): Promise<Message | null> {
+  const existing = await messageRepo.getById(messageId);
+  if (!existing || existing.authorId !== self.identityId) return null;
+  if (existing.contentType !== "text" || existing.deletedAt) return null;
+  if (newBody === existing.body || !newBody.trim()) return null;
+  // Strictly greater than any prior editedAt so the monotonic guard on the
+  // receiver always accepts it, even if the wall clock didn't advance.
+  const editedAt = Math.max(physicalNow, (existing.editedAt ?? 0) + 1);
+  const base = editCanonicalBase(existing, newBody, editedAt);
+  const sig = await identityService.sign(utf8ToBase64(canonicalMessage(base)));
+  const applied = await messageRepo.applyEdit(messageId, newBody, editedAt, sig);
+  if (!applied) return null;
+  const payload: MsgEditMessage = { type: "msg_edit", roomId, messageId, body: newBody, editedAt, sig };
+  broadcastToRoomMembers(memberIds.filter((id) => id !== self.identityId), payload);
+  return { ...existing, body: newBody, editedAt, sig };
+}
+
+/** Deletes one of our own messages (any type): tombstones locally, drops any
+ * attachment blob, and broadcasts a signed tombstone. */
+export async function sendDelete(
+  self: Identity,
+  roomId: string,
+  memberIds: string[],
+  messageId: string,
+  physicalNow: number,
+): Promise<Message | null> {
+  const existing = await messageRepo.getById(messageId);
+  if (!existing || existing.authorId !== self.identityId || existing.deletedAt) return null;
+  const deletedAt = Math.max(physicalNow, (existing.editedAt ?? 0) + 1, existing.sentAt + 1);
+  const base = deleteCanonicalBase(existing, deletedAt);
+  const sig = await identityService.sign(utf8ToBase64(canonicalMessage(base)));
+  const applied = await messageRepo.applyDelete(messageId, deletedAt, sig);
+  if (!applied) return null;
+  if (existing.attachmentId) await fileRepo.deleteFile(existing.attachmentId);
+  const payload: MsgDeleteMessage = { type: "msg_delete", roomId, messageId, deletedAt, sig };
+  broadcastToRoomMembers(memberIds.filter((id) => id !== self.identityId), payload);
+  return tombstoned(existing, deletedAt, sig);
+}
+
+/** Applies a peer's signed edit. Author-only (bound to the authenticated
+ * sender AND verified against that contact's key), monotonic, never revives a
+ * tombstone. Returns the updated message, or null (ignored / not yet held —
+ * a later sync converges it). */
+export async function handleEdit(
+  self: Identity,
+  senderId: string,
+  msg: MsgEditMessage,
+): Promise<Message | null> {
+  const existing = await messageRepo.getById(msg.messageId);
+  if (!existing || existing.roomId !== msg.roomId) return null;
+  if (existing.authorId !== senderId || existing.deletedAt) return null;
+  if (!(msg.editedAt > (existing.editedAt ?? 0))) return null;
+  if (typeof msg.body !== "string" || msg.body.length > MAX_EDIT_BODY_LEN) return null;
+  if (msg.roomId.startsWith("dm_")) {
+    const expected = await dmRoomId(self.identityId, senderId);
+    if (msg.roomId !== expected) return null;
+  }
+  const contact = await rosterRepo.getContact(senderId);
+  if (!contact) return null;
+  const base = editCanonicalBase(existing, msg.body, msg.editedAt);
+  const valid = await identityService.verify(contact.publicKey, utf8ToBase64(canonicalMessage(base)), msg.sig);
+  if (!valid) return null;
+  const applied = await messageRepo.applyEdit(msg.messageId, msg.body, msg.editedAt, msg.sig);
+  if (!applied) return null;
+  return { ...existing, body: msg.body, editedAt: msg.editedAt, sig: msg.sig };
+}
+
+/** Applies a peer's signed tombstone. Same author-only + signature checks. */
+export async function handleDelete(
+  self: Identity,
+  senderId: string,
+  msg: MsgDeleteMessage,
+): Promise<Message | null> {
+  const existing = await messageRepo.getById(msg.messageId);
+  if (!existing || existing.roomId !== msg.roomId) return null;
+  if (existing.authorId !== senderId || existing.deletedAt) return null;
+  if (msg.roomId.startsWith("dm_")) {
+    const expected = await dmRoomId(self.identityId, senderId);
+    if (msg.roomId !== expected) return null;
+  }
+  const contact = await rosterRepo.getContact(senderId);
+  if (!contact) return null;
+  const base = deleteCanonicalBase(existing, msg.deletedAt);
+  const valid = await identityService.verify(contact.publicKey, utf8ToBase64(canonicalMessage(base)), msg.sig);
+  if (!valid) return null;
+  const applied = await messageRepo.applyDelete(msg.messageId, msg.deletedAt, msg.sig);
+  if (!applied) return null;
+  if (existing.attachmentId) await fileRepo.deleteFile(existing.attachmentId);
+  return tombstoned(existing, msg.deletedAt, msg.sig);
 }
 
 /** Tells each author whose messages our read cursor covers that we've seen
@@ -449,13 +662,21 @@ export async function handleRoomSyncRequest(
     : 0;
 
   const missing = await messageRepo.messagesSince(msg.roomId, msg.have);
+  // Edited/tombstoned rows ride along even if the requester already has them
+  // by seq — seq-gap sync would otherwise never resend a message whose body
+  // changed after they received it. Each row is self-signed, so relaying
+  // another author's mutation is as safe as relaying their original message.
+  const mutated = await messageRepo.mutatedMessages(msg.roomId);
+  const byId = new Map<string, Message>();
+  for (const m of missing) byId.set(m.id, m);
+  for (const m of mutated) byId.set(m.id, m);
   // Reactions always ride along as our full current set — an empty set still
   // needs to be sent so a reaction we removed while they were offline clears.
   const ownReactions = await reactionRepo.listByAuthor(msg.roomId, selfId);
   const response: RoomSyncResponseMessage = {
     type: "room_sync_response",
     roomId: msg.roomId,
-    messages: missing.map(messageToWire),
+    messages: [...byId.values()].map(messageToWire),
     reactions: ownReactions.map((r) => ({
       messageId: r.messageId,
       emoji: r.emoji,
@@ -471,11 +692,14 @@ export async function handleRoomSyncResponse(
   senderId: string,
   msg: RoomSyncResponseMessage,
   physicalNow: number,
-): Promise<Message[]> {
-  const stored: Message[] = [];
+): Promise<{ created: Message[]; updated: Message[] }> {
+  const created: Message[] = [];
+  const updated: Message[] = [];
   for (const wire of msg.messages) {
-    const m = await verifyAndStore(wire, physicalNow, self.identityId);
-    if (m) stored.push(m);
+    const r = await verifyAndStore(wire, physicalNow, self.identityId);
+    if (!r) continue;
+    if (r.status === "new") created.push(r.message);
+    else if (r.status === "updated") updated.push(r.message);
   }
 
   // The reaction set is attributed to the responder — same DM guard as
@@ -498,7 +722,7 @@ export async function handleRoomSyncResponse(
       await reactionRepo.replaceForAuthor(msg.roomId, senderId, sane);
     }
   }
-  return stored;
+  return { created, updated };
 }
 
 /** Sends our `have` vector for a room so the peer backfills anything we're

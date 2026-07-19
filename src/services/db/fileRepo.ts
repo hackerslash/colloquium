@@ -28,6 +28,13 @@ export async function fileExists(id: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Removes an attachment blob — used when its message is deleted. Attachment
+ * ids are per-message UUIDs (never shared between messages), so this is safe. */
+export async function deleteFile(id: string): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM files WHERE id = ?1", [id]);
+}
+
 export async function getFile(id: string): Promise<FileRecord | null> {
   const db = await getDb();
   const rows = await db.select<any[]>("SELECT * FROM files WHERE id = ?1", [id]);

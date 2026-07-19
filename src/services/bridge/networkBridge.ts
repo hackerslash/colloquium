@@ -250,32 +250,43 @@ export function initNetworkBridge(self: Identity): () => void {
         await chatService.handleFileChunk(msg);
         break;
       case "chat_message": {
-        const stored = await chatService.handleChatMessage(self, msg, Date.now());
-        if (stored) {
-          ackMessage(peerId, stored.roomId, stored.id);
-          useChatStore.getState().ingestMessage(stored);
-          const isActive = markUnreadIfInactive(stored.roomId);
-          const mentioned = mentionsIdentity(stored.body, self.identityId);
-          const muted = !!useRoomStore.getState().mutedByRoom[stored.roomId];
-          // A muted room stays silent — no notification, sound, or badge —
-          // unless the message @-mentions you, which always pierces mute.
-          if (!muted || mentioned) {
-            const author = useRosterStore.getState().contactsById[stored.authorId];
-            const authorName = author?.displayName ?? "Someone";
-            const previews = useSettingsStore.getState().notificationPreviews;
-            const title = mentioned ? `${authorName} mentioned you` : authorName;
-            const body = previews
-              ? messageNotificationBody(stored)
-              : mentioned
-                ? "Mentioned you"
-                : "New message";
-            // Chime when the message lands outside the viewed room OR whenever
-            // an OS notification fired (the banner itself is silent) — otherwise
-            // an unfocused window with the room open notifies without a sound.
-            void notifyIfUnfocused(title, body).then((notified) => {
-              if (!isActive || notified) playMessageSound();
-            });
-          }
+        const result = await chatService.handleChatMessage(self, msg, Date.now());
+        if (!result) break;
+        const stored = result.message;
+        // Ack regardless of status — it's an idempotent delivery receipt.
+        ackMessage(peerId, stored.roomId, stored.id);
+        if (result.status === "updated") {
+          // A live edit/tombstone of a message we already held — reflect it,
+          // never notify, and recount unread (tombstones drop out).
+          useChatStore.getState().applyMessageUpdate(stored);
+          if (stored.deletedAt) void useRoomStore.getState().loadUnread();
+          break;
+        }
+        if (result.status === "known") break;
+
+        // status === "new"
+        useChatStore.getState().ingestMessage(stored);
+        const isActive = markUnreadIfInactive(stored.roomId);
+        const mentioned = mentionsIdentity(stored.body, self.identityId);
+        const muted = !!useRoomStore.getState().mutedByRoom[stored.roomId];
+        // A muted room stays silent — no notification, sound, or badge —
+        // unless the message @-mentions you, which always pierces mute.
+        if (!muted || mentioned) {
+          const author = useRosterStore.getState().contactsById[stored.authorId];
+          const authorName = author?.displayName ?? "Someone";
+          const previews = useSettingsStore.getState().notificationPreviews;
+          const title = mentioned ? `${authorName} mentioned you` : authorName;
+          const body = previews
+            ? messageNotificationBody(stored)
+            : mentioned
+              ? "Mentioned you"
+              : "New message";
+          // Chime when the message lands outside the viewed room OR whenever
+          // an OS notification fired (the banner itself is silent) — otherwise
+          // an unfocused window with the room open notifies without a sound.
+          void notifyIfUnfocused(title, body).then((notified) => {
+            if (!isActive || notified) playMessageSound();
+          });
         }
         break;
       }
@@ -283,6 +294,23 @@ export function initNetworkBridge(self: Identity): () => void {
         if (!sender) break;
         const reaction = await chatService.handleReaction(self.identityId, sender.identityId, msg);
         if (reaction) useChatStore.getState().ingestReaction(reaction, msg.op);
+        break;
+      }
+      case "msg_edit": {
+        if (!sender) break;
+        const updated = await chatService.handleEdit(self, sender.identityId, msg);
+        if (updated) useChatStore.getState().applyMessageUpdate(updated);
+        break;
+      }
+      case "msg_delete": {
+        if (!sender) break;
+        const updated = await chatService.handleDelete(self, sender.identityId, msg);
+        if (updated) {
+          useChatStore.getState().applyMessageUpdate(updated);
+          // A deleted message no longer counts as unread (the DB query excludes
+          // tombstones); recompute so the sidebar/badge drop it.
+          void useRoomStore.getState().loadUnread();
+        }
         break;
       }
       case "msg_ack":
@@ -318,24 +346,30 @@ export function initNetworkBridge(self: Identity): () => void {
       }
       case "room_sync_response": {
         if (!sender) break;
-        const stored = await chatService.handleRoomSyncResponse(
+        const { created, updated } = await chatService.handleRoomSyncResponse(
           self,
           sender.identityId,
           msg,
           Date.now(),
         );
         // Single merge + one room-list refresh for the whole backfill.
-        useChatStore.getState().ingestMessages(stored);
+        useChatStore.getState().ingestMessages(created);
+        // Edits/tombstones that arrived for messages we already held.
+        for (const m of updated) useChatStore.getState().applyMessageUpdate(m);
         await useChatStore.getState().refreshReactions(msg.roomId);
         const backfillByRoom = new Map<string, number>();
-        for (const m of stored) {
+        for (const m of created) {
           // Ack the author directly (best effort) — the relaying peer isn't
           // necessarily who wrote the message.
           ackMessage(derivePeerId(m.authorId), m.roomId, m.id);
+          // Tombstones backfilled as new rows shouldn't inflate unread.
+          if (m.deletedAt) continue;
           backfillByRoom.set(m.roomId, (backfillByRoom.get(m.roomId) ?? 0) + 1);
         }
         // Backfilled messages count as unread but don't fire a notification.
         for (const [roomId, count] of backfillByRoom) markUnreadIfInactive(roomId, count);
+        // A backfilled tombstone can drop a previously-counted unread.
+        if (updated.some((m) => m.deletedAt)) void useRoomStore.getState().loadUnread();
         break;
       }
       case "call_invite":

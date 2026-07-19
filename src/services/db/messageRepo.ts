@@ -95,6 +95,62 @@ export async function setDeliveryStatus(
   await db.execute("UPDATE messages SET delivery_status = $1 WHERE id = $2", [status, id]);
 }
 
+export async function getById(id: string): Promise<Message | null> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>("SELECT * FROM messages WHERE id = $1", [id]);
+  return rows[0] ? fromRow(rows[0]) : null;
+}
+
+/** Applies a signed edit to an existing message. The monotonic `edited_at`
+ * guard makes this last-write-wins and idempotent under duplicate delivery;
+ * a tombstoned message is never revived (the `deleted_at IS NULL` guard).
+ * Returns whether a row was actually updated. */
+export async function applyEdit(
+  id: string,
+  body: string,
+  editedAt: number,
+  sig: string,
+): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.execute(
+    `UPDATE messages SET body = $1, edited_at = $2, sig = $3
+     WHERE id = $4 AND deleted_at IS NULL AND COALESCE(edited_at, 0) < $2`,
+    [body, editedAt, sig, id],
+  );
+  return result.rowsAffected > 0;
+}
+
+/** Tombstones a message: nulls the body and all attachment metadata (the file
+ * blob is deleted separately), clears any edit marker, and records deletion.
+ * Idempotent — a message already deleted is left untouched. */
+export async function applyDelete(
+  id: string,
+  deletedAt: number,
+  sig: string,
+): Promise<boolean> {
+  const db = await getDb();
+  const result = await db.execute(
+    `UPDATE messages SET body = NULL, attachment_id = NULL, attachment_name = NULL,
+       attachment_size = NULL, attachment_type = NULL, edited_at = NULL,
+       deleted_at = $1, sig = $2
+     WHERE id = $3 AND deleted_at IS NULL`,
+    [deletedAt, sig, id],
+  );
+  return result.rowsAffected > 0;
+}
+
+/** Every message in a room carrying an edit or tombstone. These ride along in
+ * sync responses so peers who already hold the row (seq-gap sync would skip
+ * them) still converge on the latest edited/deleted state. */
+export async function mutatedMessages(roomId: string): Promise<Message[]> {
+  const db = await getDb();
+  const rows = await db.select<MessageRow[]>(
+    "SELECT * FROM messages WHERE room_id = $1 AND (edited_at IS NOT NULL OR deleted_at IS NOT NULL)",
+    [roomId],
+  );
+  return rows.map(fromRow);
+}
+
 /** Marks this author's undelivered messages up to a seq as delivered — used
  * when a peer's sync have-vector proves they already hold them. */
 export async function markDeliveredUpTo(

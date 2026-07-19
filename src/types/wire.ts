@@ -94,6 +94,30 @@ export type ReactionWire = {
   reactedAt: number;
 };
 
+/** Author-signed edit of an existing text message. `sig` is over the same
+ * canonicalMessage array as the original send, with `body`/`editedAt`
+ * substituted and `deletedAt` null — receivers reconstruct that array from
+ * their stored row, so the signature binds the edit to the exact message
+ * identity (id, roomId, authorId, authorSeq, hlc, …). */
+export type MsgEditMessage = {
+  type: "msg_edit";
+  roomId: string;
+  messageId: string;
+  body: string;
+  editedAt: number;
+  sig: string;
+};
+
+/** Author-signed tombstone. `sig` is over the canonicalMessage array with
+ * `body` and all attachment fields nulled, `editedAt` null, `deletedAt` set. */
+export type MsgDeleteMessage = {
+  type: "msg_delete";
+  roomId: string;
+  messageId: string;
+  deletedAt: number;
+  sig: string;
+};
+
 // --- Transport-level liveness. Consumed inside PeerRegistry (never routed to
 // the app-level message switch): any traffic bumps a per-peer lastSeenAt, and
 // a peer silent past the liveness timeout is closed and marked offline. ---
@@ -411,6 +435,8 @@ export type ColloquiumMessage =
   | RosterSyncMessage
   | ChatMessageMessage
   | ReactionMessage
+  | MsgEditMessage
+  | MsgDeleteMessage
   | TypingMessage
   | PingMessage
   | PongMessage

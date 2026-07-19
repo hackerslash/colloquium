@@ -14,11 +14,21 @@ type ChatState = {
   reactionsByRoom: Record<string, Record<string, Reaction[]>>;
   /** The message the composer is replying to, per room (like drafts). */
   replyingToByRoom: Record<string, Message | null>;
+  /** The message currently being edited, per room. Mutually exclusive with
+   * replyingToByRoom (starting one clears the other). */
+  editingByRoom: Record<string, Message | null>;
 
   loadMessages: (roomId: string) => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
   setReplyingTo: (roomId: string, message: Message | null) => void;
+  setEditing: (roomId: string, message: Message | null) => void;
+  /** Edits one of the local user's messages: re-signs, persists, broadcasts. */
+  editMessage: (roomId: string, memberIds: string[], messageId: string, body: string) => Promise<void>;
+  /** Deletes (tombstones) one of the local user's messages. */
+  deleteMessage: (roomId: string, memberIds: string[], messageId: string) => Promise<void>;
+  /** Bridge/local-echo: replace a message in place after an edit/delete. */
+  applyMessageUpdate: (message: Message) => void;
   /** Adds or removes the local user's reaction, persists it, and broadcasts
    * the toggle to connected room members. */
   toggleReaction: (
@@ -72,6 +82,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   draftByRoom: {},
   reactionsByRoom: {},
   replyingToByRoom: {},
+  editingByRoom: {},
 
   loadMessages: async (roomId) => {
     const [messages, reactions] = await Promise.all([
@@ -139,7 +150,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setReplyingTo: (roomId, message) =>
     set((state) => ({
       replyingToByRoom: { ...state.replyingToByRoom, [roomId]: message },
+      // Replying and editing are mutually exclusive.
+      editingByRoom: message ? { ...state.editingByRoom, [roomId]: null } : state.editingByRoom,
     })),
+
+  setEditing: (roomId, message) =>
+    set((state) => ({
+      editingByRoom: { ...state.editingByRoom, [roomId]: message },
+      replyingToByRoom: message ? { ...state.replyingToByRoom, [roomId]: null } : state.replyingToByRoom,
+    })),
+
+  editMessage: async (roomId, memberIds, messageId, body) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) return;
+    const updated = await chatService.sendEdit(self, roomId, memberIds, messageId, body.trim(), Date.now());
+    if (updated) get().applyMessageUpdate(updated);
+    set((state) => ({
+      editingByRoom: { ...state.editingByRoom, [roomId]: null },
+      draftByRoom: { ...state.draftByRoom, [roomId]: "" },
+    }));
+  },
+
+  deleteMessage: async (roomId, memberIds, messageId) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) return;
+    const updated = await chatService.sendDelete(self, roomId, memberIds, messageId, Date.now());
+    if (updated) get().applyMessageUpdate(updated);
+  },
+
+  applyMessageUpdate: (message) => {
+    const loaded = get().messagesByRoom[message.roomId];
+    if (!loaded) return;
+    set((state) => ({
+      messagesByRoom: {
+        ...state.messagesByRoom,
+        [message.roomId]: loaded.map((m) => (m.id === message.id ? { ...m, ...message } : m)),
+      },
+    }));
+  },
 
   toggleReaction: async (roomId, memberIds, messageId, emoji) => {
     const self = useIdentityStore.getState().self;
