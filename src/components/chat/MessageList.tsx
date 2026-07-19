@@ -449,21 +449,43 @@ export function MessageList({ messages, roomId, memberIds }: MessageListProps) {
   const didInitialRender = useRef(false);
   const wasNearBottom = useRef(true);
 
-  // Determine first unread message index from roomSessionState
-  const initialUnread = sessionState?.initialUnread ?? 0;
-  const lastReadAt = sessionState?.lastReadAt ?? 0;
-
-  let firstUnreadIndex = -1;
-  if (initialUnread > 0 && messages && messages.length > 0) {
-    if (lastReadAt > 0) {
-      firstUnreadIndex = messages.findIndex(
-        (m) => m.authorId !== self?.identityId && m.sentAt > lastReadAt,
-      );
-    }
-    if (firstUnreadIndex === -1) {
-      firstUnreadIndex = Math.max(0, messages.length - initialUnread);
-    }
+  // Resolve the "New Messages" anchor once per room visit, then track it by
+  // message id. Recomputing per render would let messages sent or received
+  // while the chat is open grow the list and drag the banner onto them — it
+  // must only mark what was unread when the room was opened.
+  const unreadAnchorRef = useRef<{
+    roomId: string | undefined;
+    messageId: string | null;
+    resolved: boolean;
+  }>({ roomId: undefined, messageId: null, resolved: false });
+  if (unreadAnchorRef.current.roomId !== roomId) {
+    unreadAnchorRef.current = { roomId, messageId: null, resolved: false };
   }
+  if (!unreadAnchorRef.current.resolved && messages && messages.length > 0) {
+    const initialUnread = sessionState?.initialUnread ?? 0;
+    const lastReadAt = sessionState?.lastReadAt ?? 0;
+    let idx = -1;
+    if (initialUnread > 0) {
+      if (lastReadAt > 0) {
+        idx = messages.findIndex(
+          (m) => m.authorId !== self?.identityId && m.sentAt > lastReadAt,
+        );
+      }
+      if (idx === -1) {
+        idx = Math.max(0, messages.length - initialUnread);
+      }
+    }
+    unreadAnchorRef.current = {
+      roomId,
+      messageId: idx >= 0 ? messages[idx].id : null,
+      resolved: true,
+    };
+  }
+  const anchorMessageId = unreadAnchorRef.current.messageId;
+  const firstUnreadIndex =
+    anchorMessageId && messages
+      ? messages.findIndex((m) => m.id === anchorMessageId)
+      : -1;
 
   // Detect room change
   useEffect(() => {
