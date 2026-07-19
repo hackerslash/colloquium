@@ -43,11 +43,10 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(
-            tauri_plugin_sql::Builder::default()
-                .add_migrations(db::DB_URL, db::migrations())
-                .build(),
-        )
+        // Migrations run in our own keyed pool inside `db::init` (below), not
+        // via the plugin — see setup. The plugin is registered bare so its
+        // execute/select commands resolve against the injected SQLCipher pool.
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 // Manage size/position/maximized, but not visibility — the
@@ -58,6 +57,11 @@ pub fn run() {
         )
         .manage(CloseToTray(Mutex::new(true)))
         .setup(|app| {
+            // Open (and, on first run after this ships, encrypt) the local DB
+            // and inject the keyed pool BEFORE anything else — IPC only starts
+            // after setup returns, so no query can race this.
+            tauri::async_runtime::block_on(db::init(app.handle()))?;
+
             // Best-effort: some Linux desktop environments have no tray host
             // (no StatusNotifierWatcher), which would otherwise take the
             // whole app down at launch. Run without a tray icon instead.
