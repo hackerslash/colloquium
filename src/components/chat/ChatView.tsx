@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Phone, Video } from "lucide-react";
+import { Bell, BellOff, Phone, Video } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useChatStore } from "../../stores/useChatStore";
@@ -37,10 +37,12 @@ export function ChatView({ contactId }: ChatViewProps) {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const setDraft = useChatStore((s) => s.setDraft);
   const setActiveRoom = useRoomStore((s) => s.setActiveRoom);
+  const toggleMute = useRoomStore((s) => s.toggleMute);
   const startCall = useCallStore((s) => s.startCall);
   const callInProgress = useCallStore((s) => s.activeCall !== null);
 
   const [roomId, setRoomId] = useState<string | null>(null);
+  const muted = useRoomStore((s) => (roomId ? !!s.mutedByRoom[roomId] : false));
 
   useEffect(() => {
     let cancelled = false;
@@ -109,6 +111,13 @@ export function ChatView({ contactId }: ChatViewProps) {
         <h1 className="text-sm font-semibold">{contact.displayName}</h1>
         <span className="text-xs text-text-secondary">{statusLabel}</span>
         <div className="ml-auto flex gap-1">
+          <IconButton
+            icon={muted ? BellOff : Bell}
+            label={muted ? "Unmute notifications" : "Mute notifications"}
+            active={muted}
+            disabled={!roomId}
+            onClick={() => roomId && toggleMute(roomId)}
+          />
           <IconButton
             icon={Phone}
             label={callHint ?? "Start voice call"}

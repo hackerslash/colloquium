@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Hash, Phone } from "lucide-react";
+import { Bell, BellOff, Hash, Phone } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
@@ -12,6 +12,7 @@ import { TypingIndicator } from "../chat/TypingIndicator";
 import { notifyTyping, stopTyping } from "../../services/room/typingService";
 import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
+import { IconButton } from "../ui/IconButton";
 import { EmptyState } from "../ui/EmptyState";
 import { RoomMembersModal } from "./RoomMembersModal";
 import { toast } from "../../stores/useToastStore";
@@ -25,6 +26,8 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
   const self = useIdentityStore((s) => s.self);
   const room = useRoomStore((s) => s.roomsById[roomId]);
   const setActiveRoom = useRoomStore((s) => s.setActiveRoom);
+  const toggleMute = useRoomStore((s) => s.toggleMute);
+  const muted = useRoomStore((s) => !!s.mutedByRoom[roomId]);
 
   const loadMessages = useChatStore((s) => s.loadMessages);
   const sendMessage = useChatStore((s) => s.sendMessage);
@@ -114,6 +117,12 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          <IconButton
+            icon={muted ? BellOff : Bell}
+            label={muted ? "Unmute notifications" : "Mute notifications"}
+            active={muted}
+            onClick={() => toggleMute(roomId)}
+          />
           {!inThisCall && (
             <Button
               size="sm"

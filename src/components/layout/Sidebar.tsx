@@ -4,6 +4,7 @@ import {
   Copy,
   Hash,
   Home,
+  BellOff,
   Mic,
   MicOff,
   Plus,
@@ -77,6 +78,7 @@ export function Sidebar({
   const roomsById = useRoomStore((s) => s.roomsById);
   const callParticipantsByRoom = useRoomStore((s) => s.callParticipantsByRoom);
   const unreadByRoom = useRoomStore((s) => s.unreadByRoom);
+  const mutedByRoom = useRoomStore((s) => s.mutedByRoom);
 
   const activeCallRoomId = useRoomCallStore((s) => s.roomId);
   const activeCallParticipants = useRoomCallStore((s) => s.participants);
@@ -187,6 +189,7 @@ export function Sidebar({
           );
           const inCallCount = callParticipants.length;
           const unread = unreadByRoom[room.id] ?? 0;
+          const muted = !!mutedByRoom[room.id];
           return (
             <li key={room.id} className="space-y-0.5">
               <button
@@ -196,7 +199,7 @@ export function Sidebar({
                   ROW_BASE,
                   active
                     ? "bg-bg-secondary font-medium text-text-primary"
-                    : unread > 0
+                    : unread > 0 && !muted
                       ? "font-semibold text-text-primary hover:bg-bg-secondary/60"
                       : "text-text-secondary hover:bg-bg-secondary/60 hover:text-text-primary",
                 )}
@@ -210,9 +213,12 @@ export function Sidebar({
                   )}
                   aria-hidden="true"
                 />
-                <span className="min-w-0 flex-1 truncate">
+                <span className={cx("min-w-0 flex-1 truncate", muted && "text-text-muted")}>
                   {room.name ?? "Room"}
                 </span>
+                {muted && (
+                  <BellOff size={12} className="shrink-0 text-text-muted" aria-label="Muted" />
+                )}
                 {inCallCount > 0 && (
                   <span
                     className="flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success"
@@ -226,7 +232,7 @@ export function Sidebar({
                     {inCallCount}
                   </span>
                 )}
-                <UnreadBadge count={unread} />
+                <UnreadBadge count={unread} muted={muted} />
               </button>
 
               {inCallCount > 0 && (
@@ -338,6 +344,7 @@ export function Sidebar({
             selection.contactId === contact.identityId;
           const roomId = dmRoomIdByContact[contact.identityId];
           const unread = roomId ? (unreadByRoom[roomId] ?? 0) : 0;
+          const muted = roomId ? !!mutedByRoom[roomId] : false;
           return (
             <li key={contact.identityId} className="group relative">
               <button
@@ -363,14 +370,19 @@ export function Sidebar({
                 <span
                   className={cx(
                     "min-w-0 flex-1 truncate text-[14px]",
-                    active || unread > 0
-                      ? "font-medium text-text-primary"
-                      : "text-text-secondary",
+                    muted
+                      ? "text-text-muted"
+                      : active || unread > 0
+                        ? "font-medium text-text-primary"
+                        : "text-text-secondary",
                   )}
                 >
                   {contact.displayName}
                 </span>
-                <UnreadBadge count={unread} />
+                {muted && (
+                  <BellOff size={12} className="shrink-0 text-text-muted" aria-label="Muted" />
+                )}
+                <UnreadBadge count={unread} muted={muted} />
               </button>
               {confirmingId === contact.identityId ? (
                 <span className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1 bg-bg-primary p-1 rounded-lg shadow-sm z-10">
