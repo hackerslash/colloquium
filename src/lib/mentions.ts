@@ -49,3 +49,30 @@ export function mentionsIdentity(body: string | null, identityId: string): boole
 export function humanizeMentions(body: string): string {
   return body.replace(new RegExp(MENTION_RE.source, "g"), (_full, name: string) => `@${name}`);
 }
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Inverse of `humanizeMentions` for the composer: rebuilds mention tokens from
+ * a plainly-typed body so the input can show `@Name` while the sent/stored body
+ * keeps the authoritative `@[Name](id)` token. Each `@DisplayName` that exactly
+ * matches a known candidate (a room member) is linked. Longest names first so a
+ * name that is a prefix of another isn't shadowed; a match must be bounded by
+ * start/whitespace on the left and end/whitespace on the right so partial words
+ * and mid-word `@` don't trigger. Already-tokenized mentions are untouched (the
+ * `@` in a token is always followed by `[`, never a bare name). */
+export function encodeMentions(
+  text: string,
+  candidates: { id: string; name: string }[],
+): string {
+  const sorted = [...candidates]
+    .filter((c) => c.name.trim().length > 0)
+    .sort((a, b) => b.name.length - a.name.length);
+  let out = text;
+  for (const c of sorted) {
+    const re = new RegExp(`(^|\\s)@${escapeRegExp(c.name)}(?=$|\\s)`, "g");
+    out = out.replace(re, `$1${mentionToken(c.name, c.id)}`);
+  }
+  return out;
+}

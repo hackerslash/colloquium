@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  encodeMentions,
   humanizeMentions,
   mentionToken,
   mentionedIds,
@@ -88,5 +89,46 @@ describe("humanizeMentions", () => {
 
   it("is a no-op for text with no tokens", () => {
     expect(humanizeMentions("plain text")).toBe("plain text");
+  });
+});
+
+describe("encodeMentions", () => {
+  const cands = [
+    { id: ID_A, name: "Alice" },
+    { id: ID_B, name: "Bob" },
+  ];
+
+  it("links a plain @Name to its token", () => {
+    expect(encodeMentions("hi @Alice", cands)).toBe(`hi ${mentionToken("Alice", ID_A)}`);
+  });
+
+  it("round-trips with humanizeMentions", () => {
+    const encoded = encodeMentions("hey @Alice and @Bob!", cands);
+    // trailing '!' is a boundary-breaker, so @Bob! is left unlinked
+    expect(encoded).toBe(`hey ${mentionToken("Alice", ID_A)} and @Bob!`);
+    expect(humanizeMentions(encodeMentions("@Alice @Bob", cands))).toBe("@Alice @Bob");
+  });
+
+  it("does not link a partial or mid-word match", () => {
+    expect(encodeMentions("@Alicia", cands)).toBe("@Alicia");
+    expect(encodeMentions("email@Alice", cands)).toBe("email@Alice");
+  });
+
+  it("prefers the longest candidate name", () => {
+    const c = [
+      { id: ID_A, name: "God" },
+      { id: ID_B, name: "God Father" },
+    ];
+    expect(encodeMentions("@God Father", c)).toBe(mentionToken("God Father", ID_B));
+    expect(encodeMentions("@God morning", c)).toBe(`${mentionToken("God", ID_A)} morning`);
+  });
+
+  it("leaves an already-tokenized body untouched", () => {
+    const body = `${mentionToken("Alice", ID_A)} hello`;
+    expect(encodeMentions(body, cands)).toBe(body);
+  });
+
+  it("is a no-op when nothing matches", () => {
+    expect(encodeMentions("plain text", cands)).toBe("plain text");
   });
 });

@@ -6,7 +6,6 @@ import { MAX_FILE_SIZE } from "../../services/room/chatService";
 import { toast } from "../../stores/useToastStore";
 import { EmojiPicker } from "./EmojiPicker";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
-import { mentionToken } from "../../lib/mentions";
 
 type ComposerProps = {
   value: string;
@@ -109,7 +108,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   function selectMention(candidate: MentionCandidate) {
     if (!mentionQuery) return;
     const end = mentionQuery.start + 1 + mentionQuery.query.length;
-    replaceRange(mentionQuery.start, end, mentionToken(candidate.name, candidate.id) + " ");
+    // Insert the readable `@Name ` — the authoritative @[Name](id) token is
+    // reconstructed from room members at send time (encodeMentions), so the
+    // input never shows the raw id.
+    replaceRange(mentionQuery.start, end, `@${candidate.name} `);
     setMentionQuery(null);
   }
 

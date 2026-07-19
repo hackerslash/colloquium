@@ -6,6 +6,7 @@ import * as fileRepo from "../services/db/fileRepo";
 import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
 import { useRoomStore } from "./useRoomStore";
+import { humanizeMentions } from "../lib/mentions";
 
 type ChatState = {
   messagesByRoom: Record<string, Message[]>;
@@ -167,7 +168,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: message },
       replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
       stashedDraftByRoom: { ...state.stashedDraftByRoom, [roomId]: state.draftByRoom[roomId] ?? "" },
-      draftByRoom: { ...state.draftByRoom, [roomId]: message.body ?? "" },
+      draftByRoom: {
+        ...state.draftByRoom,
+        // Show readable @Name in the composer; re-encoded to tokens on save.
+        [roomId]: message.body ? humanizeMentions(message.body) : "",
+      },
     })),
 
   cancelEdit: (roomId) =>

@@ -17,6 +17,7 @@ import { IconButton } from "../ui/IconButton";
 import { EmptyState } from "../ui/EmptyState";
 import { RoomMembersModal } from "./RoomMembersModal";
 import { toast } from "../../stores/useToastStore";
+import { encodeMentions } from "../../lib/mentions";
 
 type GroupRoomViewProps = {
   roomId: string;
@@ -86,13 +87,19 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
       // Fall back to last known
     }
     stopTyping(roomId, currentMembers);
+    const body = encodeMentions(
+      draft,
+      currentMembers
+        .filter((id) => id !== self?.identityId)
+        .map((id) => ({ id, name: contactsById[id]?.displayName ?? "Unknown" })),
+    );
     if (editing) {
-      return editMessage(roomId, currentMembers, editing.id, draft).catch((err) => {
+      return editMessage(roomId, currentMembers, editing.id, body).catch((err) => {
         console.error("Failed to edit message:", err);
         toast.error("Edit not saved", "Please try again.");
       });
     }
-    return sendMessage(roomId, currentMembers, draft, file).catch((err) => {
+    return sendMessage(roomId, currentMembers, body, file).catch((err) => {
       console.error("Failed to send message:", err);
       toast.error("Message not sent", "Please try again.");
     });
