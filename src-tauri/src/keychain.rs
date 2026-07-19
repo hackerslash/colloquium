@@ -1,11 +1,44 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring::Entry;
+use rand_core::{OsRng, RngCore};
 
 const SERVICE: &str = "colloquiumapp";
 const ACCOUNT: &str = "identity-private-key";
+const DB_KEY_ACCOUNT: &str = "db-encryption-key";
 
 fn entry() -> Result<Entry, String> {
     Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())
+}
+
+/// Returns the database encryption key as lowercase hex (64 chars), creating
+/// and persisting a fresh 32-byte key on first run.
+///
+/// CRITICAL: unlike the identity entry, a stored value that fails to decode or
+/// is the wrong length is a HARD error — never delete-and-regenerate. The key
+/// is full entropy with no recovery path, so a fresh key would permanently
+/// brick an already-encrypted database rather than unlock it.
+pub fn load_or_create_db_key_hex() -> Result<String, String> {
+    let entry = Entry::new(SERVICE, DB_KEY_ACCOUNT).map_err(|e| e.to_string())?;
+    match entry.get_password() {
+        Ok(encoded) => {
+            let bytes = STANDARD
+                .decode(&encoded)
+                .map_err(|_| "stored database key is corrupt (undecodable)".to_string())?;
+            if bytes.len() != 32 {
+                return Err("stored database key has an unexpected length".into());
+            }
+            Ok(hex::encode(bytes))
+        }
+        Err(keyring::Error::NoEntry) => {
+            let mut key = [0u8; 32];
+            OsRng.fill_bytes(&mut key);
+            entry
+                .set_password(&STANDARD.encode(key))
+                .map_err(|e| e.to_string())?;
+            Ok(hex::encode(key))
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 /// Persists the raw private key seed bytes in the OS keychain (macOS Keychain /
