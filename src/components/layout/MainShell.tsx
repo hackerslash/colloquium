@@ -25,6 +25,7 @@ export function MainShell() {
   const loadRoster = useRosterStore((s) => s.loadRoster);
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const loadUnread = useRoomStore((s) => s.loadUnread);
+  const loadMuted = useRoomStore((s) => s.loadMuted);
   const markRead = useRoomStore((s) => s.markRead);
   const activeRoomId = useRoomStore((s) => s.activeRoomId);
   const [selection, setSelection] = useState<Selection>({ kind: "home" });
@@ -35,8 +36,10 @@ export function MainShell() {
 
   useEffect(() => {
     void loadRoster();
-    void loadRooms().then(() => loadUnread());
-  }, [loadRoster, loadRooms, loadUnread]);
+    // Mute state must load before unread so the first badge computation
+    // already excludes muted rooms from the dock count.
+    void loadRooms().then(() => loadMuted().then(() => loadUnread()));
+  }, [loadRoster, loadRooms, loadMuted, loadUnread]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;
