@@ -130,6 +130,7 @@ export function ChatView({ contactId }: ChatViewProps) {
         placeholder={`Message ${contact.displayName}`}
         replyingTo={
           replyingTo && {
+            id: replyingTo.id,
             authorName:
               replyingTo.authorId === self?.identityId
                 ? self.displayName

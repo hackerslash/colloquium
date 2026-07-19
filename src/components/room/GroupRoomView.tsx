@@ -137,6 +137,7 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
         placeholder={`Message ${room.name ?? "the room"}`}
         replyingTo={
           replyingTo && {
+            id: replyingTo.id,
             authorName:
               replyingTo.authorId === self?.identityId
                 ? self.displayName
