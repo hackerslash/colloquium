@@ -144,6 +144,9 @@ export function GroupRoomView({ roomId, onLeft }: GroupRoomViewProps) {
       <Composer
         value={draft}
         placeholder={`Message ${room.name ?? "the room"}`}
+        mentionCandidates={memberIds
+          .filter((id) => id !== self?.identityId)
+          .map((id) => ({ id, name: contactsById[id]?.displayName ?? "Unknown" }))}
         replyingTo={
           replyingTo && {
             authorName:

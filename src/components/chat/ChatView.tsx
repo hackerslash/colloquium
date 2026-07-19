@@ -137,6 +137,7 @@ export function ChatView({ contactId }: ChatViewProps) {
       <Composer
         value={draft}
         placeholder={`Message ${contact.displayName}`}
+        mentionCandidates={[{ id: contactId, name: contact.displayName }]}
         replyingTo={
           replyingTo && {
             authorName:

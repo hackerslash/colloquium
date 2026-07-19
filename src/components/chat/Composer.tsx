@@ -5,6 +5,8 @@ import { IconButton } from "../ui/IconButton";
 import { MAX_FILE_SIZE } from "../../services/room/chatService";
 import { toast } from "../../stores/useToastStore";
 import { EmojiPicker } from "./EmojiPicker";
+import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
+import { mentionToken } from "../../lib/mentions";
 
 type ComposerProps = {
   value: string;
@@ -13,14 +15,41 @@ type ComposerProps = {
   onSend: (file?: File) => void | Promise<unknown>;
   replyingTo?: { authorName: string; snippet: string } | null;
   onCancelReply?: () => void;
+  /** Members mentionable in this room (excludes self). Enables @-autocomplete. */
+  mentionCandidates?: MentionCandidate[];
 };
 
-export function Composer({ value, placeholder, onChange, onSend, replyingTo, onCancelReply }: ComposerProps) {
+const MAX_MENTION_MATCHES = 8;
+
+/** Detects an in-progress `@query` immediately before the caret. Returns the
+ * index of the `@` and the typed prefix, or null when the caret isn't in a
+ * mention. Requires the `@` to be at line start or after whitespace so email
+ * addresses and mid-word `@` don't trigger it. */
+function detectMentionQuery(text: string, caret: number): { start: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const m = /(?:^|\s)@([^\s@]{0,32})$/.exec(before);
+  if (!m) return null;
+  const query = m[1];
+  return { start: caret - query.length - 1, query };
+}
+
+export function Composer({ value, placeholder, onChange, onSend, replyingTo, onCancelReply, mentionCandidates }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [sending, setSending] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState<{ start: number; query: string } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+
+  const mentionMatches =
+    mentionQuery && mentionCandidates
+      ? mentionCandidates
+          .filter((c) => c.name.toLowerCase().includes(mentionQuery.query.toLowerCase()))
+          .slice(0, MAX_MENTION_MATCHES)
+      : [];
+  const mentionOpen = mentionMatches.length > 0;
+  const activeMention = Math.min(mentionIndex, mentionMatches.length - 1);
 
   function autoGrow() {
     const el = textareaRef.current;
@@ -36,9 +65,44 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     onChange(e.target.value);
     autoGrow();
+    const detected = mentionCandidates
+      ? detectMentionQuery(e.target.value, e.target.selectionStart ?? e.target.value.length)
+      : null;
+    setMentionQuery(detected);
+    setMentionIndex(0);
+  }
+
+  function selectMention(candidate: MentionCandidate) {
+    if (!mentionQuery) return;
+    const end = mentionQuery.start + 1 + mentionQuery.query.length;
+    replaceRange(mentionQuery.start, end, mentionToken(candidate.name, candidate.id) + " ");
+    setMentionQuery(null);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // Mention dropdown consumes navigation keys before send/cancel-reply.
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionMatches.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionMatches.length) % mentionMatches.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        selectMention(mentionMatches[activeMention]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -75,6 +139,21 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
       el.focus();
       const newPos = start + textToInsert.length;
       el.setSelectionRange(newPos, newPos);
+      autoGrow();
+    }, 0);
+  }
+
+  /** Replaces the text in [start, end) with `textToInsert` and drops the caret
+   * after it. Used to swap a typed `@query` for a full mention token. */
+  function replaceRange(start: number, end: number, textToInsert: string) {
+    const el = textareaRef.current;
+    const newValue = value.substring(0, start) + textToInsert + value.substring(end);
+    onChange(newValue);
+    setTimeout(() => {
+      if (!el) return;
+      el.focus();
+      const pos = start + textToInsert.length;
+      el.setSelectionRange(pos, pos);
       autoGrow();
     }, 0);
   }
@@ -155,6 +234,18 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
               insertTextAtCursor(emoji);
             }}
             onClose={() => setShowEmojiPicker(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Mention Autocomplete Popover */}
+      <AnimatePresence>
+        {mentionOpen && (
+          <MentionAutocomplete
+            candidates={mentionMatches}
+            activeIndex={activeMention}
+            onSelect={selectMention}
+            onHover={setMentionIndex}
           />
         )}
       </AnimatePresence>
