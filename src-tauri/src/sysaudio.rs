@@ -2,12 +2,12 @@
 //!
 //! The WebView's own getDisplayMedia audio path is unusable for a call: macOS
 //! WKWebView exposes no display audio at all, and on Windows getDisplayMedia
-//! taps a whole-system loopback that recaptures Haven's own playback of the
+//! taps a whole-system loopback that recaptures Colloquium's own playback of the
 //! other participants — sending their voices back to them (echo). So we tap
 //! system audio natively and stream PCM to the frontend, which feeds it into
-//! the WebRTC audio graph, **excluding Haven's own audio** so the call
+//! the WebRTC audio graph, **excluding Colloquium's own audio** so the call
 //! doesn't echo:
-//!   - macOS: ScreenCaptureKit, excluding Haven's application (incl. the
+//!   - macOS: ScreenCaptureKit, excluding Colloquium's application (incl. the
 //!     WKWebView helper processes that actually render the call audio) from
 //!     the content filter, plus `excludesCurrentProcessAudio`.
 //!   - Windows: WASAPI process loopback in EXCLUDE-target-process-tree mode.
@@ -50,9 +50,9 @@ pub async fn sysaudio_start(
     #[cfg(target_os = "windows")]
     {
         // Exclude the WebView2 BROWSER process tree, not our own: the browser
-        // process is COM-activated (not necessarily a child of haven.exe), and
+        // process is COM-activated (not necessarily a child of colloquium.exe), and
         // it is the root of the helper tree that actually plays the call
-        // audio — excluding haven.exe's tree missed it, echoing participants
+        // audio — excluding colloquium.exe's tree missed it, echoing participants
         // back at themselves.
         let exclude_pid = win::browser_pid(&webview_window).unwrap_or_else(|| std::process::id());
         tauri::async_runtime::spawn_blocking(move || win::start(channel, exclude_pid))
@@ -82,11 +82,11 @@ pub fn sysaudio_stop() -> Result<(), String> {
 }
 
 /// CoreAudio process-tap capture (macOS 14.4+). Captures ALL system audio
-/// except an exclusion list we build ourselves: Haven's own process plus its
+/// except an exclusion list we build ourselves: Colloquium's own process plus its
 /// WKWebView helpers (which render the call audio). Identified three ways so
 /// it works both bundled and in dev:
 ///   - pid == ours
-///   - responsible pid == ours (bundled app: helpers belong to Haven.app)
+///   - responsible pid == ours (bundled app: helpers belong to Colloquium.app)
 ///   - bundle starts with com.apple.WebKit AND shares our responsible pid
 ///     (dev: everything terminal-launched is "responsible to" the terminal,
 ///     so ours and our helpers share it; Safari's helpers don't)
@@ -399,7 +399,7 @@ mod tap {
         };
         unsafe {
             let _: () = msg_send![&*description, setPrivate: true];
-            let _: () = msg_send![&*description, setName: &*NSString::from_str("Haven screen-share audio")];
+            let _: () = msg_send![&*description, setName: &*NSString::from_str("Colloquium screen-share audio")];
         }
         let tap_uuid: Retained<NSString> = unsafe {
             let uuid: Retained<AnyObject> = msg_send![&*description, UUID];
@@ -427,8 +427,8 @@ mod tap {
                 )
             };
             let taps = NSArray::from_retained_slice(&[sub_tap]);
-            let agg_uid = NSString::from_str("havenapp.sysaudio.aggregate");
-            let agg_name = NSString::from_str("Haven sysaudio");
+            let agg_uid = NSString::from_str("colloquiumapp.sysaudio.aggregate");
+            let agg_name = NSString::from_str("Colloquium sysaudio");
             let desc = unsafe {
                 nsdict(
                     &[
@@ -630,7 +630,7 @@ mod imp {
 
     // WKWebView renders the call's audio in a separate helper process
     // (com.apple.WebKit.GPU), so `excludesCurrentProcessAudio` — which only
-    // covers the capturing process itself — never excludes Haven's own
+    // covers the capturing process itself — never excludes Colloquium's own
     // playback of the other participants, and their voices echo back through
     // the share. macOS attributes those helpers to the app that spawned them
     // via the "responsible process"; this (libquarantine, part of the
@@ -649,7 +649,7 @@ mod imp {
 
     define_class!(
         #[unsafe(super(NSObject))]
-        #[name = "HavenSysAudioSink"]
+        #[name = "ColloquiumSysAudioSink"]
         #[ivars = Ivars]
         struct AudioSink;
 
@@ -843,7 +843,7 @@ mod imp {
         let displays = unsafe { content.displays() };
         let display = displays.firstObject().ok_or("no display to capture")?;
 
-        // Exclude Haven at the APPLICATION level (audio filtering is
+        // Exclude Colloquium at the APPLICATION level (audio filtering is
         // per-application), catching the WKWebView helper processes that
         // actually play the call audio — see the responsibility note above.
         let our_pid = std::process::id() as i32;
@@ -921,7 +921,7 @@ mod imp {
             )
         };
 
-        let queue = DispatchQueue::new("havenapp.sysaudio", DispatchQueueAttr::SERIAL);
+        let queue = DispatchQueue::new("colloquiumapp.sysaudio", DispatchQueueAttr::SERIAL);
         let output: &ProtocolObject<dyn SCStreamOutput> = ProtocolObject::from_ref(&*sink);
         unsafe {
             stream.addStreamOutput_type_sampleHandlerQueue_error(
@@ -958,7 +958,7 @@ mod imp {
 
 #[cfg(target_os = "windows")]
 mod win {
-    //! WASAPI process-loopback capture that EXCLUDES Haven's own process tree,
+    //! WASAPI process-loopback capture that EXCLUDES Colloquium's own process tree,
     //! the Windows analog of macOS's `excludesCurrentProcessAudio`. Everything
     //! (COM init, activation, capture loop) runs on one dedicated thread so the
     //! non-Send COM interfaces never cross a thread boundary; `start` waits for
@@ -989,7 +989,7 @@ mod win {
     /// The WebView2 browser process id — the root of the helper tree that
     /// renders (and plays) all of the webview's audio, including the call.
     /// Resolved from the live webview because the browser process is
-    /// COM-activated and not reliably a child of haven.exe.
+    /// COM-activated and not reliably a child of colloquium.exe.
     pub fn browser_pid(window: &tauri::WebviewWindow) -> Option<u32> {
         let (tx, rx) = mpsc::channel::<Option<u32>>();
         window

@@ -86,11 +86,11 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
       }
     };
 
-    window.addEventListener("haven_file_downloaded", handleFileEvent);
+    window.addEventListener("colloquium_file_downloaded", handleFileEvent);
 
     return () => {
       cancelled = true;
-      window.removeEventListener("haven_file_downloaded", handleFileEvent);
+      window.removeEventListener("colloquium_file_downloaded", handleFileEvent);
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);

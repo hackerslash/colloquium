@@ -1,6 +1,6 @@
 import type { Identity, RosterContact } from "../../types/domain";
 import type {
-  HavenMessage,
+  ColloquiumMessage,
   InviteAckMessage,
   InviteConsumeMessage,
   InvitePayload,
@@ -16,7 +16,7 @@ import { derivePeerId } from "../peer/derivePeerId";
 import { computeIdentityId } from "../../lib/crypto";
 import { base64ToUtf8, utf8ToBase64 } from "../../lib/base64";
 
-const INVITE_PREFIX = "haven-invite:";
+const INVITE_PREFIX = "colloquium-invite:";
 const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 const ACK_TIMEOUT_MS = 15_000;
 
@@ -122,13 +122,13 @@ const pendingAccepts = new Map<string, PendingAccept>();
 export async function acceptInvite(self: Identity, inviteString: string): Promise<void> {
   const trimmed = inviteString.trim();
   if (!trimmed.startsWith(INVITE_PREFIX)) {
-    throw new Error("That doesn't look like a Haven invite.");
+    throw new Error("That doesn't look like a Colloquium invite.");
   }
 
   const signed = JSON.parse(base64ToUtf8(trimmed.slice(INVITE_PREFIX.length))) as SignedInvitePayload;
   const { sig, ...payload } = signed;
 
-  if (payload.v !== 1) throw new Error("This invite was made by an incompatible version of Haven.");
+  if (payload.v !== 1) throw new Error("This invite was made by an incompatible version of Colloquium.");
   if (Date.now() > payload.expiresAt) throw new Error("This invite has expired.");
   if (payload.inviterId === self.identityId) throw new Error("You can't accept your own invite.");
 
@@ -318,7 +318,7 @@ export async function handleIncomingMessage(
   fromPeerId: string,
   data: unknown,
 ): Promise<void> {
-  const msg = data as HavenMessage;
+  const msg = data as ColloquiumMessage;
   switch (msg?.type) {
     case "invite_consume":
       await handleInviteConsume(self, fromPeerId, msg);

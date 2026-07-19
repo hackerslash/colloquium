@@ -1,8 +1,8 @@
 [package]
-name = "haven"
+name = "colloquium"
 version = "0.1.0"
-description = "Haven — peer-to-peer chat and voice/video"
-authors = ["Haven"]
+description = "Colloquium — peer-to-peer chat and voice/video"
+authors = ["Colloquium"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "haven_lib"
+name = "colloquium_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -57,7 +57,7 @@ objc2-core-media = { version = "0.3", features = [
 # Windows system-audio capture (WASAPI process loopback). getDisplayMedia on
 # Windows taps a whole-system loopback that recaptures the call's own output
 # and echoes it back; instead we capture natively in EXCLUDE-target-process-tree
-# mode so Haven's own audio is left out.
+# mode so Colloquium's own audio is left out.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-core = "0.58"
 windows = { version = "0.58", features = [

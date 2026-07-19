@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring::Entry;
 
-const SERVICE: &str = "havenapp";
+const SERVICE: &str = "colloquiumapp";
 const ACCOUNT: &str = "identity-private-key";
 
 fn entry() -> Result<Entry, String> {

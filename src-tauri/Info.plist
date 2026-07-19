@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Haven uses your camera for video calls.</string>
+	<string>Colloquium uses your camera for video calls.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Haven uses your microphone for voice and video calls.</string>
+	<string>Colloquium uses your microphone for voice and video calls.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Haven captures system audio so screen shares can include sound.</string>
+	<string>Colloquium captures system audio so screen shares can include sound.</string>
 </dict>
 </plist>

@@ -135,7 +135,7 @@ mod tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let identity = to_public_identity(&signing_key);
 
-        let message = STANDARD.encode(b"hello haven");
+        let message = STANDARD.encode(b"hello colloquium");
         let raw = STANDARD.decode(&message).unwrap();
         let signature = STANDARD.encode(signing_key.sign(&raw).to_bytes());
 
@@ -174,7 +174,7 @@ mod tests {
         // generating again while a keypair already exists must be rejected
         assert!(identity_generate_keypair().is_err());
 
-        let message = STANDARD.encode(b"hello haven");
+        let message = STANDARD.encode(b"hello colloquium");
         let signature = identity_sign(message.clone()).unwrap();
 
         assert!(identity_verify(pub1.public_key.clone(), message.clone(), signature.clone()).unwrap());

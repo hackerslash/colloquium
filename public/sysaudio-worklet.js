@@ -10,7 +10,7 @@
 // backlog that jitter never touched, i.e. pure added latency, and anything
 // above the target cushion gets dropped in one cut. Using the window-min means
 // normal arrival jitter (queue briefly deep, then drained) never triggers it.
-class HavenSysAudioProcessor extends AudioWorkletProcessor {
+class ColloquiumSysAudioProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     /** Queue of interleaved-stereo Float32Array chunks. */
@@ -103,4 +103,4 @@ class HavenSysAudioProcessor extends AudioWorkletProcessor {
   }
 }
 
-registerProcessor("haven-sysaudio", HavenSysAudioProcessor);
+registerProcessor("colloquium-sysaudio", ColloquiumSysAudioProcessor);

@@ -63,7 +63,7 @@ function AppBody({
         <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-danger/10 text-danger ring-1 ring-danger/20 mb-6">
           <AlertTriangle size={28} strokeWidth={1.5} aria-hidden="true" />
         </div>
-        <h2 className="text-lg font-semibold text-text-primary">Couldn't start Haven</h2>
+        <h2 className="text-lg font-semibold text-text-primary">Couldn't start Colloquium</h2>
         <p className="mt-2 mb-6 max-w-sm text-[15px] leading-relaxed text-text-secondary" style={{ textWrap: "balance" }}>
           There was an issue initializing the secure enclave. Check the logs below.
         </p>

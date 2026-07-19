@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Outbox } from "./Outbox";
 import type { PeerRegistry } from "./PeerRegistry";
-import type { HavenMessage } from "../../types/wire";
+import type { ColloquiumMessage } from "../../types/wire";
 
 type ConnectedListener = (peerId: string) => void;
 
@@ -28,7 +28,7 @@ function fakeRegistry(initiallyConnected: boolean) {
   };
 }
 
-const msg = (id: string): HavenMessage => ({
+const msg = (id: string): ColloquiumMessage => ({
   type: "msg_ack",
   roomId: "r1",
   messageId: id,

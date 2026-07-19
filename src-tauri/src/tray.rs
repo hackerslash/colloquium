@@ -17,11 +17,11 @@ pub fn build(app: &App) -> Result<()> {
         .default_window_icon()
         .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?
         .clone();
-    let open = MenuItem::with_id(app, "open", "Open Haven", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Haven", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open Colloquium", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Colloquium", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &quit])?;
 
-    TrayIconBuilder::with_id("haven-tray")
+    TrayIconBuilder::with_id("colloquium-tray")
         .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)

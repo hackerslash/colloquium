@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { User, Palette, Bell, Mic, AppWindow, type LucideIcon } from "lucide-react";
 import { useSettingsStore, type ThemePref, ACCENT_PRESETS } from "../../stores/useSettingsStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useAvatarStore } from "../../stores/useAvatarStore";
@@ -280,13 +281,8 @@ function ProfileSection() {
 
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-        Profile
-      </p>
-      <div className="mt-3">
-        <AvatarSection />
-      </div>
-      <div className="mt-3 flex items-center gap-2">
+      <AvatarSection />
+      <div className="mt-4 flex items-center gap-2">
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -299,6 +295,36 @@ function ProfileSection() {
           Save
         </Button>
       </div>
+    </div>
+  );
+}
+
+type SettingsTab = "profile" | "appearance" | "notifications" | "audio" | "app";
+
+const TABS: { id: SettingsTab; label: string; icon: LucideIcon }[] = [
+  { id: "profile", label: "Profile", icon: User },
+  { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "audio", label: "Audio & Video", icon: Mic },
+  { id: "app", label: "App", icon: AppWindow },
+];
+
+function SettingRow({
+  title,
+  description,
+  control,
+}: {
+  title: string;
+  description: string;
+  control: ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4">
+      <div>
+        <p className="text-sm text-text-primary">{title}</p>
+        <p className="text-xs text-text-secondary">{description}</p>
+      </div>
+      {control}
     </div>
   );
 }
@@ -323,165 +349,188 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
   const setEchoCancellation = useSettingsStore((s) => s.setEchoCancellation);
 
+  const [tab, setTab] = useState<SettingsTab>("profile");
+  const active = TABS.find((t) => t.id === tab)!;
+
   return (
-    <Modal open={open} onClose={onClose} title="Settings" size="md">
-      <ProfileSection />
-
-      <div className="mt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-          Appearance
-        </p>
-        <div className="mt-2 flex rounded-md bg-bg-base p-0.5" role="radiogroup" aria-label="Theme">
-          {THEMES.map((t) => (
-            <button
-              key={t.value}
-              role="radio"
-              aria-checked={theme === t.value}
-              onClick={() => setTheme(t.value)}
-              className={cx(
-                "flex-1 rounded px-3 py-1.5 text-sm transition-colors",
-                theme === t.value
-                  ? "bg-bg-tertiary text-text-primary shadow-sm"
-                  : "text-text-secondary hover:text-text-primary",
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-4 flex items-center justify-between">
-          <p className="text-sm text-text-secondary">Accent</p>
-          <div className="flex gap-2" role="radiogroup" aria-label="Accent color">
-            {ACCENT_PRESETS.map((p) => (
+    <Modal open={open} onClose={onClose} title="Settings" size="xl">
+      <div className="flex gap-6">
+        <nav
+          aria-label="Settings sections"
+          className="flex w-44 shrink-0 flex-col gap-0.5"
+        >
+          {TABS.map((t) => {
+            const isActive = t.id === tab;
+            return (
               <button
-                key={p.key}
-                role="radio"
-                aria-checked={accent === p.key}
-                aria-label={p.label}
-                onClick={() => setAccent(p.key)}
+                key={t.id}
+                onClick={() => setTab(t.id)}
+                aria-current={isActive ? "page" : undefined}
                 className={cx(
-                  "size-6 rounded-full transition-shadow",
-                  accent === p.key
-                    ? "ring-2 ring-text-primary ring-offset-2 ring-offset-bg-elevated"
-                    : "hover:ring-2 hover:ring-text-muted hover:ring-offset-2 hover:ring-offset-bg-elevated",
+                  "relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors",
+                  isActive
+                    ? "bg-bg-secondary text-text-primary"
+                    : "text-text-secondary hover:bg-bg-secondary/60 hover:text-text-primary",
                 )}
-                style={{ backgroundColor: p.base }}
+              >
+                {isActive && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent"
+                  />
+                )}
+                <t.icon
+                  size={16}
+                  aria-hidden="true"
+                  className={isActive ? "text-accent" : "text-text-muted"}
+                />
+                {t.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="min-w-0 flex-1">
+          <h3 className="mb-4 font-display text-lg font-medium text-text-primary">
+            {active.label}
+          </h3>
+
+          {tab === "profile" && <ProfileSection />}
+
+          {tab === "appearance" && (
+            <div className="space-y-5">
+              <div>
+                <p className="mb-2 text-sm text-text-secondary">Theme</p>
+                <div className="flex rounded-md bg-bg-base p-0.5" role="radiogroup" aria-label="Theme">
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.value}
+                      role="radio"
+                      aria-checked={theme === t.value}
+                      onClick={() => setTheme(t.value)}
+                      className={cx(
+                        "flex-1 rounded px-3 py-1.5 text-sm transition-colors",
+                        theme === t.value
+                          ? "bg-bg-tertiary text-text-primary shadow-sm"
+                          : "text-text-secondary hover:text-text-primary",
+                      )}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-text-secondary">Accent</p>
+                <div className="flex gap-2" role="radiogroup" aria-label="Accent color">
+                  {ACCENT_PRESETS.map((p) => (
+                    <button
+                      key={p.key}
+                      role="radio"
+                      aria-checked={accent === p.key}
+                      aria-label={p.label}
+                      onClick={() => setAccent(p.key)}
+                      className={cx(
+                        "size-6 rounded-full transition-shadow",
+                        accent === p.key
+                          ? "ring-2 ring-text-primary ring-offset-2 ring-offset-bg-elevated"
+                          : "hover:ring-2 hover:ring-text-muted hover:ring-offset-2 hover:ring-offset-bg-elevated",
+                      )}
+                      style={{ backgroundColor: p.base }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === "notifications" && (
+            <div className="space-y-4">
+              <SettingRow
+                title="Desktop notifications"
+                description="Show an OS notification for new messages while Colloquium is unfocused"
+                control={
+                  <Switch
+                    checked={desktopNotifications}
+                    onChange={setDesktopNotifications}
+                    aria-label="Desktop notifications"
+                  />
+                }
               />
-            ))}
-          </div>
+              <SettingRow
+                title="Notification sounds"
+                description="Play a chime when a new message arrives outside the room you're viewing"
+                control={
+                  <Switch
+                    checked={notificationSounds}
+                    onChange={setNotificationSounds}
+                    aria-label="Notification sounds"
+                  />
+                }
+              />
+              <SettingRow
+                title="Message previews"
+                description="Show message text in notifications; turn off to show only the sender's name"
+                control={
+                  <Switch
+                    checked={notificationPreviews}
+                    onChange={setNotificationPreviews}
+                    aria-label="Message previews"
+                  />
+                }
+              />
+            </div>
+          )}
+
+          {tab === "audio" && (
+            <div className="space-y-4">
+              <SettingRow
+                title="Noise suppression"
+                description="Uses AI (RNNoise) to remove background noise like fans, keyboards, and room sounds from your microphone"
+                control={
+                  <Switch
+                    checked={noiseSuppression}
+                    onChange={setNoiseSuppression}
+                    aria-label="Noise suppression"
+                  />
+                }
+              />
+              <SettingRow
+                title="Echo cancellation"
+                description="Stops your speakers from feeding back into your mic. Turn it off when using headphones — voices play back untouched and stay stable when switching mics"
+                control={
+                  <Switch
+                    checked={echoCancellation}
+                    onChange={setEchoCancellation}
+                    aria-label="Echo cancellation"
+                  />
+                }
+              />
+              <SettingRow
+                title="Push-to-talk"
+                description={`Hold ${navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to unmute while in a call`}
+                control={
+                  <Switch checked={pushToTalk} onChange={setPushToTalk} aria-label="Push-to-talk" />
+                }
+              />
+              <DevicesSection />
+            </div>
+          )}
+
+          {tab === "app" && (
+            <div className="space-y-4">
+              <SettingRow
+                title="Close to tray"
+                description="Keep Colloquium running when the window is closed"
+                control={
+                  <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
+                }
+              />
+            </div>
+          )}
         </div>
       </div>
-
-      <div className="mt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-          Notifications
-        </p>
-        <div className="mt-2 space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Desktop notifications</p>
-              <p className="text-xs text-text-secondary">
-                Show an OS notification for new messages while Haven is unfocused
-              </p>
-            </div>
-            <Switch
-              checked={desktopNotifications}
-              onChange={setDesktopNotifications}
-              aria-label="Desktop notifications"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Notification sounds</p>
-              <p className="text-xs text-text-secondary">
-                Play a chime when a new message arrives outside the room you're viewing
-              </p>
-            </div>
-            <Switch
-              checked={notificationSounds}
-              onChange={setNotificationSounds}
-              aria-label="Notification sounds"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Message previews</p>
-              <p className="text-xs text-text-secondary">
-                Show message text in notifications; turn off to show only the sender's name
-              </p>
-            </div>
-            <Switch
-              checked={notificationPreviews}
-              onChange={setNotificationPreviews}
-              aria-label="Message previews"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-          Calls &amp; window
-        </p>
-        <div className="mt-2 space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Push-to-talk</p>
-              <p className="text-xs text-text-secondary">
-                Hold {navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to
-                unmute while in a call
-              </p>
-            </div>
-            <Switch checked={pushToTalk} onChange={setPushToTalk} aria-label="Push-to-talk" />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Close to tray</p>
-              <p className="text-xs text-text-secondary">
-                Keep Haven running when the window is closed
-              </p>
-            </div>
-            <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">Voice</p>
-        <div className="mt-2 space-y-3">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Noise suppression</p>
-              <p className="text-xs text-text-secondary">
-                Uses AI (RNNoise) to remove background noise like fans, keyboards, and room
-                sounds from your microphone
-              </p>
-            </div>
-            <Switch
-              checked={noiseSuppression}
-              onChange={setNoiseSuppression}
-              aria-label="Noise suppression"
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-text-primary">Echo cancellation</p>
-              <p className="text-xs text-text-secondary">
-                Stops your speakers from feeding back into your mic. Turn it off when using
-                headphones — voices play back untouched and stay stable when switching mics
-              </p>
-            </div>
-            <Switch
-              checked={echoCancellation}
-              onChange={setEchoCancellation}
-              aria-label="Echo cancellation"
-            />
-          </div>
-        </div>
-      </div>
-
-      <DevicesSection />
     </Modal>
   );
 }

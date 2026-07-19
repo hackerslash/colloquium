@@ -1,64 +1,64 @@
-/* Hallmark · genre: playful · macrostructure: Workbench · design-system: design.md · designed-as-app */
+/* Hallmark · genre: atmospheric · macrostructure: Workbench · theme: Midnight · design-system: design.md · designed-as-app */
 @import "tailwindcss";
 @import "@fontsource-variable/fraunces";
 @import "@fontsource-variable/inter";
 
 :root[data-theme="dark"] {
-  /* Haven Dark - Luxury soft, relieved */
-  --color-bg-base: oklch(18% 0.015 290);
-  --color-bg-primary: oklch(20% 0.015 290);
-  --color-bg-secondary: oklch(22% 0.018 290);
-  --color-bg-tertiary: oklch(24% 0.018 290);
-  --color-bg-elevated: oklch(22% 0.018 290);
-  
-  --color-border: oklch(28% 0.015 290);
-  --color-border-strong: oklch(35% 0.015 290);
-  
-  --color-text-primary: oklch(95% 0.010 290);
-  --color-text-secondary: oklch(75% 0.010 290);
-  --color-text-muted: oklch(60% 0.010 290);
-  
-  /* Primary Action: Soft Lavender */
-  --color-accent: oklch(75% 0.12 290);
-  --color-accent-hover: oklch(80% 0.12 290);
-  --color-accent-active: oklch(70% 0.12 290);
-  --color-accent-ink: oklch(18% 0.015 290);
-  
+  /* Colloquium Midnight - deep indigo canvas, amber ember accent */
+  --color-bg-base: oklch(15% 0.028 270);
+  --color-bg-primary: oklch(18% 0.030 270);
+  --color-bg-secondary: oklch(21% 0.032 270);
+  --color-bg-tertiary: oklch(24% 0.034 270);
+  --color-bg-elevated: oklch(21% 0.032 270);
+
+  --color-border: oklch(30% 0.030 270);
+  --color-border-strong: oklch(40% 0.030 270);
+
+  --color-text-primary: oklch(96% 0.008 270);
+  --color-text-secondary: oklch(76% 0.014 270);
+  --color-text-muted: oklch(60% 0.018 270);
+
+  /* Primary Action: Ember (warm amber) */
+  --color-accent: oklch(80% 0.14 75);
+  --color-accent-hover: oklch(85% 0.14 75);
+  --color-accent-active: oklch(74% 0.13 75);
+  --color-accent-ink: oklch(20% 0.040 270);
+
   /* States */
-  --color-danger: oklch(65% 0.15 25);
-  --color-danger-hover: oklch(60% 0.15 25);
-  --color-success: oklch(70% 0.12 150);
-  --color-warning: oklch(75% 0.12 65);
-  --color-unread: oklch(75% 0.12 290);
+  --color-danger: oklch(65% 0.18 25);
+  --color-danger-hover: oklch(60% 0.18 25);
+  --color-success: oklch(74% 0.14 155);
+  --color-warning: oklch(80% 0.13 80);
+  --color-unread: oklch(80% 0.14 75);
 }
 
 :root[data-theme="light"] {
-  /* Haven Light - Luxury soft, relieved */
-  --color-bg-base: oklch(97% 0.015 290);
-  --color-bg-primary: oklch(100% 0 0);
-  --color-bg-secondary: oklch(94% 0.018 290);
-  --color-bg-tertiary: oklch(91% 0.018 290);
+  /* Colloquium Day - cool indigo-tinted paper, deep amber accent */
+  --color-bg-base: oklch(96% 0.010 270);
+  --color-bg-primary: oklch(99% 0.005 270);
+  --color-bg-secondary: oklch(93% 0.012 270);
+  --color-bg-tertiary: oklch(90% 0.014 270);
   --color-bg-elevated: oklch(100% 0 0);
-  
-  --color-border: oklch(88% 0.015 290);
-  --color-border-strong: oklch(80% 0.015 290);
-  
-  --color-text-primary: oklch(22% 0.012 290);
-  --color-text-secondary: oklch(45% 0.012 290);
-  --color-text-muted: oklch(65% 0.012 290);
-  
-  /* Primary Action: Soft Lavender */
-  --color-accent: oklch(70% 0.12 290);
-  --color-accent-hover: oklch(65% 0.12 290);
-  --color-accent-active: oklch(60% 0.12 290);
-  --color-accent-ink: oklch(97% 0.015 290);
-  
+
+  --color-border: oklch(87% 0.012 270);
+  --color-border-strong: oklch(78% 0.016 270);
+
+  --color-text-primary: oklch(25% 0.030 270);
+  --color-text-secondary: oklch(45% 0.026 270);
+  --color-text-muted: oklch(62% 0.020 270);
+
+  /* Primary Action: Ember (deeper amber for contrast on light) */
+  --color-accent: oklch(62% 0.13 65);
+  --color-accent-hover: oklch(57% 0.13 65);
+  --color-accent-active: oklch(52% 0.13 65);
+  --color-accent-ink: oklch(24% 0.040 270);
+
   /* States */
-  --color-danger: oklch(60% 0.15 25);
-  --color-danger-hover: oklch(55% 0.15 25);
-  --color-success: oklch(65% 0.12 150);
-  --color-warning: oklch(70% 0.12 65);
-  --color-unread: oklch(70% 0.12 290);
+  --color-danger: oklch(58% 0.19 25);
+  --color-danger-hover: oklch(53% 0.19 25);
+  --color-success: oklch(58% 0.14 155);
+  --color-warning: oklch(66% 0.14 80);
+  --color-unread: oklch(62% 0.13 65);
 }
 
 @theme inline {
@@ -85,8 +85,8 @@
   --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Fraunces Variable", "Fraunces", ui-serif, Georgia, serif;
   
-  --shadow-modal: 0 16px 32px rgb(0 0 0 / 0.10), 0 0 0 1px var(--color-border);
-  --shadow-soft: 0 8px 24px -10px oklch(70% 0.12 290 / 0.15);
+  --shadow-modal: 0 16px 32px rgb(0 0 0 / 0.28), 0 0 0 1px var(--color-border);
+  --shadow-soft: 0 8px 28px -10px oklch(80% 0.14 75 / 0.22);
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.03);
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.05);
 }

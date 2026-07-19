@@ -29,7 +29,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <div>
           <p className="text-sm font-medium text-text-primary">Something went wrong</p>
           <p className="mt-1 max-w-sm text-xs text-text-secondary">
-            Haven hit an unexpected error and needs to restart this view. Your messages and
+            Colloquium hit an unexpected error and needs to restart this view. Your messages and
             calls aren't affected.
           </p>
         </div>

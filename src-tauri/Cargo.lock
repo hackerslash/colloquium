@@ -607,6 +607,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "colloquium"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "block2",
+ "dispatch2",
+ "ed25519-dalek",
+ "hex",
+ "keyring",
+ "objc2",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-core-media",
+ "objc2-foundation",
+ "objc2-screen-capture-kit",
+ "rand_core 0.6.4",
+ "serde",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-sql",
+ "tauri-plugin-window-state",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
+]
+
+[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1785,36 +1815,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "haven"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "block2",
- "dispatch2",
- "ed25519-dalek",
- "hex",
- "keyring",
- "objc2",
- "objc2-core-audio-types",
- "objc2-core-foundation",
- "objc2-core-media",
- "objc2-foundation",
- "objc2-screen-capture-kit",
- "rand_core 0.6.4",
- "serde",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "tauri-plugin-sql",
- "tauri-plugin-window-state",
- "windows 0.58.0",
- "windows-core 0.58.0",
 ]
 
 [[package]]

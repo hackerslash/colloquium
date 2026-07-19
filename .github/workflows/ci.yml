@@ -1,6 +1,6 @@
 name: CI
 
-# Builds and tests Haven on native macOS, Windows, and Linux runners for
+# Builds and tests Colloquium on native macOS, Windows, and Linux runners for
 # every push/PR, so platform-specific regressions (e.g. a backend only
 # compiled in for some OSes) are caught before a release build.
 on:

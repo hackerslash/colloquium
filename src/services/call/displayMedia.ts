@@ -54,7 +54,7 @@ export function describeScreenShareError(err: unknown): string {
   const name = (err as Error)?.name;
   if (name === "NotAllowedError") {
     return isMacOS()
-      ? "Screen share was cancelled or blocked. On macOS, grant Screen Recording to Haven in System Settings ▸ Privacy & Security." +
+      ? "Screen share was cancelled or blocked. On macOS, grant Screen Recording to Colloquium in System Settings ▸ Privacy & Security." +
           MACOS_QUARANTINE_HINT
       : "Screen share was cancelled. Pick a screen or window and allow sharing to try again.";
   }
@@ -67,7 +67,7 @@ export function describeScreenShareError(err: unknown): string {
 //
 // This is only used on platforms WITHOUT native capture (Linux). On macOS and
 // Windows we deliberately DON'T request getDisplayMedia audio at all: that tap
-// is a whole-system loopback that also recaptures Haven's own playback of the
+// is a whole-system loopback that also recaptures Colloquium's own playback of the
 // remote participants, sending their voices back to them (echo). Those
 // platforms capture system audio natively instead, excluding the app's own
 // process (see systemAudio.ts / the Rust `sysaudio_*` commands).
@@ -127,7 +127,7 @@ export async function captureDisplay(config?: ScreenShareQualityOption): Promise
   }
 
   // On macOS/Windows, splice in the natively-captured system audio (excludes
-  // Haven's own output, so a call doesn't echo). Best-effort: if native capture
+  // Colloquium's own output, so a call doesn't echo). Best-effort: if native capture
   // is unavailable the screen still shares, video-only.
   if (native && stream.getAudioTracks().length === 0) {
     const nativeTrack = await startSystemAudioTrack();

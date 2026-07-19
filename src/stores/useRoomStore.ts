@@ -33,7 +33,7 @@ function totalUnread(map: Record<string, number>): number {
 
 function refreshAppBadge(map: Record<string, number>) {
   const total = totalUnread(map);
-  document.title = total > 0 ? `Haven (${total})` : "Haven";
+  document.title = total > 0 ? `Colloquium (${total})` : "Colloquium";
   void setAppBadge(total);
 }
 

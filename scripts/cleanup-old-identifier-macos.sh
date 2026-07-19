@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Removes every local trace of a Haven install that used the old bundle
-# identifier (care.ayoo.haven): the app itself, its data and caches, the
-# keychain identity entry, and macOS permission records. Run this before
-# installing a havenapp-identified build.
+# Removes every local trace of a prior Haven install that used the old bundle
+# identifier (havenapp): the app itself, its data and caches, the keychain
+# identity entry, and macOS permission records. Run this before installing a
+# colloquiumapp-identified build.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hackerslash/Haven/main/scripts/cleanup-old-identifier-macos.sh | bash
 set -euo pipefail
 
-OLD_ID="care.ayoo.haven"
+OLD_ID="havenapp"
 APP="/Applications/Haven.app"
 
 if [ "$(uname)" != "Darwin" ]; then

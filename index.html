@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Haven</title>
+    <title>Colloquium</title>
     <script>
       // Applied synchronously, before first paint, to avoid a flash of the wrong theme.
       // Reconciled against the SQLite settings table (source of truth) once the DB loads.
       (function () {
-        var cached = localStorage.getItem("haven-theme");
+        var cached = localStorage.getItem("colloquium-theme");
         var theme =
           cached === "light" || cached === "dark"
             ? cached
@@ -22,7 +22,7 @@
         // runs before any module loads, so it just reads the cache; the DB
         // reconciles the real value shortly after.
         try {
-          var raw = localStorage.getItem("haven-accent-vars");
+          var raw = localStorage.getItem("colloquium-accent-vars");
           if (raw) {
             var p = JSON.parse(raw);
             var vals = theme === "light" ? p.l : p.d;

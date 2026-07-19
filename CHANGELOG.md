@@ -1,11 +1,23 @@
 # Changelog
 
-All notable changes to Haven are documented here. Format loosely follows
+All notable changes to Colloquium are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
+
+## 0.4.0
+
+### Changed
+
+- Rebranded from Haven to Colloquium. The bundle identifier changed from
+  `havenapp` to `colloquiumapp` and the local database from `haven.db` to
+  `colloquium.db`, so existing installs start fresh (new identity key and
+  local database). On macOS, run `scripts/cleanup-old-identifier-macos.sh` to
+  remove all traces of an old install before upgrading.
+- New atmospheric-midnight visual system: deep indigo canvas, luminous amber
+  accent, and restructured onboarding, sidebar, and settings surfaces.
 
 ## 0.3.0
 
@@ -41,7 +53,7 @@ GitHub Release notes.
 
 **Calls**
 - Fixed a macOS bug where a friend's screen share echoed your own mic back to
-  you: system-audio capture now excludes Haven's application — including the
+  you: system-audio capture now excludes Colloquium's application — including the
   WKWebView helper processes that actually render call audio — at the
   ScreenCaptureKit filter level, not just the capturing process itself.
 - Fixed switching microphones mid-call sometimes replacing the wrong sender's

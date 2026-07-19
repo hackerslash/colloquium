@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Check,
   Copy,
@@ -36,6 +36,31 @@ type SidebarProps = {
 
 function shortId(identityId: string): string {
   return `${identityId.slice(0, 8)}…${identityId.slice(-4)}`;
+}
+
+const ROW_BASE =
+  "group/row relative flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] transition-colors duration-150";
+
+/** Ember indicator bar for the active nav row — the atmospheric alternative to
+ * a hover-lift translate. */
+function ActiveBar() {
+  return (
+    <span
+      aria-hidden="true"
+      className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-accent"
+    />
+  );
+}
+
+function SectionHeader({ children, action }: { children: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between px-5 pt-7 pb-2">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+        {children}
+      </span>
+      {action}
+    </div>
+  );
 }
 
 export function Sidebar({
@@ -105,9 +130,10 @@ export function Sidebar({
       aria-label="Conversations"
       className="flex w-64 shrink-0 flex-col bg-bg-base"
     >
-      <div className="flex h-16 shrink-0 items-center px-6">
-        <span className="font-display italic text-xl font-normal tracking-[-0.02em] text-text-primary">
-          Haven
+      <div className="flex h-16 shrink-0 items-center gap-2 px-6">
+        <span className="size-2 rounded-full bg-accent" aria-hidden="true" />
+        <span className="font-display text-xl font-medium tracking-[-0.02em] text-text-primary">
+          Colloquium
         </span>
       </div>
 
@@ -116,12 +142,14 @@ export function Sidebar({
           onClick={() => onSelect({ kind: "home" })}
           aria-current={selection.kind === "home" ? "true" : undefined}
           className={cx(
-            "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium transition-all duration-200",
+            ROW_BASE,
+            "font-medium",
             selection.kind === "home"
-              ? "bg-bg-primary text-text-primary shadow-sm"
-              : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
+              ? "bg-bg-secondary text-text-primary"
+              : "text-text-secondary hover:bg-bg-secondary/60 hover:text-text-primary",
           )}
         >
+          {selection.kind === "home" && <ActiveBar />}
           <Home
             size={18}
             aria-hidden="true"
@@ -133,17 +161,18 @@ export function Sidebar({
         </button>
       </div>
 
-      <div className="flex items-center justify-between px-6 pt-8 pb-3">
-        <span className="text-[12px] font-semibold tracking-wider text-text-muted uppercase">
-          Spaces
-        </span>
-        <IconButton
-          icon={Plus}
-          label="Create a room"
-          size="sm"
-          onClick={onCreateGroup}
-        />
-      </div>
+      <SectionHeader
+        action={
+          <IconButton
+            icon={Plus}
+            label="Create a room"
+            size="sm"
+            onClick={onCreateGroup}
+          />
+        }
+      >
+        Spaces
+      </SectionHeader>
       <ul className="px-4 space-y-1">
         {groupRooms.map((room) => {
           const active =
@@ -164,14 +193,15 @@ export function Sidebar({
                 onClick={() => onSelect({ kind: "group", roomId: room.id })}
                 aria-current={active ? "true" : undefined}
                 className={cx(
-                  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[14px] transition-all duration-200",
+                  ROW_BASE,
                   active
-                    ? "bg-bg-primary font-medium text-text-primary shadow-sm"
+                    ? "bg-bg-secondary font-medium text-text-primary"
                     : unread > 0
-                      ? "font-semibold text-text-primary hover:bg-bg-secondary hover:-translate-y-0.5"
-                      : "text-text-secondary hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
+                      ? "font-semibold text-text-primary hover:bg-bg-secondary/60"
+                      : "text-text-secondary hover:bg-bg-secondary/60 hover:text-text-primary",
                 )}
               >
+                {active && <ActiveBar />}
                 <Hash
                   size={18}
                   className={cx(
@@ -200,7 +230,7 @@ export function Sidebar({
               </button>
 
               {inCallCount > 0 && (
-                <div className="ml-5 mt-0.5 border-l-2 border-success/30 pl-2 pr-1 py-0.5 space-y-0.5">
+                <div className="mx-1 mt-1 rounded-lg bg-bg-secondary/40 p-1.5">
                   <ul className="space-y-0.5">
                     {callParticipants.map((id) => {
                       const isSelf = id === self?.identityId;
@@ -299,9 +329,7 @@ export function Sidebar({
         )}
       </ul>
 
-      <div className="px-6 pt-8 pb-3 text-[12px] font-semibold tracking-wider text-text-muted uppercase">
-        Connections
-      </div>
+      <SectionHeader>Connections</SectionHeader>
       <ul className="flex-1 overflow-y-auto px-4 space-y-1">
         {contacts.map((contact) => {
           const presence = presenceById[contact.identityId] ?? "offline";
@@ -318,12 +346,14 @@ export function Sidebar({
                 }
                 aria-current={active ? "true" : undefined}
                 className={cx(
-                  "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pr-8 text-left transition-all duration-200",
+                  ROW_BASE,
+                  "pr-8",
                   active
-                    ? "bg-bg-primary shadow-sm"
-                    : "hover:bg-bg-secondary hover:text-text-primary hover:-translate-y-0.5",
+                    ? "bg-bg-secondary"
+                    : "hover:bg-bg-secondary/60 hover:text-text-primary",
                 )}
               >
+                {active && <ActiveBar />}
                 <Avatar
                   id={contact.identityId}
                   name={contact.displayName}
@@ -390,7 +420,7 @@ export function Sidebar({
       </ul>
 
       {/* User footer bar */}
-      <div className="m-4 mt-2 flex shrink-0 items-center gap-3 rounded-2xl bg-bg-secondary p-3 shadow-sm transition-colors hover:bg-bg-tertiary">
+      <div className="m-4 mt-2 flex shrink-0 items-center gap-3 rounded-2xl border border-border bg-bg-secondary p-3 transition-colors hover:bg-bg-tertiary">
         {self && (
           <Avatar id={self.identityId} name={self.displayName} size="md" />
         )}

@@ -9,7 +9,7 @@ import { useSettingsStore } from "../stores/useSettingsStore";
 
 // Only the OS *prompt* is one-shot (re-asking on every call would be
 // obnoxious); actual grant state is re-checked every time so a permission the
-// user flips on later (via OS settings, without restarting Haven) is picked
+// user flips on later (via OS settings, without restarting Colloquium) is picked
 // up instead of staying permanently "denied" from a stale first check.
 let hasPrompted = false;
 let deniedNoticeShown = false;
@@ -24,7 +24,7 @@ async function ensurePermission(): Promise<boolean> {
     deniedNoticeShown = true;
     toast.warning(
       "Notifications are off",
-      "Haven won't alert you about messages or calls while unfocused. Enable notifications for Haven in your OS settings to turn this back on.",
+      "Colloquium won't alert you about messages or calls while unfocused. Enable notifications for Colloquium in your OS settings to turn this back on.",
     );
   }
   return false;

@@ -401,7 +401,7 @@ export type AvatarDataMessage = {
   data: string;
 };
 
-export type HavenMessage =
+export type ColloquiumMessage =
   | ProfileAnnounceMessage
   | AvatarRequestMessage
   | AvatarDataMessage

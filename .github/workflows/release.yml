@@ -1,6 +1,6 @@
 name: Release
 
-# Builds Haven on native macOS, Windows, and Linux runners and publishes the installers
+# Builds Colloquium on native macOS, Windows, and Linux runners and publishes the installers
 # to a GitHub Release. Triggered by pushing a version tag (e.g. v1).
 on:
   push:
@@ -45,7 +45,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `Haven ${tag}`,
+              name: `Colloquium ${tag}`,
               body,
               draft: true,
               prerelease: false,

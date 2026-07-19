@@ -1,4 +1,4 @@
-# Haven
+# Colloquium
 
 A premium, Discord-inspired peer-to-peer desktop app for persistent text chat
 and voice/video rooms — Windows, macOS, and Linux. Built with Tauri v2 + React
@@ -12,20 +12,20 @@ Download the latest installer from the
 [Releases page](https://github.com/hackerslash/Haven/releases/latest).
 
 **macOS**
-1. Move `Haven.app` into `/Applications`.
+1. Move `Colloquium.app` into `/Applications`.
 2. Run this once (the build isn't notarized, so without it Screen
    Recording/Camera/Mic permissions won't persist across relaunches):
    ```sh
    curl -fsSL https://raw.githubusercontent.com/hackerslash/Haven/main/scripts/fix-macos-permissions.sh | bash
    ```
-3. Open Haven and grant permissions when prompted.
+3. Open Colloquium and grant permissions when prompted.
 
 **Windows**
-Run the downloaded `.exe`/`.msi` installer, then launch Haven from the Start
+Run the downloaded `.exe`/`.msi` installer, then launch Colloquium from the Start
 menu.
 
 **Linux**
-Install the `.deb`, `.rpm`, or `.AppImage` for your distro. Haven stores its
+Install the `.deb`, `.rpm`, or `.AppImage` for your distro. Colloquium stores its
 identity key via the Secret Service D-Bus API, so a keyring provider (GNOME
 Keyring, KWallet, etc.) must be running.
 

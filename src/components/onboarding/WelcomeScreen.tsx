@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { Sparkles } from "lucide-react";
+import { MessagesSquare } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { Button } from "../ui/Button";
 
@@ -10,10 +10,10 @@ import { Button } from "../ui/Button";
 function friendlyIdentityError(err: unknown): string {
   const raw = String(err);
   if (raw.includes("already exists")) {
-    return "This device already has an identity. Restart Haven to continue with it.";
+    return "This device already has an identity. Restart Colloquium to continue with it.";
   }
   if (/keychain|keyring/i.test(raw)) {
-    return "Haven couldn't reach your system's secure storage. Check your OS security settings and try again.";
+    return "Colloquium couldn't reach your system's secure storage. Check your OS security settings and try again.";
   }
   return "Something went wrong setting up your identity. Please try again.";
 }
@@ -41,23 +41,45 @@ export function WelcomeScreen() {
   }
 
   return (
-    <div className="flex h-full items-center justify-center bg-bg-base p-6">
-      <div className="w-full max-w-sm">
+    <div className="relative flex h-full items-center justify-center overflow-hidden bg-bg-base p-6">
+      {/* Atmospheric ground: two static blooms behind the content. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(55% 45% at 50% -5%, color-mix(in oklch, var(--color-accent) 16%, transparent), transparent 70%), radial-gradient(45% 45% at 108% 112%, color-mix(in oklch, var(--color-accent) 7%, transparent), transparent 70%)",
+        }}
+      />
+
+      <div className="relative z-10 w-full max-w-sm">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, ease: "easeOut" }}
+          className="mb-8 flex items-center justify-center gap-2"
+        >
+          <span className="size-2 rounded-full bg-accent" aria-hidden="true" />
+          <span className="font-display text-2xl font-medium tracking-[-0.02em] text-text-primary">
+            Colloquium
+          </span>
+        </motion.div>
+
         <motion.div
           initial={{ opacity: 0, scale: 0.98, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="rounded-[24px] border border-border/50 bg-bg-primary p-10 shadow-soft"
+          transition={{ duration: 0.8, ease: "easeOut", delay: 0.1 }}
+          className="rounded-[24px] border border-border/60 bg-bg-primary/70 p-10 shadow-soft backdrop-blur-xl"
         >
           <div className="mb-8 flex h-14 w-14 items-center justify-center rounded-[18px] bg-bg-secondary text-accent">
-            <Sparkles size={24} strokeWidth={1.5} aria-hidden="true" />
+            <MessagesSquare size={24} strokeWidth={1.5} aria-hidden="true" />
           </div>
-          
-          <h1 className="font-display italic text-[28px] font-normal tracking-[-0.02em] text-text-primary mb-3" style={{ textWrap: "balance" }}>
-            A space to connect.
+
+          <h1 className="mb-3 font-display text-[28px] font-medium tracking-[-0.02em] text-text-primary" style={{ textWrap: "balance" }}>
+            A space to converse.
           </h1>
           <p className="text-[15px] leading-relaxed text-text-secondary">
-            Haven keeps your conversations private and local. Pick a name to start building your enclave.
+            Colloquium keeps your conversations private and local. Pick a name to start building your enclave.
           </p>
 
           <form onSubmit={handleSubmit} className="mt-8">
@@ -91,12 +113,12 @@ export function WelcomeScreen() {
               disabled={!displayName.trim()}
               className="mt-8 w-full shadow-soft"
             >
-              Enter Haven
+              Enter Colloquium
             </Button>
           </form>
         </motion.div>
-        
-        <motion.p 
+
+        <motion.p
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5, duration: 0.8 }}

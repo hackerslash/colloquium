@@ -414,7 +414,7 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
       incomingFiles.delete(msg.fileId);
 
       // Dispatch an event so MessageList/MessageAttachment can re-render to load the file
-      window.dispatchEvent(new CustomEvent("haven_file_downloaded", { detail: msg.fileId }));
+      window.dispatchEvent(new CustomEvent("colloquium_file_downloaded", { detail: msg.fileId }));
     }
   }
 }

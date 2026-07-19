@@ -10,7 +10,7 @@ type ModalProps = {
   open: boolean;
   onClose: () => void;
   title: string;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   children: ReactNode;
   footer?: ReactNode;
 };
@@ -19,6 +19,7 @@ const SIZE: Record<NonNullable<ModalProps["size"]>, string> = {
   sm: "w-80",
   md: "w-96",
   lg: "w-[32rem]",
+  xl: "w-[46rem]",
 };
 
 function ModalPanel({ onClose, title, size = "md", children, footer }: Omit<ModalProps, "open">) {

@@ -1,5 +1,5 @@
 import type { Identity, Message, Presence } from "../../types/domain";
-import type { HavenMessage, MsgAckMessage } from "../../types/wire";
+import type { ColloquiumMessage, MsgAckMessage } from "../../types/wire";
 import { initPeerRegistry, getOutbox } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
 import * as messageRepo from "../db/messageRepo";
@@ -211,13 +211,13 @@ export function initNetworkBridge(self: Identity): () => void {
   // from a peer that maps to a trusted, non-revoked contact. Without this gate
   // a stranger who dials could inject messages, pull room history, forge roster
   // and leave events, flip delivery state, or spam call invites.
-  const TRUST_ESTABLISHING = new Set<HavenMessage["type"]>([
+  const TRUST_ESTABLISHING = new Set<ColloquiumMessage["type"]>([
     "invite_consume",
     "invite_ack",
   ]);
 
   async function routeMessage(peerId: string, data: unknown) {
-    const msg = data as HavenMessage;
+    const msg = data as ColloquiumMessage;
     if (!msg?.type) return;
     const sender = findContactByPeerId(peerId);
     if (!TRUST_ESTABLISHING.has(msg.type) && (!sender || sender.revoked)) {

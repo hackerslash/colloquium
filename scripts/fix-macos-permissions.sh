@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Clears the Gatekeeper quarantine flag from an installed Haven.app and re-signs
+# Clears the Gatekeeper quarantine flag from an installed Colloquium.app and re-signs
 # it with a stable, locally-generated certificate (creating one on first run if
 # needed) instead of the release build's ad-hoc signature.
 #
-# Why: Haven's release builds aren't signed with a paid Apple Developer ID, so
+# Why: Colloquium's release builds aren't signed with a paid Apple Developer ID, so
 # the .app carries an ad-hoc signature with no Team Identifier. macOS won't
 # persist Screen Recording / Camera / Mic grants across relaunches for an
 # ad-hoc-signed app — it re-prompts every time, even after you approve it and
@@ -13,11 +13,11 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/hackerslash/Haven/main/scripts/fix-macos-permissions.sh | bash
 #   # or, for a non-default install location:
-#   curl -fsSL .../fix-macos-permissions.sh | bash -s -- /path/to/Haven.app
+#   curl -fsSL .../fix-macos-permissions.sh | bash -s -- /path/to/Colloquium.app
 set -euo pipefail
 
-APP="${1:-/Applications/Haven.app}"
-IDENTITY="Haven Local Signing"
+APP="${1:-/Applications/Colloquium.app}"
+IDENTITY="Colloquium Local Signing"
 
 if [ "$(uname)" != "Darwin" ]; then
   echo "This script is for macOS only." >&2
@@ -25,8 +25,8 @@ if [ "$(uname)" != "Darwin" ]; then
 fi
 
 if [ ! -d "$APP" ]; then
-  echo "Haven.app not found at $APP" >&2
-  echo "Pass its path: fix-macos-permissions.sh /path/to/Haven.app" >&2
+  echo "Colloquium.app not found at $APP" >&2
+  echo "Pass its path: fix-macos-permissions.sh /path/to/Colloquium.app" >&2
   exit 1
 fi
 
@@ -91,6 +91,6 @@ for service in Microphone Camera ScreenCapture; do
   tccutil reset "$service" "$BUNDLE_ID" >/dev/null 2>&1 || true
 done
 
-echo "==> Done. Fully quit Haven (Cmd+Q) if it's running, then reopen it."
+echo "==> Done. Fully quit Colloquium (Cmd+Q) if it's running, then reopen it."
 echo "    Grant Screen Recording / Camera / Mic once more — after that they"
 echo "    should persist across future launches."

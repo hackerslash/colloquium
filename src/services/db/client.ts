@@ -1,6 +1,6 @@
 import Database from "@tauri-apps/plugin-sql";
 
-const DB_URL = "sqlite:haven.db";
+const DB_URL = "sqlite:colloquium.db";
 
 let dbPromise: Promise<Database> | null = null;
 

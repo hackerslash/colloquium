@@ -7,9 +7,9 @@ import { logCallDebug } from "./callDebug";
  *
  * getDisplayMedia's own audio path is unusable for a call: on macOS WKWebView
  * returns no audio at all, and on Windows it taps a whole-system loopback that
- * recaptures Haven's own playback of the other participants — sending their
+ * recaptures Colloquium's own playback of the other participants — sending their
  * voices back to them (echo). So the Rust side taps system audio natively,
- * EXCLUDING Haven's own audio (ScreenCaptureKit app-level filter exclusion on
+ * EXCLUDING Colloquium's own audio (ScreenCaptureKit app-level filter exclusion on
  * macOS — the webview helper processes render the call audio, so excluding
  * just the current process isn't enough — WASAPI process-loopback exclude on
  * Windows), and streams PCM here;
@@ -61,7 +61,7 @@ export function usesNativeSystemAudio(): boolean {
  * Appended wherever a macOS permission wall is hit so users aren't stuck
  * re-granting. */
 export const MACOS_QUARANTINE_HINT =
-  " If macOS keeps re-asking after you grant it, the app is quarantined: move Haven to /Applications and run `xattr -cr /Applications/Haven.app` once.";
+  " If macOS keeps re-asking after you grant it, the app is quarantined: move Colloquium to /Applications and run `xattr -cr /Applications/Colloquium.app` once.";
 
 function base64ToFloat32(b64: string): Float32Array {
   const bin = atob(b64);
@@ -91,7 +91,7 @@ async function startSystemAudioTrackInner(): Promise<MediaStreamTrack | null> {
       });
     }
     await sysWorkletLoaded;
-    const node = new AudioWorkletNode(ctx, "haven-sysaudio", { outputChannelCount: [2] });
+    const node = new AudioWorkletNode(ctx, "colloquium-sysaudio", { outputChannelCount: [2] });
     const dest = ctx.createMediaStreamDestination();
     node.connect(dest);
 

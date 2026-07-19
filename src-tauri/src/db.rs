@@ -1,6 +1,6 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 
-pub const DB_URL: &str = "sqlite:haven.db";
+pub const DB_URL: &str = "sqlite:colloquium.db";
 
 pub fn migrations() -> Vec<Migration> {
     const DEFS: &[(i64, &str, &str)] = &[

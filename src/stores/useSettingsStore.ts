@@ -19,12 +19,12 @@ export type AccentPreset = {
 };
 
 export const ACCENT_PRESETS: AccentPreset[] = [
-  { key: "indigo", label: "Indigo", base: "#6366f1", hover: "#4f46e5", active: "#4338ca", lightBase: "#5b5fe0", lightHover: "#4a4ec9", lightActive: "#3f43b3" },
-  { key: "blue", label: "Blue", base: "#3b82f6", hover: "#2563eb", active: "#1d4ed8", lightBase: "#2563eb", lightHover: "#1d4ed8", lightActive: "#1e40af" },
-  { key: "emerald", label: "Emerald", base: "#10b981", hover: "#059669", active: "#047857", lightBase: "#059669", lightHover: "#047857", lightActive: "#065f46" },
-  { key: "violet", label: "Violet", base: "#8b5cf6", hover: "#7c3aed", active: "#6d28d9", lightBase: "#7c3aed", lightHover: "#6d28d9", lightActive: "#5b21b6" },
-  { key: "rose", label: "Rose", base: "#f43f5e", hover: "#e11d48", active: "#be123c", lightBase: "#e11d48", lightHover: "#be123c", lightActive: "#9f1239" },
-  { key: "amber", label: "Amber", base: "#f59e0b", hover: "#d97706", active: "#b45309", lightBase: "#d97706", lightHover: "#b45309", lightActive: "#92400e" },
+  { key: "ember", label: "Ember", base: "#f2ad3f", hover: "#ffbc52", active: "#dd9a33", lightBase: "#bd7a1e", lightHover: "#a96c15", lightActive: "#965f0e" },
+  { key: "indigo", label: "Indigo", base: "#8b8cf5", hover: "#a0a1f8", active: "#7576ea", lightBase: "#5b5fe0", lightHover: "#4a4ec9", lightActive: "#3f43b3" },
+  { key: "blue", label: "Blue", base: "#5aa0f8", hover: "#7bb4fa", active: "#3b82f6", lightBase: "#2563eb", lightHover: "#1d4ed8", lightActive: "#1e40af" },
+  { key: "emerald", label: "Emerald", base: "#34d399", hover: "#5ee0af", active: "#10b981", lightBase: "#059669", lightHover: "#047857", lightActive: "#065f46" },
+  { key: "violet", label: "Violet", base: "#a78bfa", hover: "#bda4fc", active: "#8b5cf6", lightBase: "#7c3aed", lightHover: "#6d28d9", lightActive: "#5b21b6" },
+  { key: "rose", label: "Rose", base: "#fb7185", hover: "#fd93a3", active: "#f43f5e", lightBase: "#e11d48", lightHover: "#be123c", lightActive: "#9f1239" },
 ];
 
 type SettingsState = {
@@ -32,7 +32,7 @@ type SettingsState = {
   accent: string;
   pushToTalk: boolean;
   closeToTray: boolean;
-  /** Show an OS notification for new messages while Haven is unfocused. */
+  /** Show an OS notification for new messages while Colloquium is unfocused. */
   desktopNotifications: boolean;
   /** Play a chime for new messages arriving in a room you're not viewing. */
   notificationSounds: boolean;
@@ -79,15 +79,15 @@ function systemPrefersDark(): boolean {
 export function applyTheme(theme: ThemePref) {
   const effective = theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
   document.documentElement.setAttribute("data-theme", effective);
-  localStorage.setItem("haven-theme", effective);
+  localStorage.setItem("colloquium-theme", effective);
 }
 
 /** Sets the three accent CSS custom properties on :root.
- *  When the default "indigo" is selected the inline styles are removed so the
+ *  When the default "ember" is selected the inline styles are removed so the
  *  stylesheet-defined values apply instead.
  *
  *  Also caches the selected preset's resolved values (both light + dark
- *  variants) to localStorage under "haven-accent-vars". ACCENT_PRESETS is the
+ *  variants) to localStorage under "colloquium-accent-vars". ACCENT_PRESETS is the
  *  single source of truth; the pre-paint script in index.html just replays this
  *  cache to avoid an accent flash on launch, so the hex values live in exactly
  *  one place. */
@@ -95,11 +95,11 @@ export function applyAccent(key: string) {
   const preset = ACCENT_PRESETS.find((p) => p.key === key);
   const style = document.documentElement.style;
 
-  if (!preset || preset.key === "indigo") {
+  if (!preset || preset.key === "ember") {
     style.removeProperty("--color-accent");
     style.removeProperty("--color-accent-hover");
     style.removeProperty("--color-accent-active");
-    localStorage.removeItem("haven-accent-vars");
+    localStorage.removeItem("colloquium-accent-vars");
     return;
   }
 
@@ -111,7 +111,7 @@ export function applyAccent(key: string) {
   style.setProperty("--color-accent-active", isLight ? preset.lightActive : preset.active);
 
   localStorage.setItem(
-    "haven-accent-vars",
+    "colloquium-accent-vars",
     JSON.stringify({
       d: [preset.base, preset.hover, preset.active],
       l: [preset.lightBase, preset.lightHover, preset.lightActive],
@@ -121,7 +121,7 @@ export function applyAccent(key: string) {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: "system",
-  accent: "indigo",
+  accent: "ember",
   pushToTalk: false,
   closeToTray: true,
   desktopNotifications: true,
@@ -137,7 +137,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loadSettings: async () => {
     const all = await settingsRepo.getAll();
     const theme = (all.theme as ThemePref) ?? "system";
-    const accent = (all.accent as string) ?? "indigo";
+    const accent = (all.accent as string) ?? "ember";
     const pushToTalk = (all.pushToTalk as boolean) ?? false;
     const closeToTray = (all.closeToTray as boolean) ?? true;
     const desktopNotifications = (all.desktopNotifications as boolean) ?? true;
@@ -187,7 +187,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setAccent: async (key) => {
     const previous = get().accent;
-    applyAccent(key); // also refreshes the cached "haven-accent-vars"
+    applyAccent(key); // also refreshes the cached "colloquium-accent-vars"
     set({ accent: key });
     try {
       await settingsRepo.set("accent", key);

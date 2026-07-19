@@ -1,8 +1,8 @@
-import type { HavenMessage } from "../../types/wire";
+import type { ColloquiumMessage } from "../../types/wire";
 import type { PeerRegistry } from "./PeerRegistry";
 
 type QueuedItem = {
-  payload: HavenMessage;
+  payload: ColloquiumMessage;
   expiresAt: number;
   onExpired?: () => void;
 };
@@ -21,7 +21,7 @@ export class Outbox {
   }
 
   /** Sends now if connected, else queues. Returns true if sent immediately. */
-  send(peerId: string, payload: HavenMessage, ttlMs: number, onExpired?: () => void): boolean {
+  send(peerId: string, payload: ColloquiumMessage, ttlMs: number, onExpired?: () => void): boolean {
     if (this.registry.send(peerId, payload)) return true;
     const queue = this.queues.get(peerId) ?? [];
     queue.push({ payload, expiresAt: Date.now() + ttlMs, onExpired });
