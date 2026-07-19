@@ -11,7 +11,7 @@ type ComposerProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSend: (file?: File) => void | Promise<unknown>;
-  replyingTo?: { authorName: string; snippet: string } | null;
+  replyingTo?: { id: string; authorName: string; snippet: string } | null;
   onCancelReply?: () => void;
 };
 
@@ -32,6 +32,14 @@ export function Composer({ value, placeholder, onChange, onSend, replyingTo, onC
   useEffect(() => {
     autoGrow();
   }, [value]);
+
+  // Picking "Reply" on a message should hand focus straight to the input —
+  // keyed on the message id (not the replyingTo object, which both callers
+  // rebuild every render) so this only fires when the target actually changes.
+  const replyId = replyingTo?.id;
+  useEffect(() => {
+    if (replyId) textareaRef.current?.focus();
+  }, [replyId]);
 
   function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
     onChange(e.target.value);
