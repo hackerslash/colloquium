@@ -1,6 +1,7 @@
 import { getDb } from "./client";
 import type { Message } from "../../types/domain";
 import { humanizeMentions } from "../../lib/mentions";
+import { humanizeAnimatedEmoji } from "../../lib/animatedEmoji";
 
 type MessageRow = {
   id: string;
@@ -267,7 +268,7 @@ export async function searchMessages(
   );
   return rows.map((row) => ({
     message: fromRow(row),
-    snippet: humanizeMentions(row.snippet),
+    snippet: humanizeAnimatedEmoji(humanizeMentions(row.snippet)),
   }));
 }
 

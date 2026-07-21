@@ -1,5 +1,6 @@
 import React from "react";
 import { cx } from "../../lib/cx";
+import { resolveEmoji } from "../../lib/animatedEmoji";
 
 /** Resolves a mentioned identityId to a display name (the viewer's own roster
  * name for that id), or null when unknown. */
@@ -24,10 +25,11 @@ function parseInlineMarkdown(
   const elements: React.ReactNode[] = [];
   let index = 0;
 
-  // Regex matches: mention token @[Name](id), inline code, bold (** or __),
-  // strikethrough (~~), italic (* or _), links (http/https). Mentions come
-  // first so an id's characters can't be misparsed as other inline syntax.
-  const inlineRegex = /(@\[[^\]\n]{1,64}\]\([A-Za-z0-9_-]{8,128}\))|(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(~~[^~]+~~)|(\*[^*]+\*|_[^_]+_)|(https?:\/\/[^\s<]+)/g;
+  // Regex matches: mention token @[Name](id), animated emoji token :fx:id:,
+  // inline code, bold (** or __), strikethrough (~~), italic (* or _), links
+  // (http/https). Mentions and emoji tokens come first so their characters
+  // can't be misparsed as other inline syntax.
+  const inlineRegex = /(@\[[^\]\n]{1,64}\]\([A-Za-z0-9_-]{8,128}\))|(:fx:[a-z0-9-]{1,24}:)|(`[^`]+`)|(\*\*[^*]+\*\*|__[^_]+__)|(~~[^~]+~~)|(\*[^*]+\*|_[^_]+_)|(https?:\/\/[^\s<]+)/g;
 
   let match: RegExpExecArray | null;
   let lastIndex = 0;
@@ -68,6 +70,24 @@ function parseInlineMarkdown(
       } else {
         elements.push(matchedStr);
       }
+    } else if (matchedStr.startsWith(":fx:")) {
+      // Animated emoji token :fx:id:. Falls back to the raw token text if
+      // the id isn't in the curated set (e.g. a token from a client whose
+      // set has since changed).
+      const resolved = resolveEmoji(matchedStr);
+      elements.push(
+        resolved.kind === "animated" ? (
+          <img
+            key={index++}
+            src={resolved.url}
+            alt={resolved.name}
+            title={resolved.name}
+            className="inline-block h-5 w-5 -mb-1 align-text-bottom"
+          />
+        ) : (
+          matchedStr
+        ),
+      );
     } else if (matchedStr.startsWith("`") && matchedStr.endsWith("`")) {
       // Inline code
       const code = matchedStr.slice(1, -1);

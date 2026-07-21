@@ -494,8 +494,10 @@ export async function handleReadReceipt(
   return (await messageRepo.markReadUpTo(msg.roomId, selfId, upTo, Date.now())) > 0;
 }
 
-/** Longest ZWJ emoji sequences are ~15 UTF-16 units; anything past this is a
- * peer trying to stuff arbitrary text into a reaction. */
+/** Longest ZWJ emoji sequences are ~15 UTF-16 units, and built-in animated
+ * emoji tokens (":fx:<id>:", see lib/animatedEmoji.ts) are at most ~29;
+ * anything past this is a peer trying to stuff arbitrary text into a
+ * reaction. */
 const MAX_REACTION_EMOJI_LEN = 32;
 
 /** Persists a local reaction toggle and broadcasts it to connected room
