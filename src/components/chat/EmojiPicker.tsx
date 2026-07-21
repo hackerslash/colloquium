@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { motion } from "motion/react";
+import { ANIMATED_EMOJI, animatedEmojiToken, resolveAnimatedEmojiUrl } from "../../lib/animatedEmoji";
 
 type EmojiCategory = {
   id: string;
@@ -177,6 +178,13 @@ const EMOJI_KEYWORDS: Record<string, string> = {
   "🍷": "wine drink glass",
 };
 
+const ANIMATED_TAB_ID = "animated";
+
+/** A single grid cell: either a plain Unicode glyph or a bundled animated
+ * emoji. Search results mix both; category browsing shows one or the
+ * other depending on the active tab. */
+type EmojiHit = { kind: "glyph"; glyph: string } | { kind: "animated"; id: string; name: string };
+
 type EmojiPickerProps = {
   onSelectEmoji: (emoji: string) => void;
   onClose: () => void;
@@ -212,12 +220,23 @@ export function EmojiPicker({
   }, [onClose]);
 
   const q = searchQuery.toLowerCase().trim();
-  const filteredEmojis = q
-    ? EMOJI_CATEGORIES.flatMap((cat) => cat.emojis).filter((emoji) => {
-        const keywords = EMOJI_KEYWORDS[emoji] ?? "";
-        return emoji.includes(q) || keywords.toLowerCase().includes(q);
-      })
-    : EMOJI_CATEGORIES.find((cat) => cat.id === activeCategory)?.emojis ?? [];
+  const hits: EmojiHit[] = q
+    ? [
+        ...EMOJI_CATEGORIES.flatMap((cat) => cat.emojis)
+          .filter((emoji) => {
+            const keywords = EMOJI_KEYWORDS[emoji] ?? "";
+            return emoji.includes(q) || keywords.toLowerCase().includes(q);
+          })
+          .map((glyph): EmojiHit => ({ kind: "glyph", glyph })),
+        ...ANIMATED_EMOJI.filter((e) => e.keywords.toLowerCase().includes(q) || e.name.toLowerCase().includes(q)).map(
+          (e): EmojiHit => ({ kind: "animated", id: e.id, name: e.name }),
+        ),
+      ]
+    : activeCategory === ANIMATED_TAB_ID
+      ? ANIMATED_EMOJI.map((e): EmojiHit => ({ kind: "animated", id: e.id, name: e.name }))
+      : (EMOJI_CATEGORIES.find((cat) => cat.id === activeCategory)?.emojis ?? []).map(
+          (glyph): EmojiHit => ({ kind: "glyph", glyph }),
+        );
 
   return (
     <motion.div
@@ -266,6 +285,16 @@ export function EmojiPicker({
               <span>{cat.icon}</span>
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setActiveCategory(ANIMATED_TAB_ID)}
+            title="Animated"
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+              activeCategory === ANIMATED_TAB_ID ? "bg-accent/20 text-accent" : "hover:bg-bg-tertiary"
+            }`}
+          >
+            <span>✨</span>
+          </button>
         </div>
       )}
 
@@ -273,22 +302,34 @@ export function EmojiPicker({
       <div className="flex-1 overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-border">
         {!searchQuery && (
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
-            {EMOJI_CATEGORIES.find((c) => c.id === activeCategory)?.name}
+            {activeCategory === ANIMATED_TAB_ID
+              ? "Animated"
+              : EMOJI_CATEGORIES.find((c) => c.id === activeCategory)?.name}
           </p>
         )}
         <div className="grid grid-cols-8 gap-1.5 text-xl">
-          {filteredEmojis.map((emoji, idx) => (
-            <button
-              key={`${emoji}-${idx}`}
-              type="button"
-              onClick={() => {
-                onSelectEmoji(emoji);
-              }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
-            >
-              <span>{emoji}</span>
-            </button>
-          ))}
+          {hits.map((hit, idx) =>
+            hit.kind === "glyph" ? (
+              <button
+                key={`glyph-${hit.glyph}-${idx}`}
+                type="button"
+                onClick={() => onSelectEmoji(hit.glyph)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
+              >
+                <span>{hit.glyph}</span>
+              </button>
+            ) : (
+              <button
+                key={`animated-${hit.id}`}
+                type="button"
+                title={hit.name}
+                onClick={() => onSelectEmoji(animatedEmojiToken(hit.id))}
+                className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
+              >
+                <img src={resolveAnimatedEmojiUrl(hit.id) ?? ""} alt={hit.name} className="h-7 w-7" loading="lazy" />
+              </button>
+            ),
+          )}
         </div>
       </div>
     </motion.div>

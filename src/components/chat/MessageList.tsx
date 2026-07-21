@@ -13,6 +13,13 @@ import { Skeleton } from "../ui/Skeleton";
 import { EmojiPicker } from "./EmojiPicker";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { humanizeMentions } from "../../lib/mentions";
+import {
+  ANIMATED_EMOJI,
+  humanizeAnimatedEmoji,
+  jumboAnimatedEmojiIds,
+  resolveAnimatedEmojiUrl,
+  resolveEmoji,
+} from "../../lib/animatedEmoji";
 import { cx } from "../../lib/cx";
 import * as fileRepo from "../../services/db/fileRepo";
 
@@ -195,7 +202,7 @@ function snippetOf(message: Message | undefined): string {
   if (!message) return "Original message unavailable";
   if (message.deletedAt) return "Message deleted";
   return message.body
-    ? humanizeMentions(message.body)
+    ? humanizeAnimatedEmoji(humanizeMentions(message.body))
     : message.attachmentName || "Attachment";
 }
 
@@ -244,6 +251,10 @@ const MessageRow = memo(function MessageRow({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleted = message.deletedAt != null;
   const edited = message.editedAt != null && !deleted;
+  // Sticker-style rendering: a message that's nothing but 1-3 animated emoji
+  // (no other text, no attachment) drops the bubble entirely.
+  const jumboIds =
+    !deleted && !message.attachmentName ? jumboAnimatedEmojiIds(message.body) : null;
 
   function openPicker(e: React.MouseEvent<HTMLButtonElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -421,32 +432,44 @@ const MessageRow = memo(function MessageRow({
                     ))}
                 </div>
               )}
-              <div
-                className={cx(
-                  "select-text whitespace-pre-wrap break-words px-3.5 py-2 text-sm shadow-sm transition-shadow hover:shadow-md",
-                  deleted
-                    ? "rounded-2xl border border-border/40 bg-bg-tertiary/40 italic text-text-muted"
-                    : isOwn
-                      ? "bg-gradient-to-br from-accent to-accent-hover text-white rounded-l-2xl rounded-tr-2xl rounded-br-sm"
-                      : "bg-bg-elevated text-text-primary border border-border/50 rounded-r-2xl rounded-tl-sm rounded-bl-2xl",
-                )}
-              >
-                {deleted ? (
-                  "Message deleted"
-                ) : (
-                  <>
-                    {message.body && (
-                      <MarkdownRenderer
-                        content={message.body}
-                        isOwn={isOwn}
-                        resolveMention={nameOf}
-                        selfId={selfId}
-                      />
-                    )}
-                    {message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />}
-                  </>
-                )}
-              </div>
+              {jumboIds ? (
+                // Emoji-only message (like a sticker): no bubble background,
+                // just the animated emoji themselves, larger.
+                <div className={cx("flex items-center gap-1 px-1 py-1", isOwn && "justify-end")}>
+                  {jumboIds.map((id, i) => {
+                    const url = resolveAnimatedEmojiUrl(id);
+                    const def = ANIMATED_EMOJI.find((e) => e.id === id);
+                    return url ? <img key={i} src={url} alt={def?.name ?? id} className="h-16 w-16" /> : null;
+                  })}
+                </div>
+              ) : (
+                <div
+                  className={cx(
+                    "select-text whitespace-pre-wrap break-words px-3.5 py-2 text-sm shadow-sm transition-shadow hover:shadow-md",
+                    deleted
+                      ? "rounded-2xl border border-border/40 bg-bg-tertiary/40 italic text-text-muted"
+                      : isOwn
+                        ? "bg-gradient-to-br from-accent to-accent-hover text-white rounded-l-2xl rounded-tr-2xl rounded-br-sm"
+                        : "bg-bg-elevated text-text-primary border border-border/50 rounded-r-2xl rounded-tl-sm rounded-bl-2xl",
+                  )}
+                >
+                  {deleted ? (
+                    "Message deleted"
+                  ) : (
+                    <>
+                      {message.body && (
+                        <MarkdownRenderer
+                          content={message.body}
+                          isOwn={isOwn}
+                          resolveMention={nameOf}
+                          selfId={selfId}
+                        />
+                      )}
+                      {message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <span
               className={cx(
@@ -479,7 +502,14 @@ const MessageRow = memo(function MessageRow({
                       : "border-border/60 bg-bg-elevated text-text-secondary hover:border-border",
                   )}
                 >
-                  <span>{pill.emoji}</span>
+                  {(() => {
+                    const resolved = resolveEmoji(pill.emoji);
+                    return resolved.kind === "animated" ? (
+                      <img src={resolved.url} alt={resolved.name} className="h-4 w-4" />
+                    ) : (
+                      <span>{resolved.glyph}</span>
+                    );
+                  })()}
                   <span className="font-semibold">{pill.count}</span>
                 </button>
               ))}

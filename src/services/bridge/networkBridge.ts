@@ -23,6 +23,7 @@ import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 import { playMessageSound } from "../sound";
 import { humanizeMentions, mentionsIdentity } from "../../lib/mentions";
+import { humanizeAnimatedEmoji } from "../../lib/animatedEmoji";
 
 const DISCOVERY_INTERVAL_MS = 2_000;
 const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
@@ -32,7 +33,7 @@ const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
  * previews off, never leak content — just say a message arrived. */
 function messageNotificationBody(message: Message): string {
   if (!useSettingsStore.getState().notificationPreviews) return "New message";
-  if (message.body) return humanizeMentions(message.body);
+  if (message.body) return humanizeAnimatedEmoji(humanizeMentions(message.body));
   if (message.contentType === "image") return "Sent an image";
   if (message.contentType === "file") {
     return message.attachmentName ? `Sent a file: ${message.attachmentName}` : "Sent a file";
