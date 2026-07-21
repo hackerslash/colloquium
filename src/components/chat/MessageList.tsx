@@ -428,7 +428,7 @@ const MessageRow = memo(function MessageRow({
                     ? "rounded-2xl border border-border/40 bg-bg-tertiary/40 italic text-text-muted"
                     : isOwn
                       ? "bg-gradient-to-br from-accent to-accent-hover text-white rounded-l-2xl rounded-tr-2xl rounded-br-sm"
-                      : "bg-bg-elevated text-text-primary border border-border/50 rounded-r-2xl rounded-tl-2xl rounded-bl-sm",
+                      : "bg-bg-elevated text-text-primary border border-border/50 rounded-r-2xl rounded-tl-sm rounded-bl-2xl",
                 )}
               >
                 {deleted ? (
