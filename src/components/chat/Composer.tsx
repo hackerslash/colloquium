@@ -76,6 +76,27 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   useImperativeHandle(ref, () => ({ acceptFile }), [acceptFile]);
 
+  // Pasting a screenshot/image from the clipboard (Win+Shift+S, browser
+  // "copy image", etc.) attaches it the same way the file picker or a
+  // drag-and-drop would. Plain text paste is left untouched. Skipped while
+  // editing since edits are text-only (the attach button is hidden too).
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (editing) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const ext = item.type.split("/")[1] || "png";
+      const named = new File([file], `clipboard-image-${Date.now()}.${ext}`, { type: item.type });
+      acceptFile(named);
+      return;
+    }
+  }
+
   function autoGrow() {
     const el = textareaRef.current;
     if (!el) return;
@@ -342,6 +363,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             value={value}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             rows={1}
             placeholder={placeholder}
             aria-label="Message"
