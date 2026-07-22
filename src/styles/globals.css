@@ -97,6 +97,16 @@ body,
   height: 100%;
 }
 
+html.wp-native,
+html.wp-native body,
+html.wp-native #root {
+  background: transparent !important;
+}
+
+html.wp-native #app-shell {
+  display: none !important;
+}
+
 body {
   background-color: var(--color-bg-base);
   color: var(--color-text-primary);

@@ -18,9 +18,11 @@
         "minWidth": 900,
         "minHeight": 600,
         "visible": false,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "transparent": true
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' 'sha256-RDHBAOelnyXyNhrhXRtxOlHB8LKH1ATYH/G88cJ/cV8='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com ws://0.peerjs.com stun: turn: https://openrelay.metered.ca; object-src 'none'; base-uri 'self'; form-action 'none'; frame-src 'none'"
     }

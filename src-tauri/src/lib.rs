@@ -3,6 +3,7 @@ mod identity;
 mod keychain;
 mod sysaudio;
 mod tray;
+mod watchparty;
 
 use std::sync::Mutex;
 use tauri::{Manager, WindowEvent};
@@ -100,6 +101,20 @@ pub fn run() {
             identity::identity_delete_keypair,
             sysaudio::sysaudio_start,
             sysaudio::sysaudio_stop,
+            watchparty::wp_player_available,
+            watchparty::wp_player_init,
+            watchparty::wp_player_load,
+            watchparty::wp_player_set_pause,
+            watchparty::wp_player_seek,
+            watchparty::wp_player_set_speed,
+            watchparty::wp_player_set_audio_track,
+            watchparty::wp_player_set_sub_track,
+            watchparty::wp_player_set_sub_delay,
+            watchparty::wp_player_add_subtitle,
+            watchparty::wp_player_get_tracks,
+            watchparty::wp_player_now,
+            watchparty::wp_player_set_rect,
+            watchparty::wp_player_teardown,
             set_close_to_tray,
         ])
         .run(tauri::generate_context!())

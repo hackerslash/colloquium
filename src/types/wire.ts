@@ -395,7 +395,112 @@ export type RoomCallBeaconMessage = {
   leaving: boolean;
 };
 
+// --- Watch party: synchronized LOCAL playback of a shared media URL. Every
+// client plays the URL with its own libmpv (no re-broadcast → no quality loss
+// from source); only small control messages cross the wire. The controller is
+// the single authority (a logical star over the existing data channel — no
+// server, no relay process). Its snapshot is idempotent and last-write-wins by
+// (controlEpoch, monotonicSeq, controllerId), so out-of-order/duplicated
+// snapshots converge and any peer may re-broadcast the newest it has seen
+// (relay-like resilience for a peer that loses the direct link to the owner).
+// `controlEpoch` mirrors the presenter-slot epoch model: hand-off bumps it, and
+// the holder of the highest epoch is authoritative. ---
 
+export type WatchPartyStartMessage = {
+  type: "watch_party_start";
+  roomId: string;
+  partyId: string;
+  streamUrl: string;
+  /** The participant who opened the party; the initial controller. */
+  ownerId: string;
+  startedAt: number;
+};
+
+/** The authoritative playback snapshot. Sent on every controller action and as
+ * a ~1-2s heartbeat. `controllerClockMs` is the controller's monotonic clock
+ * (performance.now-based) at the instant `positionSec` was true, so followers
+ * can project the live position forward. */
+export type WatchPartyStateMessage = {
+  type: "watch_party_state";
+  roomId: string;
+  partyId: string;
+  controllerId: string;
+  controlEpoch: number;
+  monotonicSeq: number;
+  paused: boolean;
+  positionSec: number;
+  playbackRate: number;
+  audioTrackId: number | "no" | "auto";
+  subTrackId: number | "no";
+  subDelaySec: number;
+  controllerClockMs: number;
+};
+
+/** Transfers control authority. The named `toId` becomes the controller at
+ * `controlEpoch` (which must exceed the current one). Higher epoch wins; ties
+ * break on the lexicographically smaller `toId`. */
+export type WatchPartyHandoffMessage = {
+  type: "watch_party_handoff";
+  roomId: string;
+  partyId: string;
+  toId: string;
+  byId: string;
+  controlEpoch: number;
+};
+
+/** Owner shares an external subtitle file (SRT/ASS text) so every client
+ * `sub-add`s the same one locally. `subId` lets a snapshot's `subTrackId`
+ * reference it consistently across peers. Large files are chunked via the
+ * existing file-transfer path; small ones ride inline. */
+export type WatchPartySubtitleMessage = {
+  type: "watch_party_subtitle";
+  roomId: string;
+  partyId: string;
+  subId: string;
+  name: string;
+  contentB64: string;
+};
+
+/** Per-participant readiness/buffering beacon, same absolute-expiry lease model
+ * as room-call beacons: drives "who's watching" presence and the optional
+ * "wait for everyone" un-pause gate. */
+export type WatchPartyMemberMessage = {
+  type: "watch_party_member";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  ready: boolean;
+  bufferedSec: number;
+  leaseExpiresAt: number;
+  leaving: boolean;
+};
+
+/** RTT probe to the controller. `t` is the sender's monotonic clock echoed
+ * back in the pong, so the sender can compute round-trip (and thus one-way)
+ * delay to refine position projection. */
+export type WatchPartyPingMessage = {
+  type: "watch_party_ping";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  t: number;
+};
+
+export type WatchPartyPongMessage = {
+  type: "watch_party_pong";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  /** Echoed ping `t` (the pinger's clock at send). */
+  t: number;
+};
+
+export type WatchPartyEndMessage = {
+  type: "watch_party_end";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+};
 
 export type FileChunkMessage = {
   type: "file_chunk";
@@ -463,4 +568,12 @@ export type ColloquiumMessage =
   | SlotReleaseMessage
   | RoomAnnounceMessage
   | RoomLeaveMessage
-  | RoomCallBeaconMessage;
+  | RoomCallBeaconMessage
+  | WatchPartyStartMessage
+  | WatchPartyStateMessage
+  | WatchPartyHandoffMessage
+  | WatchPartySubtitleMessage
+  | WatchPartyMemberMessage
+  | WatchPartyPingMessage
+  | WatchPartyPongMessage
+  | WatchPartyEndMessage;

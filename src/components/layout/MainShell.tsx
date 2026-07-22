@@ -11,6 +11,7 @@ import { GroupRoomView } from "../room/GroupRoomView";
 import { CreateGroupModal } from "../room/CreateGroupModal";
 import { CallOverlay } from "../call/CallOverlay";
 import { RoomCallWindow } from "../call/RoomCallWindow";
+import { WatchPartyWindow } from "../watchparty/WatchPartyWindow";
 import { SettingsModal } from "../settings/SettingsModal";
 import { SearchModal } from "../search/SearchModal";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
@@ -74,7 +75,7 @@ export function MainShell() {
   }, [activeRoomId, markRead]);
 
   return (
-    <div className="flex h-full text-text-primary bg-bg-base">
+    <div id="app-shell" className="flex h-full text-text-primary bg-bg-base">
       <Sidebar
         selection={selection}
         onSelect={setSelection}
@@ -134,6 +135,7 @@ export function MainShell() {
       />
       <CallOverlay />
       <RoomCallWindow />
+      <WatchPartyWindow />
     </div>
   );
 }

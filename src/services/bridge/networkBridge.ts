@@ -12,6 +12,7 @@ import * as chatService from "../room/chatService";
 import * as roomService from "../room/roomService";
 import * as callService from "../call/callService";
 import * as roomCallService from "../call/roomCallService";
+import * as watchPartyService from "../watchparty/watchPartyService";
 import { getRoomCallPresenceTracker } from "../call/RoomCallPresenceTracker";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
@@ -457,6 +458,30 @@ export function initNetworkBridge(self: Identity): () => void {
         break;
       case "slot_release":
         roomCallService.handleSlotRelease(self, msg);
+        break;
+      case "watch_party_start":
+        watchPartyService.handleStart(self, msg);
+        break;
+      case "watch_party_state":
+        watchPartyService.handleState(self, msg);
+        break;
+      case "watch_party_handoff":
+        watchPartyService.handleHandoff(self, msg);
+        break;
+      case "watch_party_subtitle":
+        watchPartyService.handleSubtitle(self, msg);
+        break;
+      case "watch_party_member":
+        watchPartyService.handleMember(self, msg);
+        break;
+      case "watch_party_ping":
+        watchPartyService.handlePing(self, msg);
+        break;
+      case "watch_party_pong":
+        watchPartyService.handlePong(self, msg);
+        break;
+      case "watch_party_end":
+        watchPartyService.handleEnd(self, msg);
         break;
     }
   }
