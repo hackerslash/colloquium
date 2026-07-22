@@ -122,6 +122,45 @@ export function resolveAnimatedEmojiUrl(id: string): string | null {
   return assetModules[`../assets/emoji-animated/${id}.webp`] ?? null;
 }
 
+const posterCache = new Map<string, string>();
+const posterInFlight = new Map<string, Promise<string | null>>();
+
+export async function getAnimatedEmojiPoster(id: string): Promise<string | null> {
+  const cached = posterCache.get(id);
+  if (cached) return cached;
+  const existing = posterInFlight.get(id);
+  if (existing) return existing;
+
+  const url = resolveAnimatedEmojiUrl(id);
+  if (!url || typeof createImageBitmap !== "function" || typeof document === "undefined") {
+    return null;
+  }
+
+  const p = (async (): Promise<string | null> => {
+    try {
+      const blob = await (await fetch(url)).blob();
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      const dataUrl = canvas.toDataURL("image/png");
+      posterCache.set(id, dataUrl);
+      return dataUrl;
+    } catch {
+      return null;
+    } finally {
+      posterInFlight.delete(id);
+    }
+  })();
+
+  posterInFlight.set(id, p);
+  return p;
+}
+
 export type ResolvedEmoji =
   | { kind: "glyph"; glyph: string }
   | { kind: "animated"; url: string; name: string };

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { motion } from "motion/react";
-import { ANIMATED_EMOJI, animatedEmojiToken, resolveAnimatedEmojiUrl } from "../../lib/animatedEmoji";
+import {
+  ANIMATED_EMOJI,
+  animatedEmojiToken,
+  getAnimatedEmojiPoster,
+  resolveAnimatedEmojiUrl,
+} from "../../lib/animatedEmoji";
 
 type EmojiCategory = {
   id: string;
@@ -185,6 +190,53 @@ const ANIMATED_TAB_ID = "animated";
  * other depending on the active tab. */
 type EmojiHit = { kind: "glyph"; glyph: string } | { kind: "animated"; id: string; name: string };
 
+function AnimatedEmojiCell({
+  id,
+  name,
+  onSelect,
+}: {
+  id: string;
+  name: string;
+  onSelect: () => void;
+}) {
+  const liveUrl = resolveAnimatedEmojiUrl(id) ?? "";
+  const [poster, setPoster] = useState<string | null>(null);
+  const [active, setActive] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    getAnimatedEmojiPoster(id).then((p) => {
+      if (alive) setPoster(p);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+
+  return (
+    <button
+      type="button"
+      title={name}
+      onClick={onSelect}
+      onMouseEnter={() => setActive(true)}
+      onMouseLeave={() => setActive(false)}
+      onFocus={() => setActive(true)}
+      onBlur={() => setActive(false)}
+      className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
+    >
+      {/* Remount (not just swap src) when toggling: WebKit reuses a cached
+       * decoded image on a bare src change and stays frozen on one frame, so
+       * a changing key forces a fresh decode that plays from the start. */}
+      <img
+        key={active ? "live" : "poster"}
+        src={active || !poster ? liveUrl : poster}
+        alt={name}
+        className="h-7 w-7"
+      />
+    </button>
+  );
+}
+
 type EmojiPickerProps = {
   onSelectEmoji: (emoji: string) => void;
   onClose: () => void;
@@ -319,15 +371,12 @@ export function EmojiPicker({
                 <span>{hit.glyph}</span>
               </button>
             ) : (
-              <button
+              <AnimatedEmojiCell
                 key={`animated-${hit.id}`}
-                type="button"
-                title={hit.name}
-                onClick={() => onSelectEmoji(animatedEmojiToken(hit.id))}
-                className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
-              >
-                <img src={resolveAnimatedEmojiUrl(hit.id) ?? ""} alt={hit.name} className="h-7 w-7" loading="lazy" />
-              </button>
+                id={hit.id}
+                name={hit.name}
+                onSelect={() => onSelectEmoji(animatedEmojiToken(hit.id))}
+              />
             ),
           )}
         </div>
