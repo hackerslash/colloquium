@@ -79,6 +79,8 @@ struct Player {
     window: tauri::WebviewWindow,
     #[cfg(target_os = "macos")]
     host_view: usize,
+    #[cfg(target_os = "macos")]
+    backing_view: usize,
 }
 
 static STATE: Mutex<Option<Player>> = Mutex::new(None);
@@ -123,7 +125,7 @@ fn init_blocking(window: tauri::WebviewWindow, channel: Channel<WpEvent>) -> Res
     RESIZED.store(false, Ordering::Relaxed);
 
     #[cfg(target_os = "macos")]
-    let host_view = macos::embed(&window)?;
+    let (host_view, backing_view) = macos::embed(&window)?;
 
     let mpv = Mpv::with_initializer(|init| {
         let _ = init.set_property("config", false);
@@ -183,6 +185,8 @@ fn init_blocking(window: tauri::WebviewWindow, channel: Channel<WpEvent>) -> Res
         window,
         #[cfg(target_os = "macos")]
         host_view,
+        #[cfg(target_os = "macos")]
+        backing_view,
     });
     #[cfg(not(target_os = "macos"))]
     let _ = window;
@@ -502,7 +506,7 @@ fn teardown_inner() {
             let _ = join.join();
         }
         #[cfg(target_os = "macos")]
-        macos::remove(&player.window, player.host_view);
+        macos::remove(&player.window, player.host_view, player.backing_view);
     }
 }
 
@@ -557,30 +561,46 @@ mod macos {
         let _: () = msg_send![webview, setValue: no, forKey: &*key];
     }
 
-    pub fn embed(window: &tauri::WebviewWindow) -> Result<usize, String> {
-        let (tx, rx) = mpsc::channel::<usize>();
+    unsafe fn set_black_layer(view: *mut AnyObject) {
+        let _: () = msg_send![view, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![view, layer];
+        if !layer.is_null() {
+            let black: *mut AnyObject = msg_send![class!(NSColor), blackColor];
+            let cg: *mut AnyObject = msg_send![black, CGColor];
+            let _: () = msg_send![layer, setBackgroundColor: cg];
+        }
+    }
+
+    pub fn embed(window: &tauri::WebviewWindow) -> Result<(usize, usize), String> {
+        let (tx, rx) = mpsc::channel::<(usize, usize)>();
         window
             .with_webview(move |wv| unsafe {
                 let webview = wv.inner() as *mut AnyObject;
                 set_transparent(webview);
                 let superview: *mut AnyObject = msg_send![webview, superview];
+                let bounds: CGRect = msg_send![superview, bounds];
+                let below: isize = -1;
+
+                let backing: *mut AnyObject = msg_send![class!(NSView), alloc];
+                let backing: *mut AnyObject = msg_send![backing, init];
+                set_black_layer(backing);
+                let _: () = msg_send![backing, setFrame: bounds];
+                let autoresize: usize = 2 | 16;
+                let _: () = msg_send![backing, setAutoresizingMask: autoresize];
+                let _: () = msg_send![superview, addSubview: backing, positioned: below, relativeTo: webview];
+
                 let host: *mut AnyObject = msg_send![class!(NSView), alloc];
                 let host: *mut AnyObject = msg_send![host, init];
-                let _: () = msg_send![host, setWantsLayer: true];
+                set_black_layer(host);
                 let layer: *mut AnyObject = msg_send![host, layer];
                 if !layer.is_null() {
-                    let black: *mut AnyObject = msg_send![class!(NSColor), blackColor];
-                    let cg: *mut AnyObject = msg_send![black, CGColor];
-                    let _: () = msg_send![layer, setBackgroundColor: cg];
-                    let gravity = NSString::from_str("resize");
+                    let gravity = NSString::from_str("resizeAspect");
                     let _: () = msg_send![layer, setContentsGravity: &*gravity];
                 }
-                let bounds: CGRect = msg_send![superview, bounds];
                 let _: () = msg_send![host, setFrame: bounds];
-                let below: isize = -1;
-                let _: () =
-                    msg_send![superview, addSubview: host, positioned: below, relativeTo: webview];
-                let _ = tx.send(host as usize);
+                let _: () = msg_send![superview, addSubview: host, positioned: below, relativeTo: webview];
+
+                let _ = tx.send((host as usize, backing as usize));
             })
             .map_err(|e| e.to_string())?;
         rx.recv_timeout(Duration::from_secs(3))
@@ -639,9 +659,10 @@ mod macos {
                 return;
             }
             let bounds: CGRect = msg_send![superview, bounds];
-            let flipped_y = bounds.size.height - (y + h);
+            let flipped: bool = msg_send![superview, isFlipped];
+            let origin_y = if flipped { y } else { bounds.size.height - (y + h) };
             let frame = CGRect {
-                origin: CGPoint { x, y: flipped_y },
+                origin: CGPoint { x, y: origin_y },
                 size: CGSize { width: w, height: h },
             };
             let _: () = msg_send![host, setFrame: frame];
@@ -652,10 +673,12 @@ mod macos {
         });
     }
 
-    pub fn remove(window: &tauri::WebviewWindow, host: usize) {
+    pub fn remove(window: &tauri::WebviewWindow, host: usize, backing: usize) {
         let _ = window.run_on_main_thread(move || unsafe {
             let host = host as *mut AnyObject;
+            let backing = backing as *mut AnyObject;
             let _: () = msg_send![host, removeFromSuperview];
+            let _: () = msg_send![backing, removeFromSuperview];
         });
     }
 }
