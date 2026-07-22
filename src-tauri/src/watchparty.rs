@@ -56,8 +56,11 @@ impl Waker {
     }
 
     fn wait(&self, timeout: Duration) {
-        let g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let (mut g, _) = self.cv.wait_timeout(g, timeout).unwrap_or_else(|e| e.into_inner());
+        let mut g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !*g {
+            let (ng, _) = self.cv.wait_timeout(g, timeout).unwrap_or_else(|e| e.into_inner());
+            g = ng;
+        }
         *g = false;
     }
 }
