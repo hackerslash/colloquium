@@ -191,7 +191,7 @@ export function MarkdownRenderer({ content, isOwn, className, resolveMention, se
         )}
       >
         {lang && <div className="mb-1 text-[10px] uppercase font-bold text-text-muted select-none">{lang}</div>}
-        <pre className="whitespace-pre-wrap break-words">{codeContent}</pre>
+        <pre className="whitespace-pre-wrap wrap-anywhere">{codeContent}</pre>
       </div>,
     );
 

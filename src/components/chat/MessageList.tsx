@@ -445,7 +445,7 @@ const MessageRow = memo(function MessageRow({
               ) : (
                 <div
                   className={cx(
-                    "select-text whitespace-pre-wrap break-words px-3.5 py-2 text-sm shadow-sm transition-shadow hover:shadow-md",
+                    "select-text whitespace-pre-wrap wrap-anywhere px-3.5 py-2 text-sm shadow-sm transition-shadow hover:shadow-md",
                     deleted
                       ? "rounded-2xl border border-border/40 bg-bg-tertiary/40 italic text-text-muted"
                       : isOwn
