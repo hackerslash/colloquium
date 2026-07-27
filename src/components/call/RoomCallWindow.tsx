@@ -1,6 +1,7 @@
 import { Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { useWatchPartyStore } from "../../stores/useWatchPartyStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { VideoTile } from "./VideoTile";
@@ -23,6 +24,7 @@ export function RoomCallWindow() {
   const self = useIdentityStore((s) => s.self);
   const roomId = useRoomCallStore((s) => s.roomId);
   const room = useRoomStore((s) => (roomId ? s.roomsById[roomId] : undefined));
+  const partyRoomId = useWatchPartyStore((s) => (s.active ? s.roomId : null));
 
   const participants = useRoomCallStore((s) => s.participants);
   const slots = useRoomCallStore((s) => s.slots);
@@ -52,6 +54,11 @@ export function RoomCallWindow() {
   const nameOf = useNameLookup();
 
   if (!roomId) return null;
+  // A watch party for this room presents the call itself — cameras in its
+  // presence rail, mic/cam/leave in its own chrome. Without this, joining from
+  // the party puts a second copy of every tile in a floating window that sits
+  // above the film (z-60 over the party's z-40).
+  if (partyRoomId === roomId) return null;
 
   const holderIds = slots.map((s) => s.holderId).filter((id): id is string => id !== null);
   const slotsFull = !screenOn && holderIds.length >= 2;
