@@ -119,6 +119,7 @@ function TrackMenus() {
   const audioTrackId = useWatchPartyStore((s) => s.audioTrackId);
   const subTrackId = useWatchPartyStore((s) => s.subTrackId);
   const subDelaySec = useWatchPartyStore((s) => s.subDelaySec);
+  const subLoading = useWatchPartyStore((s) => s.subLoading);
   const setAudioTrack = useWatchPartyStore((s) => s.setAudioTrack);
   const setSubTrack = useWatchPartyStore((s) => s.setSubTrack);
   const setSubDelay = useWatchPartyStore((s) => s.setSubDelay);
@@ -154,7 +155,7 @@ function TrackMenus() {
 
       <select
         aria-label="Subtitle track"
-        disabled={!controller}
+        disabled={!controller || subLoading}
         value={String(subTrackId)}
         onChange={(e) => {
           const v = e.target.value;
@@ -178,7 +179,19 @@ function TrackMenus() {
         ))}
       </select>
 
-      {controller && subTrackId !== "no" && (
+      {/* An embedded track is only read out of the source on first selection,
+          which means a full pass over the file — long enough that silence reads
+          as "subtitles are broken". */}
+      {subLoading && (
+        <span
+          className="text-xs text-text-muted"
+          title="Reading the subtitles out of the source file — this takes a while the first time a track is chosen."
+        >
+          Extracting…
+        </span>
+      )}
+
+      {controller && subTrackId !== "no" && !subLoading && (
         <label className="flex items-center gap-1 text-xs text-text-muted">
           Delay
           <input

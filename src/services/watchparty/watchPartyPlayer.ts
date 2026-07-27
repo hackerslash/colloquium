@@ -46,6 +46,7 @@ export type WpEvent =
   | { kind: "pause"; paused: boolean }
   | { kind: "buffering"; pausedForCache: boolean; cachedSec: number; ready: boolean }
   | { kind: "tracks"; tracks: TrackInfo[] }
+  | { kind: "subtitles"; loading: boolean; failed: boolean }
   | { kind: "eof" }
   | { kind: "error"; message: string };
 
@@ -587,10 +588,14 @@ async function ensureSubtitle(id: number): Promise<boolean> {
   if (!sessionId || !probe) return false;
   const stream = streamsOf(probe, "subtitle")[id];
   if (!stream || !isTextSubtitle(stream.codec_name)) return false;
+  // Cues are interleaved through the whole container, so collecting them means
+  // reading the entire source — a minute and a half for a 1.6 GB film, longer
+  // for a remux. Reported, because otherwise selecting a track looks like it did
+  // nothing at all. Still done on first selection rather than at load: eagerly
+  // extracting every track would download the source several times over before
+  // playback started.
+  emit({ kind: "subtitles", loading: true, failed: false });
   try {
-    // Extracted on first selection rather than at load: this reads the whole
-    // source to collect the cues, so doing it eagerly for every track would
-    // download the file several times over before playback even started.
     const vtt = await invoke<string>("media_extract_subtitle", {
       sessionId,
       streamIndex: id,
@@ -600,19 +605,31 @@ async function ensureSubtitle(id: number): Promise<boolean> {
       lang: stream.tags?.language ?? null,
       vtt,
     });
+    emit({ kind: "subtitles", loading: false, failed: false });
     return true;
   } catch (err) {
     // Deliberately not an `error` event: that paints the "couldn't be played"
     // overlay across a video that is playing perfectly well. The selection just
     // doesn't take, and the menu reverts to what is actually showing.
     console.warn("watch party: subtitle extraction failed", err);
+    emit({ kind: "subtitles", loading: false, failed: true });
     return false;
   }
 }
 
-/** Rebuilds the <track> element from the selected subtitle's raw cues, shifted
- * by the current delay. Pure DOM — no ffmpeg, so followers match the controller
- * with no reopen and no buffering blip. */
+/**
+ * Rebuilds the <track> element from the selected subtitle's raw cues. Pure DOM —
+ * no ffmpeg, so followers match the controller with no reopen and no buffering
+ * blip.
+ *
+ * Cues come out of the source on the *source* timeline, but a <track> is read
+ * against `video.currentTime`, which for a remux window starts at zero however
+ * far into the film the window began. So they are rebased by `offsetSec` as well
+ * as by the user's delay — without it a window opened 20 minutes in puts every
+ * subtitle 20 minutes in the future and none is ever seen. `offsetSec` is not
+ * always zero even for a first window: a source whose packets start at 1.0s
+ * gives a one-second window offset from the outset.
+ */
 function applySubtitle() {
   const v = htmlVideo;
   if (!v) return;
@@ -626,7 +643,7 @@ function applySubtitle() {
   const entry = subs.get(currentSubId);
   if (!entry) return;
 
-  const blob = new Blob([shiftVtt(entry.vtt, subDelaySec)], { type: "text/vtt" });
+  const blob = new Blob([shiftVtt(entry.vtt, subDelaySec - offsetSec)], { type: "text/vtt" });
   subObjectUrl = URL.createObjectURL(blob);
   const el = document.createElement("track");
   el.kind = "subtitles";

@@ -26,33 +26,52 @@ function formatTimestamp(sec: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)}.${pad(ms, 3)}`;
 }
 
+type Shift = { kind: "keep" } | { kind: "drop" } | { kind: "line"; line: string };
+
+function shiftTiming(line: string, deltaSec: number): Shift {
+  const arrow = line.indexOf("-->");
+  if (arrow < 0) return { kind: "keep" };
+  const start = parseTimestamp(line.slice(0, arrow));
+  const rest = line.slice(arrow + 3);
+  const end = parseTimestamp(rest);
+  if (start === null || end === null) return { kind: "keep" };
+  if (end + deltaSec <= 0) return { kind: "drop" };
+  // Cue settings (align, line, position…) follow the end timestamp and must
+  // survive untouched.
+  const endMatch = CUE_TIME.exec(rest);
+  const settings = endMatch ? rest.slice(endMatch.index + endMatch[0].length) : "";
+  return {
+    kind: "line",
+    line: `${formatTimestamp(start + deltaSec)} --> ${formatTimestamp(end + deltaSec)}${settings}`,
+  };
+}
+
 /**
  * Shifts every cue in a WebVTT document by `deltaSec`.
  *
  * Only cue-timing lines are touched — anything else (the header, NOTE and STYLE
  * blocks, cue identifiers, the cue text itself) is passed through byte for byte,
  * so a payload that happens to look like a timestamp is never rewritten.
- * Negative results clamp to zero rather than dropping the cue, which keeps early
- * subtitles visible instead of silently losing them.
+ *
+ * A cue that ends before zero is dropped, identifier and text with it. The shift
+ * is not only the user's delay: it also rebases source timestamps onto a remux
+ * window's media clock, which can be a shift of thousands of seconds, and
+ * clamping those would stack every earlier line onto the window's first frame. A
+ * cue that merely straddles zero is still clamped, so a small negative delay
+ * keeps showing the line it belongs to.
  */
 export function shiftVtt(vtt: string, deltaSec: number): string {
   if (deltaSec === 0) return vtt;
-  return vtt
-    .split(/\r?\n/)
-    .map((line) => {
-      const arrow = line.indexOf("-->");
-      if (arrow < 0) return line;
-      const start = parseTimestamp(line.slice(0, arrow));
-      const rest = line.slice(arrow + 3);
-      const end = parseTimestamp(rest);
-      if (start === null || end === null) return line;
-      // Cue settings (align, line, position…) follow the end timestamp and must
-      // survive untouched.
-      const endMatch = CUE_TIME.exec(rest);
-      const settings = endMatch ? rest.slice(endMatch.index + endMatch[0].length) : "";
-      return `${formatTimestamp(start + deltaSec)} --> ${formatTimestamp(end + deltaSec)}${settings}`;
-    })
-    .join("\n");
+  const blocks: string[] = [];
+  for (const block of vtt.split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/);
+    const at = lines.findIndex((l) => l.includes("-->"));
+    const shifted = at < 0 ? { kind: "keep" as const } : shiftTiming(lines[at], deltaSec);
+    if (shifted.kind === "drop") continue;
+    if (shifted.kind === "line") lines[at] = shifted.line;
+    blocks.push(lines.join("\n"));
+  }
+  return blocks.join("\n\n");
 }
 
 /**

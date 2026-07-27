@@ -66,6 +66,32 @@ describe("shiftVtt", () => {
     expect(out).toContain("02:00:00.500 --> 02:00:02.000");
   });
 
+  it("rebases onto a remux window instead of stacking cues on its first frame", () => {
+    // The real case: cues are on the source timeline, but a window opened 20
+    // minutes in gives the <video> element a clock starting at zero. Clamping
+    // would show both of these lines at once on the first frame.
+    const out = shiftVtt(SAMPLE, -1200);
+    expect(out.trim()).toBe("WEBVTT");
+    expect(out).not.toContain("Hello there.");
+    expect(out).not.toContain("General Kenobi.");
+  });
+
+  it("drops a cue's identifier and text with it, not just its timing line", () => {
+    const vtt = "WEBVTT\n\n1\n00:00:05.000 --> 00:00:06.000\nGone\n\n2\n00:00:30.000 --> 00:00:31.000\nKept\n";
+    const out = shiftVtt(vtt, -20);
+    expect(out).not.toContain("Gone");
+    expect(out).not.toContain("\n1\n");
+    expect(out).toContain("00:00:10.000 --> 00:00:11.000");
+    expect(out).toContain("Kept");
+  });
+
+  it("keeps a cue that only straddles zero", () => {
+    // A small negative subtitle delay must not lose the line it belongs to.
+    const out = shiftVtt("WEBVTT\n\n00:00:02.000 --> 00:00:04.000\nHi\n", -3);
+    expect(out).toContain("00:00:00.000 --> 00:00:01.000");
+    expect(out).toContain("Hi");
+  });
+
   it("leaves NOTE and STYLE blocks untouched", () => {
     const vtt = "WEBVTT\n\nNOTE this is a note\n\nSTYLE\n::cue { color: red }\n\n00:00:01.000 --> 00:00:02.000\nHi\n";
     const out = shiftVtt(vtt, 1);

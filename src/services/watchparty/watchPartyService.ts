@@ -22,6 +22,7 @@ import * as player from "./watchPartyPlayer";
 import type { AudioTrackId, SubTrackId, WpEvent } from "./watchPartyPlayer";
 import * as roomMembersRepo from "../db/roomMembersRepo";
 import { useWatchPartyStore } from "../../stores/useWatchPartyStore";
+import { toast } from "../../stores/useToastStore";
 
 const HEARTBEAT_MS = 1_500;
 const SYNC_TICK_MS = 500;
@@ -160,6 +161,12 @@ function onPlayerEvent(e: WpEvent) {
       break;
     case "tracks":
       store._setTracks(e.tracks);
+      break;
+    case "subtitles":
+      store._setSubLoading(e.loading);
+      if (e.failed) {
+        toast.error("Couldn't load subtitles", "That track couldn't be read from this source.");
+      }
       break;
     case "eof":
       store._setBuffering(false);

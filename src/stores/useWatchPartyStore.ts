@@ -41,6 +41,7 @@ type WatchPartyStoreState = {
   subTrackId: SubTrackId;
   subDelaySec: number;
   tracks: TrackInfo[];
+  subLoading: boolean;
   buffering: boolean;
   members: WatchPartyMember[];
   error: string | null;
@@ -71,6 +72,7 @@ type WatchPartyStoreState = {
   _setStreamUrl: (url: string) => void;
   _setPlayback: (v: Partial<PlaybackSlice>) => void;
   _setTracks: (tracks: TrackInfo[]) => void;
+  _setSubLoading: (loading: boolean) => void;
   _setBuffering: (buffering: boolean) => void;
   _setMembers: (members: WatchPartyMember[]) => void;
   _setError: (error: string | null) => void;
@@ -100,6 +102,7 @@ const INITIAL: PlaybackSlice & {
   controllerId: null;
   mode: PlayerMode;
   tracks: TrackInfo[];
+  subLoading: boolean;
   buffering: boolean;
   members: WatchPartyMember[];
   error: null;
@@ -119,6 +122,7 @@ const INITIAL: PlaybackSlice & {
   subTrackId: "no" as SubTrackId,
   subDelaySec: 0,
   tracks: [] as TrackInfo[],
+  subLoading: false,
   buffering: false,
   members: [],
   error: null,
@@ -185,6 +189,7 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
   _setStreamUrl: (url) => set({ streamUrl: url }),
   _setPlayback: (v) => set(v),
   _setTracks: (tracks) => set({ tracks }),
+  _setSubLoading: (subLoading) => set({ subLoading }),
   _setBuffering: (buffering) => set({ buffering }),
   _setMembers: (members) => set({ members }),
   _setError: (error) => set({ error }),
