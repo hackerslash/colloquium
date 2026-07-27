@@ -157,7 +157,7 @@ function onPlayerEvent(e: WpEvent) {
     case "buffering":
       session.ready = e.ready;
       session.bufferedSec = e.cachedSec;
-      store._setBuffering(e.pausedForCache);
+      store._setBuffering(e.pausedForCache, e.cachedSec);
       break;
     case "tracks":
       store._setTracks(e.tracks);

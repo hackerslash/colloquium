@@ -43,6 +43,9 @@ type WatchPartyStoreState = {
   tracks: TrackInfo[];
   subLoading: boolean;
   buffering: boolean;
+  /** Contiguous buffer ahead of the local playhead, so the scrubber can draw
+   * what is actually loaded rather than a decorative fill. */
+  bufferedSec: number;
   members: WatchPartyMember[];
   error: string | null;
 
@@ -73,7 +76,7 @@ type WatchPartyStoreState = {
   _setPlayback: (v: Partial<PlaybackSlice>) => void;
   _setTracks: (tracks: TrackInfo[]) => void;
   _setSubLoading: (loading: boolean) => void;
-  _setBuffering: (buffering: boolean) => void;
+  _setBuffering: (buffering: boolean, bufferedSec?: number) => void;
   _setMembers: (members: WatchPartyMember[]) => void;
   _setError: (error: string | null) => void;
   _setAnnounced: (roomId: string, party: AnnouncedParty) => void;
@@ -104,6 +107,7 @@ const INITIAL: PlaybackSlice & {
   tracks: TrackInfo[];
   subLoading: boolean;
   buffering: boolean;
+  bufferedSec: number;
   members: WatchPartyMember[];
   error: null;
 } = {
@@ -124,6 +128,7 @@ const INITIAL: PlaybackSlice & {
   tracks: [] as TrackInfo[],
   subLoading: false,
   buffering: false,
+  bufferedSec: 0,
   members: [],
   error: null,
 };
@@ -190,7 +195,8 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
   _setPlayback: (v) => set(v),
   _setTracks: (tracks) => set({ tracks }),
   _setSubLoading: (subLoading) => set({ subLoading }),
-  _setBuffering: (buffering) => set({ buffering }),
+  _setBuffering: (buffering, bufferedSec) =>
+    set(bufferedSec === undefined ? { buffering } : { buffering, bufferedSec }),
   _setMembers: (members) => set({ members }),
   _setError: (error) => set({ error }),
   _setAnnounced: (roomId, party) =>
