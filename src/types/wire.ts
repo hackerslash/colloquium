@@ -420,7 +420,17 @@ export type WatchPartyStartMessage = {
 /** The authoritative playback snapshot. Sent on every controller action and as
  * a ~1-2s heartbeat. `controllerClockMs` is the controller's monotonic clock
  * (performance.now-based) at the instant `positionSec` was true, so followers
- * can project the live position forward. */
+ * can project the live position forward.
+ *
+ * `audioTrackId` and `subTrackId` are **ordinals within their own stream type**
+ * — `0` means "the first audio stream" — not absolute ffprobe stream indices,
+ * which would drift between a file's video/audio/subtitle interleaving and are
+ * not what ffmpeg's `0:a:N` selectors take either. Subtitle ids at or above the
+ * source's embedded subtitle count refer to files shared via
+ * `watch_party_subtitle`, so both kinds share one id space.
+ *
+ * The three track fields are optional: a peer running an older build omits them,
+ * and a follower leaves any absent field untouched rather than resetting it. */
 export type WatchPartyStateMessage = {
   type: "watch_party_state";
   roomId: string;

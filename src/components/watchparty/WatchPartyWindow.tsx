@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   LogOut,
@@ -6,6 +6,7 @@ import {
   MicOff,
   Pause,
   Play,
+  Subtitles,
   X,
   Video,
   VideoOff,
@@ -36,6 +37,9 @@ function Stage() {
   const buffering = useWatchPartyStore((s) => s.buffering);
   const error = useWatchPartyStore((s) => s.error);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // How the source is being played ("Remuxing", "Transcoding"…). Shown only
+  // while buffering, which is when a slow start needs explaining.
+  const [pipeline, setPipeline] = useState<string | null>(null);
 
   // Attach once, before the load effect below runs.
   useEffect(() => {
@@ -53,8 +57,16 @@ function Stage() {
   useEffect(() => {
     if (!streamUrl) return;
     useWatchPartyStore.getState()._setError(null);
+    setPipeline(null);
     void player.load(streamUrl);
   }, [streamUrl]);
+
+  // Read on every buffering transition, not once load() resolves: load() only
+  // returns after the first segment exists, which is exactly when the wait it
+  // was meant to explain is over.
+  useEffect(() => {
+    setPipeline(player.pipelineLabel());
+  }, [streamUrl, buffering]);
 
   const blocked = error === "autoplay-blocked";
 
@@ -66,8 +78,11 @@ function Stage() {
         playsInline
       />
       {buffering && !blocked && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/40 pointer-events-none">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          {pipeline && pipeline !== "Direct play" && (
+            <span className="text-xs text-white/70">{pipeline}…</span>
+          )}
         </div>
       )}
       {blocked && (
@@ -93,6 +108,109 @@ function Stage() {
         <div className="absolute inset-0 flex items-center justify-center text-text-muted">
           No stream set
         </div>
+      )}
+    </div>
+  );
+}
+
+function TrackMenus() {
+  const controller = selfIsController();
+  const tracks = useWatchPartyStore((s) => s.tracks);
+  const audioTrackId = useWatchPartyStore((s) => s.audioTrackId);
+  const subTrackId = useWatchPartyStore((s) => s.subTrackId);
+  const subDelaySec = useWatchPartyStore((s) => s.subDelaySec);
+  const setAudioTrack = useWatchPartyStore((s) => s.setAudioTrack);
+  const setSubTrack = useWatchPartyStore((s) => s.setSubTrack);
+  const setSubDelay = useWatchPartyStore((s) => s.setSubDelay);
+  const addSubtitle = useWatchPartyStore((s) => s.addSubtitle);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const audio = tracks.filter((t) => t.type === "audio");
+  const subs = tracks.filter((t) => t.type === "sub");
+
+  if (audio.length === 0 && subs.length === 0 && !controller) return null;
+
+  return (
+    <div className="flex items-center gap-2">
+      {audio.length > 1 && (
+        <select
+          aria-label="Audio track"
+          disabled={!controller}
+          value={String(audioTrackId)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setAudioTrack(v === "auto" || v === "no" ? v : Number(v));
+          }}
+          className="rounded-md bg-bg-tertiary px-2 py-1 text-xs text-text-secondary disabled:opacity-50"
+        >
+          <option value="auto">Audio: auto</option>
+          {audio.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.title ?? t.lang ?? `Track ${t.id + 1}`}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <select
+        aria-label="Subtitle track"
+        disabled={!controller}
+        value={String(subTrackId)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setSubTrack(v === "no" ? "no" : Number(v));
+        }}
+        className="rounded-md bg-bg-tertiary px-2 py-1 text-xs text-text-secondary disabled:opacity-50"
+      >
+        <option value="no">Subtitles: off</option>
+        {subs.map((t) => (
+          <option
+            key={t.id}
+            value={t.id}
+            // Bitmap subtitles (PGS, VOBSUB) cannot be converted to WebVTT at
+            // all, so they are shown and disabled rather than silently missing.
+            disabled={!t.supported}
+            title={t.supported ? undefined : `${t.codec ?? "This format"} can't be displayed`}
+          >
+            {t.title ?? t.lang ?? `Sub ${t.id + 1}`}
+            {t.supported ? "" : " (image-based)"}
+          </option>
+        ))}
+      </select>
+
+      {controller && subTrackId !== "no" && (
+        <label className="flex items-center gap-1 text-xs text-text-muted">
+          Delay
+          <input
+            type="number"
+            step={0.25}
+            value={subDelaySec}
+            onChange={(e) => setSubDelay(Number(e.target.value))}
+            className="w-16 rounded-md bg-bg-tertiary px-1.5 py-1 text-xs text-text-secondary"
+          />
+          s
+        </label>
+      )}
+
+      {controller && (
+        <>
+          <IconButton
+            icon={Subtitles}
+            label="Add subtitle file"
+            onClick={() => fileRef.current?.click()}
+          />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".srt,.ass,.ssa,.vtt,.sub"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) void addSubtitle(f);
+              e.target.value = "";
+            }}
+          />
+        </>
       )}
     </div>
   );
@@ -296,6 +414,8 @@ export function WatchPartyWindow() {
               </option>
             ))}
           </select>
+
+          <TrackMenus />
 
           {controller && members.length > 1 && (
             <select

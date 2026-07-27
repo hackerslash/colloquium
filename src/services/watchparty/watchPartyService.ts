@@ -19,7 +19,7 @@ import {
   WatchPartyState,
 } from "./watchPartySync";
 import * as player from "./watchPartyPlayer";
-import type { WpEvent } from "./watchPartyPlayer";
+import type { AudioTrackId, SubTrackId, WpEvent } from "./watchPartyPlayer";
 import * as roomMembersRepo from "../db/roomMembersRepo";
 import { useWatchPartyStore } from "../../stores/useWatchPartyStore";
 
@@ -31,6 +31,9 @@ const PING_MS = 4_000;
 type Ctrl = {
   paused: boolean;
   rate: number;
+  audioTrackId: AudioTrackId;
+  subTrackId: SubTrackId;
+  subDelaySec: number;
 };
 
 type MemberInfo = { ready: boolean; bufferedSec: number; leaseExpiresAt: number };
@@ -116,6 +119,9 @@ function pushPlaybackToStore() {
     paused: isController() ? session.ctrl.paused : (session.reducer.currentSnapshot()?.paused ?? session.localPaused),
     positionSec: localPositionNow(),
     playbackRate: session.ctrl.rate,
+    audioTrackId: session.ctrl.audioTrackId,
+    subTrackId: session.ctrl.subTrackId,
+    subDelaySec: session.ctrl.subDelaySec,
   });
   store._setController(session.reducer.currentControllerId());
 }
@@ -153,7 +159,7 @@ function onPlayerEvent(e: WpEvent) {
       store._setBuffering(e.pausedForCache);
       break;
     case "tracks":
-      // HTML <video> doesn't expose structured track metadata; ignore.
+      store._setTracks(e.tracks);
       break;
     case "eof":
       store._setBuffering(false);
@@ -200,6 +206,9 @@ function broadcastState() {
     paused: session.ctrl.paused,
     positionSec: pos,
     playbackRate: session.ctrl.rate,
+    audioTrackId: session.ctrl.audioTrackId,
+    subTrackId: session.ctrl.subTrackId,
+    subDelaySec: session.ctrl.subDelaySec,
     controllerClockMs: ts,
   };
   broadcast(msg);
@@ -249,6 +258,10 @@ function syncTick() {
   if (!session || isController()) return;
   const snap = session.reducer.currentSnapshot();
   if (!snap) return;
+  // A window is being (re)opened: the player's clock belongs to no window yet,
+  // so any correction computed from it would be against a stale position.
+  if (player.busy()) return;
+  applySnapshotTracks();
   pushPlaybackToStore();
   if (session.ready === false) return;
   if (snap.paused && !session.localPaused) void player.setPause(true);
@@ -273,8 +286,43 @@ function syncTick() {
   }
 }
 
+/**
+ * Mirrors the controller's track selection onto this follower. Ids mean the same
+ * thing on every peer because every peer fetches the same source URL (see
+ * `WatchPartyStateMessage`).
+ *
+ * Each applied value is committed only after the player resolves. If it rejects
+ * the cached value stays stale, so the next tick retries instead of the
+ * diff-guard suppressing it forever. Fields absent from the snapshot are left
+ * alone — an older peer simply doesn't send them.
+ */
+function applySnapshotTracks() {
+  if (!session || isController()) return;
+  const snap = session.reducer.currentSnapshot();
+  if (!snap) return;
+  if (snap.audioTrackId !== undefined && snap.audioTrackId !== session.ctrl.audioTrackId) {
+    const target = snap.audioTrackId;
+    void player.setAudioTrack(target).then(() => {
+      if (session) session.ctrl.audioTrackId = target;
+    });
+  }
+  if (snap.subTrackId !== undefined && snap.subTrackId !== session.ctrl.subTrackId) {
+    const target = snap.subTrackId;
+    void player.setSubTrack(target).then(() => {
+      if (session) session.ctrl.subTrackId = target;
+    });
+  }
+  if (snap.subDelaySec !== undefined && snap.subDelaySec !== session.ctrl.subDelaySec) {
+    const target = snap.subDelaySec;
+    void player.setSubDelay(target).then(() => {
+      if (session) session.ctrl.subDelaySec = target;
+    });
+  }
+  session.ctrl.rate = snap.playbackRate;
+}
+
 function defaultCtrl(): Ctrl {
-  return { paused: true, rate: 1 };
+  return { paused: true, rate: 1, audioTrackId: "auto", subTrackId: "no", subDelaySec: 0 };
 }
 
 function makeSession(self: Identity, roomId: string, streamUrl: string, memberIds: string[]): Session {
@@ -420,10 +468,45 @@ export function setRate(rate: number): void {
   broadcastState();
 }
 
+export function setAudioTrack(id: AudioTrackId): void {
+  if (!session || !isController()) return;
+  session.ctrl.audioTrackId = id;
+  void player.setAudioTrack(id);
+  pushPlaybackToStore();
+  broadcastState();
+}
+
+export function setSubTrack(id: SubTrackId): void {
+  if (!session || !isController()) return;
+  session.ctrl.subTrackId = id;
+  void player.setSubTrack(id);
+  pushPlaybackToStore();
+  broadcastState();
+}
+
+export function setSubDelay(sec: number): void {
+  if (!session || !isController()) return;
+  session.ctrl.subDelaySec = sec;
+  void player.setSubDelay(sec);
+  pushPlaybackToStore();
+  broadcastState();
+}
+
+/** Chunked because `String.fromCharCode(...bytes)` spreads every byte into an
+ * argument list and overflows the call stack on any real subtitle file. */
+function toBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 export async function addSubtitle(file: File): Promise<void> {
   if (!session || !isController()) return;
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const contentB64 = btoa(String.fromCharCode(...bytes));
+  const contentB64 = toBase64(bytes);
   const subId = `sub_${Date.now()}`;
   const msg: WatchPartySubtitleMessage = {
     type: "watch_party_subtitle",
@@ -433,8 +516,17 @@ export async function addSubtitle(file: File): Promise<void> {
     name: file.name,
     contentB64,
   };
-  await player.addSubtitle(file.name, bytes);
+  const id = await player.addSubtitle(file.name, bytes);
+  if (!session || !isController()) return;
+  // The added file is now the showing track. Recording it is what lets a later
+  // switch back to "off" reach the followers at all — an unchanged snapshot
+  // field is indistinguishable from "no selection was ever made".
+  if (id !== null) session.ctrl.subTrackId = id;
+  // Ordered delivery on the data channel, so the file lands before the snapshot
+  // that selects it.
   broadcast(msg);
+  pushPlaybackToStore();
+  broadcastState();
 }
 
 export function handControlTo(id: string): void {
@@ -495,7 +587,11 @@ export function handleSubtitle(_self: Identity, msg: WatchPartySubtitleMessage):
   const bin = atob(msg.contentB64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  void player.addSubtitle(msg.name, bytes);
+  void player.addSubtitle(msg.name, bytes).then((id) => {
+    // The player shows what it just added, so the cache has to agree — otherwise
+    // the controller turning subtitles off is a no-diff and never applied here.
+    if (session && id !== null) session.ctrl.subTrackId = id;
+  });
 }
 
 export function handleMember(_self: Identity, msg: WatchPartyMemberMessage): void {

@@ -43,6 +43,13 @@ pnpm install
 pnpm tauri dev
 ```
 
+Watch party needs `ffmpeg`/`ffprobe`, but **you do not install them** — they are
+bundled sidecars, and `pnpm tauri dev` provisions them automatically before the
+first build. Once checksums are published in `scripts/ffmpeg-manifest.json` this
+is a download; until then the first run compiles a minimal LGPL build from
+source, which takes around ten minutes and only ever happens once. To do it
+ahead of time, run `pnpm ffmpeg`. See [THIRD-PARTY.md](THIRD-PARTY.md).
+
 If `pnpm install` fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`, your
 machine has a global pnpm supply-chain policy that blocks recently-published
 packages. The lockfile pins exact, vetted versions, so install once with the
