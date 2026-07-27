@@ -40,6 +40,13 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      # tauri_build::build() fails if the externalBin sidecars are absent, but
+      # nothing in this job actually runs ffmpeg. Stubs keep CI from downloading
+      # (or worse, compiling) ~26 MB of binaries on every push. The real ones are
+      # provisioned in release.yml.
+      - name: Stub ffmpeg sidecars
+        run: pnpm ffmpeg --stub
+
       - name: Typecheck
         run: pnpm typecheck
 

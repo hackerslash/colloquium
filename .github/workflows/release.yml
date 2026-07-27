@@ -117,6 +117,18 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Cache ffmpeg sidecars
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles('scripts/ffmpeg-manifest.json') }}
+
+      # Real binaries here, never stubs — these ship. Fails loudly if
+      # scripts/ffmpeg-manifest.json has no checksums yet, which means the
+      # build-ffmpeg workflow hasn't been run for the pinned version.
+      - name: Fetch ffmpeg sidecars
+        run: pnpm ffmpeg ${{ matrix.platform == 'macos-latest' && '--universal' || '' }}
+
       - name: Build and upload to release
         uses: tauri-apps/tauri-action@v0
         env:

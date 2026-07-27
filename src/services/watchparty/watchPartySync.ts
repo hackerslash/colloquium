@@ -69,7 +69,7 @@ function snapshotOf(msg: WatchPartyStateMessage): PlaybackSnapshot {
 
 /**
  * Reducer for one client's view of a party. `apply*` return whether observable
- * state changed (so callers can skip redundant store pushes / mpv commands).
+ * state changed (so callers can skip redundant store pushes / player commands).
  */
 export class WatchPartyState {
   private party: PartyInfo | null = null;
@@ -199,7 +199,7 @@ export type Correction =
  * Given where we are vs. where we should be, decide the least-jarring
  * correction: hard-seek for large drift, a gentle speed nudge for small drift,
  * or return to the base rate inside the dead-zone. Stateless — the caller holds
- * mpv state and applies the result.
+ * player state and applies the result.
  */
 export function decideCorrection(
   localPosSec: number,

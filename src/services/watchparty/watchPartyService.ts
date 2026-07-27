@@ -316,8 +316,10 @@ export async function startParty(self: Identity, roomId: string, streamUrl: stri
   };
   session.reducer.applyStart(startMsg);
   session.ctrl = defaultCtrl();
+  // Loading is driven by the store: `Stage` reacts to `streamUrl` once it has a
+  // <video> element to attach to. Calling player.load() here would be a no-op
+  // anyway, since Stage only mounts after pushSessionToStore() sets active.
   pushSessionToStore();
-  await player.load(streamUrl);
   broadcast(startMsg);
   startLoops();
   broadcastState();
@@ -342,7 +344,6 @@ export async function joinParty(self: Identity, roomId: string): Promise<void> {
     });
   }
   pushSessionToStore();
-  if (streamUrl) await player.load(streamUrl);
   startLoops();
   broadcastMember(false);
 }
@@ -384,7 +385,6 @@ export async function setStreamUrl(url: string): Promise<void> {
   };
   session.reducer.applyStart(startMsg);
   useWatchPartyStore.getState()._setStreamUrl(url);
-  await player.load(url);
   broadcast(startMsg);
   broadcastState();
 }
@@ -465,7 +465,6 @@ export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void 
       session.streamUrl = msg.streamUrl;
       session.ctrl = defaultCtrl();
       useWatchPartyStore.getState()._setStreamUrl(msg.streamUrl);
-      if (!isController()) void player.load(msg.streamUrl);
       pushSessionToStore();
     }
   }

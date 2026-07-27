@@ -34,18 +34,29 @@ function fmt(sec: number): string {
 function Stage() {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
   const buffering = useWatchPartyStore((s) => s.buffering);
+  const error = useWatchPartyStore((s) => s.error);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Attach once, before the load effect below runs.
   useEffect(() => {
     if (!videoRef.current) return;
     player.attachHtml(videoRef.current);
     useWatchPartyStore.getState()._setMode("html");
-    if (streamUrl) void player.load(streamUrl);
     return () => {
       void player.teardown();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The single load path. Both the controller (setStreamUrl) and followers
+  // (handleStart) get here by writing streamUrl into the store, so the service
+  // never has to know whether a <video> element exists yet.
+  useEffect(() => {
+    if (!streamUrl) return;
+    useWatchPartyStore.getState()._setError(null);
+    void player.load(streamUrl);
+  }, [streamUrl]);
+
+  const blocked = error === "autoplay-blocked";
 
   return (
     <div className="relative flex-1 min-h-0 bg-black">
@@ -54,12 +65,31 @@ function Stage() {
         className="absolute inset-0 h-full w-full object-contain"
         playsInline
       />
-      {buffering && (
+      {buffering && !blocked && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/30 border-t-white" />
         </div>
       )}
-      {!streamUrl && (
+      {blocked && (
+        <button
+          type="button"
+          onClick={() => {
+            useWatchPartyStore.getState()._setError(null);
+            void player.setPause(false);
+          }}
+          className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white"
+        >
+          <Play className="h-10 w-10" />
+          <span className="text-sm">Tap to start watching</span>
+        </button>
+      )}
+      {error && !blocked && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+          <span className="text-sm text-danger">This stream couldn't be played</span>
+          <span className="text-xs text-text-muted">{error}</span>
+        </div>
+      )}
+      {!streamUrl && !error && (
         <div className="absolute inset-0 flex items-center justify-center text-text-muted">
           No stream set
         </div>

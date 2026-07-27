@@ -10,8 +10,11 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
+    "ffmpeg": "node scripts/fetch-ffmpeg.mjs",
+    "predev": "node scripts/fetch-ffmpeg.mjs",
+    "prebuild": "node scripts/fetch-ffmpeg.mjs",
     "sign:dev": "bash scripts/sign-dev.sh",
-    "tauri:dev": "cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev"
+    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
