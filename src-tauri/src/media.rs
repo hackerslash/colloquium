@@ -40,6 +40,22 @@ const SEGMENT_SEC: u32 = 4;
 /// How long to wait for ffmpeg to produce a first segment before giving up.
 const FIRST_SEGMENT_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// How far ahead of the playhead a window is allowed to run, as a multiple of
+/// realtime, and how much it may read flat out first.
+///
+/// Unthrottled, a window is not slow — it is far too fast. Measured on a 1.6 GB
+/// 720p source: 19.5 minutes of video produced in the first 30 seconds (~91x
+/// realtime), 130 Mbit/s sustained, and the whole rest of the film in the cache
+/// dir within about a minute and a half. That competes for bandwidth with the
+/// very call it is playing into, which is what makes playback stutter on a
+/// machine with plenty of decode headroom. At 1.5x the lead settles at 8-16s.
+///
+/// The burst is what keeps startup and post-seek restarts quick: the first
+/// stretch is still read as fast as the link allows, so hls.js gets a full
+/// forward buffer immediately and only the steady state is capped.
+const READ_RATE: &str = "1.5";
+const READ_BURST_SEC: &str = "30";
+
 // ---------------------------------------------------------------- sidecar glue
 
 /// Resolves a bundled sidecar. `tauri-build` copies `externalBin` next to the
@@ -620,6 +636,7 @@ fn spawn_window(
 
     let mut cmd = base_command("ffmpeg")?;
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]);
+    cmd.args(["-readrate", READ_RATE, "-readrate_initial_burst", READ_BURST_SEC]);
     cmd.args(["-ss", &start, "-copyts", "-i", src_url]);
     cmd.args(["-map", "0:v:0", "-map", &audio_map, "-sn", "-dn"]);
 
