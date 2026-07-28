@@ -31,7 +31,7 @@ jobs:
           # cross toolchain, no nasm-for-x86-on-arm, nothing to get subtly wrong.
           - runner: macos-latest
             triple: aarch64-apple-darwin
-          - runner: macos-13
+          - runner: macos-15-intel
             triple: x86_64-apple-darwin
           - runner: windows-latest
             triple: x86_64-pc-windows-msvc
