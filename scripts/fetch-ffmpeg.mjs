@@ -16,6 +16,7 @@
 //   node scripts/fetch-ffmpeg.mjs --universal      macOS universal (release)
 //   node scripts/fetch-ffmpeg.mjs --triple=<t>     an explicit triple
 //   node scripts/fetch-ffmpeg.mjs --stub           placeholder files, CI only
+//   node scripts/fetch-ffmpeg.mjs --require-published
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -163,7 +164,7 @@ function writeStubs(triple) {
   }
 }
 
-async function ensure(triple, stub) {
+async function ensure(triple, { stub, requirePublished }) {
   if (stub) {
     if (present(triple)) console.log(`    ${triple}: real binaries present, leaving them`);
     else writeStubs(triple);
@@ -176,6 +177,13 @@ async function ensure(triple, stub) {
   const entry = MANIFEST.artifacts[triple];
   if (entry?.sha256) {
     await fromRelease(triple, entry.sha256);
+  } else if (requirePublished) {
+    throw new Error(
+      `no published sidecars for ${triple}, and --require-published forbids ` +
+        `building them here.\n` +
+        `  Run the "build-ffmpeg" workflow for ${MANIFEST.ffmpegRef}, then record the\n` +
+        `  printed checksums in scripts/ffmpeg-manifest.json.`,
+    );
   } else {
     buildFromSource(triple);
   }
@@ -194,8 +202,11 @@ console.log(`ffmpeg sidecars (${MANIFEST.ffmpegRef})`);
 fs.mkdirSync(OUT, { recursive: true });
 
 try {
-  const stub = argv.includes("--stub");
-  for (const triple of requestedTriples(argv)) await ensure(triple, stub);
+  const opts = {
+    stub: argv.includes("--stub"),
+    requirePublished: argv.includes("--require-published"),
+  };
+  for (const triple of requestedTriples(argv)) await ensure(triple, opts);
 } catch (err) {
   console.error(`\nfetch-ffmpeg: ${err.message}\n`);
   process.exit(1);

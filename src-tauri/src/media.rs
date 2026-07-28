@@ -694,17 +694,11 @@ fn spawn_window(
 #[serde(rename_all = "camelCase")]
 pub struct OpenResult {
     session_id: String,
-    token: String,
-    port: u16,
-    /// The loopback URL that re-serves the remote source. ffmpeg's input, and
-    /// also what ffprobe reads — the sidecars have no `https` protocol.
-    src_url: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowResult {
-    generation: u32,
     playlist_url: String,
     offset_sec: f64,
 }
@@ -725,7 +719,7 @@ fn check_source(source: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn media_open(app: AppHandle, source: String) -> Result<OpenResult, String> {
     check_source(&source)?;
-    let port = ensure_server(&app).await?;
+    ensure_server(&app).await?;
     let id = random_hex(8);
     let token = random_hex(16);
     let dir = app
@@ -735,11 +729,10 @@ pub async fn media_open(app: AppHandle, source: String) -> Result<OpenResult, St
         .join("wp")
         .join(&id);
 
-    let src_url = format!("http://127.0.0.1:{port}/s/{id}/{token}/src");
     app.state::<MediaState>().sessions.lock().unwrap().insert(
         id.clone(),
         Session {
-            token: token.clone(),
+            token,
             source,
             dir,
             generation: 0,
@@ -747,7 +740,7 @@ pub async fn media_open(app: AppHandle, source: String) -> Result<OpenResult, St
             probe: None,
         },
     );
-    Ok(OpenResult { session_id: id, token, port, src_url })
+    Ok(OpenResult { session_id: id })
 }
 
 /// ffprobe's report on the source, verbatim. Interpreting it — which streams
@@ -893,7 +886,6 @@ pub async fn media_open_window(
         }
 
         Ok(WindowResult {
-            generation,
             playlist_url: format!(
                 "http://127.0.0.1:{port}/s/{session_id}/{token}/w/{generation}/index.m3u8"
             ),

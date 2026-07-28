@@ -50,7 +50,6 @@ export type WpEvent =
   | { kind: "eof" }
   | { kind: "error"; message: string };
 
-export type PlayerMode = "html" | "none";
 export type AudioTrackId = number | "no" | "auto";
 export type SubTrackId = number | "no";
 
@@ -65,7 +64,6 @@ const REOPEN_COALESCE_SEC = 2;
 /** Fatal hls.js errors to attempt recovery from per window before reporting. */
 const MAX_HLS_RECOVERIES = 3;
 
-let mode: PlayerMode = "none";
 const listeners = new Set<Listener>();
 let htmlVideo: HTMLVideoElement | null = null;
 let htmlDetach: (() => void) | null = null;
@@ -75,14 +73,10 @@ let htmlDetach: (() => void) | null = null;
 // without also claiming we're ready to play.
 let stalled = false;
 
-// Set when the engine refuses play() without a user gesture. Without this the
-// follower just silently never starts and there is no signal anywhere.
-let needsGesture = false;
-
 // ---- ffmpeg pipeline state ------------------------------------------------
 
-type OpenResult = { sessionId: string; token: string; port: number; srcUrl: string };
-type WindowResult = { generation: number; playlistUrl: string; offsetSec: number };
+type OpenResult = { sessionId: string };
+type WindowResult = { playlistUrl: string; offsetSec: number };
 
 let sessionId: string | null = null;
 let probe: Probe | null = null;
@@ -95,8 +89,7 @@ let rate = 1;
 /** Source-time of media-time 0 for the current window. Zero for direct play and
  * for a window starting at the beginning; otherwise the *probed* keyframe the
  * remux actually began on, which can be several seconds before what was asked
- * for. This appears in exactly four places — the `time` event, `now()`, `seek()`
- * and the assignment after a reopen — and nowhere else in the codebase. */
+ * for. */
 let offsetSec = 0;
 
 /** Counted, not a flag: a second reopen can be scheduled while the first is
@@ -108,6 +101,7 @@ let openCount = 0;
 let openSeq = 0;
 let reopenTimer: number | null = null;
 let pendingTarget = 0;
+let loadCount = 0;
 
 type SubEntry = { label: string; lang: string | null; vtt: string };
 /** Extracted/uploaded WebVTT by subtitle id. Ids below the embedded subtitle
@@ -131,25 +125,13 @@ function bufferedAhead(v: HTMLVideoElement): number {
   return 0;
 }
 
-/** True while a window is being (re)opened. `syncTick` skips its correction
- * entirely in this state — the element's `currentTime` means nothing yet, and
- * acting on it would provoke a second correction. */
 export function busy(): boolean {
-  return openCount > 0 || reopenTimer !== null;
-}
-
-/** True when the last play() was rejected for lack of a user gesture. */
-export function awaitingGesture(): boolean {
-  return needsGesture;
+  return loadCount > 0 || openCount > 0 || reopenTimer !== null;
 }
 
 export function onPlayerEvent(l: Listener): () => void {
   listeners.add(l);
   return () => listeners.delete(l);
-}
-
-export function playerMode(): PlayerMode {
-  return mode;
 }
 
 /** How this source is being played, for a UI badge. Null before a plan exists. */
@@ -160,7 +142,6 @@ export function pipelineLabel(): string | null {
 export function attachHtml(video: HTMLVideoElement): void {
   detachHtml();
   htmlVideo = video;
-  mode = "html";
   const v = video;
 
   const onTime = () => {
@@ -256,11 +237,20 @@ function playDirect(url: string) {
   offsetSec = 0;
   v.src = url;
   v.load();
+  v.playbackRate = rate;
 }
 
 export async function load(url: string): Promise<void> {
+  loadCount += 1;
+  try {
+    await loadInner(url);
+  } finally {
+    loadCount -= 1;
+  }
+}
+
+async function loadInner(url: string): Promise<void> {
   await closeSession();
-  needsGesture = false;
   stalled = false;
   offsetSec = 0;
   sourceDurationSec = 0;
@@ -422,11 +412,9 @@ export async function setPause(paused: boolean): Promise<void> {
   }
   try {
     await htmlVideo.play();
-    needsGesture = false;
   } catch {
     // Autoplay was refused. Surface it so the UI can ask for a click, rather
     // than leaving the follower stuck on a black stage with no explanation.
-    needsGesture = true;
     emit({ kind: "error", message: "autoplay-blocked" });
   }
 }
@@ -487,16 +475,6 @@ export async function setSpeed(newRate: number): Promise<void> {
   if (htmlVideo) htmlVideo.playbackRate = newRate;
 }
 
-export async function now(): Promise<{ pos: number; tsMs: number }> {
-  return {
-    // Mid-reopen the element's clock is meaningless; the position we are moving
-    // to is the honest answer, and stops a stale reading provoking a second
-    // correction.
-    pos: busy() ? pendingTarget : (htmlVideo?.currentTime ?? 0) + offsetSec,
-    tsMs: performance.now(),
-  };
-}
-
 // ---- tracks --------------------------------------------------------------
 
 function embeddedSubCount(): number {
@@ -550,10 +528,6 @@ function buildTracks(): TrackInfo[] {
     });
   }
   return out;
-}
-
-export async function getTracks(): Promise<TrackInfo[]> {
-  return buildTracks();
 }
 
 /**
@@ -716,8 +690,6 @@ export function teardown(): Promise<void> {
   rate = 1;
   const closing = closeSession();
   detachHtml();
-  mode = "none";
-  needsGesture = false;
   stalled = false;
   return closing;
 }

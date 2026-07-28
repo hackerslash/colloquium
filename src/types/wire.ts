@@ -459,22 +459,14 @@ export type WatchPartyHandoffMessage = {
   controlEpoch: number;
 };
 
-/** Owner shares an external subtitle file (SRT/ASS text) so every client
- * `sub-add`s the same one locally. `subId` lets a snapshot's `subTrackId`
- * reference it consistently across peers. Large files are chunked via the
- * existing file-transfer path; small ones ride inline. */
 export type WatchPartySubtitleMessage = {
   type: "watch_party_subtitle";
   roomId: string;
   partyId: string;
-  subId: string;
   name: string;
   contentB64: string;
 };
 
-/** Per-participant readiness/buffering beacon, same absolute-expiry lease model
- * as room-call beacons: drives "who's watching" presence and the optional
- * "wait for everyone" un-pause gate. */
 export type WatchPartyMemberMessage = {
   type: "watch_party_member";
   roomId: string;

@@ -27,7 +27,6 @@ type ChromeButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "md" | "lg";
   /** Ember fill — the one primary action on the surface (play/pause). */
   primary?: boolean;
-  tooltip?: boolean;
 };
 
 export function ChromeButton({
@@ -35,29 +34,29 @@ export function ChromeButton({
   label,
   size = "md",
   primary = false,
-  tooltip = true,
   className,
   ...rest
 }: ChromeButtonProps) {
-  const button = (
-    <button
-      type="button"
-      aria-label={label}
-      className={cx(
-        "inline-flex shrink-0 items-center justify-center rounded-full transition-[background-color,color,opacity] duration-150",
-        "disabled:cursor-not-allowed disabled:opacity-40",
-        size === "lg" ? "h-11 w-11" : "h-9 w-9",
-        primary
-          ? "bg-accent text-accent-ink hover:bg-accent-hover active:bg-accent-active"
-          : "text-white/85 hover:bg-white/15 hover:text-white active:bg-white/25",
-        className,
-      )}
-      {...rest}
-    >
-      <Icon size={size === "lg" ? 22 : 18} aria-hidden="true" />
-    </button>
+  return (
+    <Tooltip label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        className={cx(
+          "inline-flex shrink-0 items-center justify-center rounded-full transition-[background-color,color,opacity] duration-150",
+          "disabled:cursor-not-allowed disabled:opacity-40",
+          size === "lg" ? "h-11 w-11" : "h-9 w-9",
+          primary
+            ? "bg-accent text-accent-ink hover:bg-accent-hover active:bg-accent-active"
+            : "text-white/85 hover:bg-white/15 hover:text-white active:bg-white/25",
+          className,
+        )}
+        {...rest}
+      >
+        <Icon size={size === "lg" ? 22 : 18} aria-hidden="true" />
+      </button>
+    </Tooltip>
   );
-  return tooltip ? <Tooltip label={label}>{button}</Tooltip> : button;
 }
 
 type ChromeTextButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -136,8 +135,6 @@ type PlayerMenuProps = {
   /** Text trigger, for values worth reading at a glance (playback speed). */
   text?: string;
   disabled?: boolean;
-  /** Which edge of the trigger the panel lines up with. */
-  align?: "start" | "end";
   /** Which way the panel opens. Transport menus open upward; a menu in the top
    * bar has to open downward or it lands off-screen. */
   side?: "top" | "bottom";
@@ -158,7 +155,6 @@ export function PlayerMenu({
   icon: Icon,
   text,
   disabled = false,
-  align = "end",
   side = "top",
   heading,
   footer,
@@ -260,10 +256,9 @@ export function PlayerMenu({
             }
           }}
           className={cx(
-            "absolute z-10 min-w-52 max-w-72 overflow-hidden rounded-xl border border-border bg-bg-elevated py-1 shadow-modal",
+            "absolute right-0 z-10 min-w-52 max-w-72 overflow-hidden rounded-xl border border-border bg-bg-elevated py-1 shadow-modal",
             "animate-[menu-in_140ms_cubic-bezier(0.16,1,0.3,1)] motion-reduce:animate-none",
             side === "top" ? "bottom-full mb-2 origin-bottom" : "top-full mt-2 origin-top",
-            align === "end" ? "right-0" : "left-0",
           )}
         >
           {heading && (

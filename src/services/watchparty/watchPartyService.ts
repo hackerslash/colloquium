@@ -76,9 +76,9 @@ function send(remoteId: string, data: unknown) {
 
 function broadcast(data: unknown) {
   if (!session) return;
-  for (const id of session.memberIds) {
-    if (id !== session.self.identityId) send(id, data);
-  }
+  const targets = new Set([...session.memberIds, ...session.members.keys()]);
+  targets.delete(session.self.identityId);
+  for (const id of targets) send(id, data);
 }
 
 function isController(): boolean {
@@ -102,15 +102,13 @@ function localPositionNow(): number {
 
 function pushSessionToStore() {
   if (!session) return;
-  const info = session.reducer.info();
   useWatchPartyStore.getState()._setSession({
     roomId: session.roomId,
     partyId: session.partyId,
     streamUrl: session.streamUrl,
-    ownerId: info?.ownerId ?? session.self.identityId,
-    controllerId: session.reducer.currentControllerId() ?? session.self.identityId,
+    ownerId: session.reducer.info()?.ownerId ?? null,
+    controllerId: session.reducer.currentControllerId(),
   });
-  useWatchPartyStore.getState()._setMode(player.playerMode());
 }
 
 function pushPlaybackToStore() {
@@ -175,12 +173,6 @@ function onPlayerEvent(e: WpEvent) {
       store._setError(e.message);
       break;
   }
-}
-
-async function initPlayer(): Promise<void> {
-  // HTML <video> mode is activated when the Stage component mounts and calls
-  // player.attachHtml(). Nothing to do here.
-  useWatchPartyStore.getState()._setMode(player.playerMode());
 }
 
 function startLoops() {
@@ -360,7 +352,6 @@ export async function startParty(self: Identity, roomId: string, streamUrl: stri
   if (session) leaveParty();
   const memberIds = await roomMembersRepo.listMembers(roomId);
   session = makeSession(self, roomId, streamUrl, memberIds);
-  await initPlayer();
   const startMsg: WatchPartyStartMessage = {
     type: "watch_party_start",
     roomId,
@@ -387,7 +378,6 @@ export async function joinParty(self: Identity, roomId: string): Promise<void> {
   const announced = useWatchPartyStore.getState().announcedByRoom?.[roomId];
   const streamUrl = announced?.streamUrl ?? "";
   session = makeSession(self, roomId, streamUrl, memberIds);
-  await initPlayer();
   if (announced) {
     session.reducer.applyStart({
       type: "watch_party_start",
@@ -514,12 +504,10 @@ export async function addSubtitle(file: File): Promise<void> {
   if (!session || !isController()) return;
   const bytes = new Uint8Array(await file.arrayBuffer());
   const contentB64 = toBase64(bytes);
-  const subId = `sub_${Date.now()}`;
   const msg: WatchPartySubtitleMessage = {
     type: "watch_party_subtitle",
     roomId: session.roomId,
     partyId: session.partyId,
-    subId,
     name: file.name,
     contentB64,
   };
@@ -573,9 +561,11 @@ export function handleState(_self: Identity, msg: WatchPartyStateMessage): void 
   if (!session || session.roomId !== msg.roomId) return;
   const changed = session.reducer.applyState(msg, monoNow());
   if (!changed) return;
-  if (!isController()) {
-    pushPlaybackToStore();
+  if (isController()) {
+    session.ctrl.paused = msg.paused;
+    session.ctrl.rate = msg.playbackRate;
   }
+  pushPlaybackToStore();
 }
 
 export function handleHandoff(_self: Identity, msg: WatchPartyHandoffMessage): void {

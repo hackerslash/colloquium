@@ -43,6 +43,9 @@ GitHub Release notes.
 
 ### Removed
 
+- **Linux builds.** Colloquium now ships for macOS and Windows only. The `.deb`,
+  `.rpm` and `.AppImage` targets, the Secret Service keyring backend and the
+  Linux CI matrix are gone.
 - The transparent-window and macOS private-API flags, which existed only for the
   deleted native video overlay.
 

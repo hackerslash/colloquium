@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type { Identity } from "../types/domain";
 import type {
   AudioTrackId,
-  PlayerMode,
   SubTrackId,
   TrackInfo,
 } from "../services/watchparty/watchPartyPlayer";
@@ -30,7 +29,6 @@ type WatchPartyStoreState = {
   streamUrl: string | null;
   ownerId: string | null;
   controllerId: string | null;
-  mode: PlayerMode;
   announcedByRoom: Record<string, AnnouncedParty>;
 
   paused: boolean;
@@ -67,10 +65,9 @@ type WatchPartyStoreState = {
     roomId: string;
     partyId: string;
     streamUrl: string;
-    ownerId: string;
-    controllerId: string;
+    ownerId: string | null;
+    controllerId: string | null;
   }) => void;
-  _setMode: (mode: PlayerMode) => void;
   _setController: (id: string | null) => void;
   _setStreamUrl: (url: string) => void;
   _setPlayback: (v: Partial<PlaybackSlice>) => void;
@@ -103,7 +100,6 @@ const INITIAL: PlaybackSlice & {
   streamUrl: null;
   ownerId: null;
   controllerId: null;
-  mode: PlayerMode;
   tracks: TrackInfo[];
   subLoading: boolean;
   buffering: boolean;
@@ -117,7 +113,6 @@ const INITIAL: PlaybackSlice & {
   streamUrl: null,
   ownerId: null,
   controllerId: null,
-  mode: "none",
   paused: true,
   positionSec: 0,
   durationSec: 0,
@@ -189,7 +184,6 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
       controllerId: v.controllerId,
       error: null,
     }),
-  _setMode: (mode) => set({ mode }),
   _setController: (id) => set({ controllerId: id }),
   _setStreamUrl: (url) => set({ streamUrl: url }),
   _setPlayback: (v) => set(v),

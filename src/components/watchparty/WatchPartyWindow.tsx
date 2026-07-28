@@ -76,7 +76,6 @@ function Stage({
   useEffect(() => {
     if (!videoRef.current) return;
     player.attachHtml(videoRef.current);
-    useWatchPartyStore.getState()._setMode("html");
     return () => {
       void player.teardown();
     };
@@ -171,21 +170,13 @@ function Stage({
 
       {!streamUrl && !error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-10 text-center">
-          {/* The one enrichment design.md allows on an empty state. */}
-          <div
-            aria-hidden="true"
-            className="absolute h-64 w-64 rounded-full opacity-40 blur-3xl"
-            style={{
-              background: "radial-gradient(circle, var(--color-accent) 0%, transparent 70%)",
-            }}
-          />
-          <p className="font-display relative text-2xl text-white">Nothing playing yet</p>
+          <p className="font-display text-2xl text-white">Nothing playing yet</p>
           {controller ? (
-            <div className="relative flex w-full max-w-lg items-center gap-2">
+            <div className="flex w-full max-w-lg items-center gap-2">
               <input
                 ref={urlRef}
                 type="url"
-                placeholder="https://…/movie.mkv"
+                placeholder="Paste a link to the video you want to watch"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submitUrl();
                 }}
@@ -196,7 +187,7 @@ function Stage({
               </Button>
             </div>
           ) : (
-            <p className="relative text-sm text-white/55">
+            <p className="text-sm text-white/55">
               Waiting for {controllerName} to pick something.
             </p>
           )}
@@ -557,7 +548,7 @@ export function WatchPartyWindow() {
                 ref={sourceRef}
                 type="url"
                 defaultValue={streamUrl ?? ""}
-                placeholder="https://…/movie.mkv"
+                placeholder="Paste a link to the video you want to watch"
                 onKeyDown={(e) => {
                   if (e.key === "Enter") submitSource();
                   if (e.key === "Escape") setSourceOpen(false);

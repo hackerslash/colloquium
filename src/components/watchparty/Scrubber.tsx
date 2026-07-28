@@ -29,7 +29,15 @@ export function Scrubber({
   // Held while the pointer owns the thumb, so incoming sync positions don't
   // yank it out from under the drag.
   const [dragSec, setDragSec] = useState<number | null>(null);
+  const dragRef = useRef<number | null>(null);
   const [hover, setHover] = useState<{ sec: number; x: number } | null>(null);
+
+  const endDrag = () => {
+    const sec = dragRef.current;
+    dragRef.current = null;
+    setDragSec(null);
+    if (sec !== null) onSeek(sec);
+  };
 
   const duration = durationSec > 0 ? durationSec : 0;
   const shown = dragSec ?? Math.min(positionSec, duration || positionSec);
@@ -86,12 +94,19 @@ export function Scrubber({
         disabled={disabled}
         onChange={(e) => {
           const v = Number(e.target.value);
-          if (dragSec !== null) setDragSec(v);
-          onSeek(v);
+          if (dragRef.current === null) {
+            onSeek(v);
+            return;
+          }
+          dragRef.current = v;
+          setDragSec(v);
         }}
-        onPointerDown={() => setDragSec(shown)}
-        onPointerUp={() => setDragSec(null)}
-        onPointerCancel={() => setDragSec(null)}
+        onPointerDown={() => {
+          dragRef.current = shown;
+          setDragSec(shown);
+        }}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
         onPointerMove={(e) => {
           const rect = railRef.current?.getBoundingClientRect();
           if (!rect || rect.width === 0) return;
