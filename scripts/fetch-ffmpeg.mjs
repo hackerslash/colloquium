@@ -61,7 +61,9 @@ function requestedTriples(argv) {
   // build doesn't silently produce host-only binaries.
   const envTriple = process.env.TAURI_ENV_TARGET_TRIPLE ?? "";
   const universal = argv.includes("--universal") || envTriple.includes("universal");
-  if (universal) return ["universal-apple-darwin"];
+  if (universal) {
+    return ["universal-apple-darwin", "aarch64-apple-darwin", "x86_64-apple-darwin"];
+  }
   return [hostTriple()];
 }
 
