@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Hash, Phone } from "lucide-react";
+import { Bell, BellOff, Hash, Phone, Clapperboard } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
+import { useWatchPartyStore } from "../../stores/useWatchPartyStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
@@ -48,6 +49,11 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
   const callRoomId = useRoomCallStore((s) => s.roomId);
   const joinCall = useRoomCallStore((s) => s.join);
   const callParticipants = useRoomStore((s) => s.callParticipantsByRoom[roomId]) ?? [];
+
+  const wpActive = useWatchPartyStore((s) => s.active && s.roomId === roomId);
+  const wpAnnounced = useWatchPartyStore((s) => s.announcedByRoom[roomId]);
+  const startWatchParty = useWatchPartyStore((s) => s.start);
+  const joinWatchParty = useWatchPartyStore((s) => s.join);
 
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [membersOpen, setMembersOpen] = useState(false);
@@ -137,6 +143,21 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {!wpActive && (
+            <Button
+              size="sm"
+              variant={wpAnnounced ? "primary" : "secondary"}
+              icon={Clapperboard}
+              onClick={() => {
+                if (wpAnnounced) void joinWatchParty(roomId);
+                else void startWatchParty(roomId, "");
+              }}
+              title="Watch a synced stream together"
+              className={wpAnnounced ? "bg-success hover:bg-success/90" : undefined}
+            >
+              {wpAnnounced ? "Join watch party" : "Watch party"}
+            </Button>
+          )}
           <IconButton
             icon={muted ? BellOff : Bell}
             label={muted ? "Unmute notifications" : "Mute notifications"}

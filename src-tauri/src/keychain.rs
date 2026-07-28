@@ -42,7 +42,7 @@ pub fn load_or_create_db_key_hex() -> Result<String, String> {
 }
 
 /// Persists the raw private key seed bytes in the OS keychain (macOS Keychain /
-/// Windows Credential Manager / Linux Secret Service). Never call this with
+/// Windows Credential Manager). Never call this with
 /// anything that should be visible to the webview — this module is the only
 /// place the raw key touches disk.
 pub fn save_private_key_bytes(bytes: &[u8]) -> Result<(), String> {

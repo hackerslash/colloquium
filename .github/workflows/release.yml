@@ -1,6 +1,6 @@
 name: Release
 
-# Builds Colloquium on native macOS, Windows, and Linux runners and publishes the installers
+# Builds Colloquium on native macOS and Windows runners and publishes the installers
 # to a GitHub Release. Triggered by pushing a version tag (e.g. v1).
 on:
   push:
@@ -68,10 +68,6 @@ jobs:
           - platform: windows-latest
             args: ''
             rust-targets: ''
-          # Linux -> .deb, .rpm, .AppImage
-          - platform: ubuntu-22.04
-            args: ''
-            rust-targets: ''
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -97,20 +93,6 @@ jobs:
             const cargoToml = fs.readFileSync(cargoTomlPath, 'utf8')
             fs.writeFileSync(cargoTomlPath, cargoToml.replace(/^version = ".*"/m, `version = "${version}"`))
 
-      - name: Install Linux system dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            build-essential \
-            libxdo-dev \
-            libssl-dev
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -121,6 +103,15 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+
+      - name: Cache ffmpeg sidecars
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles('scripts/ffmpeg-manifest.json') }}
+
+      - name: Fetch ffmpeg sidecars
+        run: pnpm ffmpeg --require-published ${{ matrix.platform == 'macos-latest' && '--universal' || '' }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

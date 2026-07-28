@@ -1,0 +1,25 @@
+{
+  "$comment": [
+    "Pins the ffmpeg/ffprobe sidecars that Colloquium bundles. Both platforms are",
+    "built from source by .github/workflows/build-ffmpeg.yml so that the binaries",
+    "stay LGPL-2.1 (no libx264/libx265) and small (~13 MB each rather than the",
+    "113 MB of a prebuilt static build that links every codec library going).",
+    "",
+    "To publish a new set: run the build-ffmpeg workflow, then paste the sha256 of",
+    "each uploaded archive below. A null sha256 means 'not published yet' — in that",
+    "case scripts/fetch-ffmpeg.mjs builds the host's own binaries from source, so a",
+    "macOS or Windows dev is never blocked waiting on a release."
+  ],
+  "ffmpegRef": "n8.1.2",
+  "ffmpegCommit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
+  "release": {
+    "repo": "hackerslash/colloquium",
+    "tag": "ffmpeg-bundle-n8.1.2-1"
+  },
+  "artifacts": {
+    "aarch64-apple-darwin": { "sha256": null },
+    "x86_64-apple-darwin": { "sha256": null },
+    "universal-apple-darwin": { "sha256": null },
+    "x86_64-pc-windows-msvc": { "sha256": null }
+  }
+}

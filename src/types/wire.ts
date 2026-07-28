@@ -395,7 +395,134 @@ export type RoomCallBeaconMessage = {
   leaving: boolean;
 };
 
+// --- Watch party: synchronized LOCAL playback of a shared media URL. Every
+// client plays the URL independently using the browser's <video> element
+// (no re-broadcast → no quality loss from source); only small control
+// messages cross the wire. The controller is the single authority (a logical
+// star over the existing data channel — no server, no relay process). Its
+// snapshot is idempotent and last-write-wins by
+// (controlEpoch, monotonicSeq, controllerId), so out-of-order/duplicated
+// snapshots converge and any peer may re-broadcast the newest it has seen
+// (relay-like resilience for a peer that loses the direct link to the owner).
+// `controlEpoch` mirrors the presenter-slot epoch model: hand-off bumps it, and
+// the holder of the highest epoch is authoritative. ---
 
+export type WatchPartyStartMessage = {
+  type: "watch_party_start";
+  roomId: string;
+  partyId: string;
+  streamUrl: string;
+  /** The participant who opened the party; the initial controller. */
+  ownerId: string;
+  startedAt: number;
+};
+
+/** The authoritative playback snapshot. Sent on every controller action and as
+ * a ~1-2s heartbeat. `controllerClockMs` is the controller's monotonic clock
+ * (performance.now-based) at the instant `positionSec` was true, so followers
+ * can project the live position forward.
+ *
+ * `audioTrackId` and `subTrackId` are **ordinals within their own stream type**
+ * — `0` means "the first audio stream" — not absolute ffprobe stream indices,
+ * which would drift between a file's video/audio/subtitle interleaving and are
+ * not what ffmpeg's `0:a:N` selectors take either. Subtitle ids at or above the
+ * source's embedded subtitle count refer to files shared via
+ * `watch_party_subtitle`, so both kinds share one id space.
+ *
+ * The three track fields are optional: a peer running an older build omits them,
+ * and a follower leaves any absent field untouched rather than resetting it. */
+export type WatchPartyStateMessage = {
+  type: "watch_party_state";
+  roomId: string;
+  partyId: string;
+  controllerId: string;
+  controlEpoch: number;
+  monotonicSeq: number;
+  paused: boolean;
+  positionSec: number;
+  playbackRate: number;
+  audioTrackId?: number | "no" | "auto";
+  subTrackId?: number | "no";
+  subDelaySec?: number;
+  controllerClockMs: number;
+};
+
+/** Transfers control authority. The named `toId` becomes the controller at
+ * `controlEpoch` (which must exceed the current one). Higher epoch wins; ties
+ * break on the lexicographically smaller `toId`. */
+export type WatchPartyHandoffMessage = {
+  type: "watch_party_handoff";
+  roomId: string;
+  partyId: string;
+  toId: string;
+  byId: string;
+  controlEpoch: number;
+};
+
+/** Subtitle cues shared with the party as WebVTT — either a file the controller
+ * uploaded or a track it pulled out of the source. Extracting means reading the
+ * whole container, so the controller does it once and hands the result round
+ * rather than every peer re-downloading the film for the same cues.
+ *
+ * `subId` is set only for the extracted case, naming the ordinal the snapshot
+ * already refers to; without it the receiver files the cues as a new upload,
+ * which is right for a file and wrong for a track of the source. */
+export type WatchPartySubtitleMessage = {
+  type: "watch_party_subtitle";
+  roomId: string;
+  partyId: string;
+  name: string;
+  contentB64: string;
+  subId?: number;
+  lang?: string | null;
+};
+
+/** Beacon carrying a peer's playback readiness, renewed on a lease.
+ *
+ * `ready` is "not stalled right now"; `primed` is "holding enough footage for the
+ * party to start", which the peer decides itself because only it knows which
+ * pipeline it ended up on — a remux measures against what ffmpeg has written,
+ * while direct play can only report what the webview chose to buffer. One
+ * controller-side threshold would stall on a peer that could never reach it.
+ * Optional: an older build omits it. */
+export type WatchPartyMemberMessage = {
+  type: "watch_party_member";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  ready: boolean;
+  primed?: boolean;
+  bufferedSec: number;
+  leaseExpiresAt: number;
+  leaving: boolean;
+};
+
+/** RTT probe to the controller. `t` is the sender's monotonic clock echoed
+ * back in the pong, so the sender can compute round-trip (and thus one-way)
+ * delay to refine position projection. */
+export type WatchPartyPingMessage = {
+  type: "watch_party_ping";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  t: number;
+};
+
+export type WatchPartyPongMessage = {
+  type: "watch_party_pong";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+  /** Echoed ping `t` (the pinger's clock at send). */
+  t: number;
+};
+
+export type WatchPartyEndMessage = {
+  type: "watch_party_end";
+  roomId: string;
+  partyId: string;
+  fromId: string;
+};
 
 export type FileChunkMessage = {
   type: "file_chunk";
@@ -463,4 +590,12 @@ export type ColloquiumMessage =
   | SlotReleaseMessage
   | RoomAnnounceMessage
   | RoomLeaveMessage
-  | RoomCallBeaconMessage;
+  | RoomCallBeaconMessage
+  | WatchPartyStartMessage
+  | WatchPartyStateMessage
+  | WatchPartyHandoffMessage
+  | WatchPartySubtitleMessage
+  | WatchPartyMemberMessage
+  | WatchPartyPingMessage
+  | WatchPartyPongMessage
+  | WatchPartyEndMessage;

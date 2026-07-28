@@ -7,6 +7,48 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **Watch party playback.** Paste a video URL and watch it together, in sync,
+  with everyone's camera and mic alongside it. Every peer fetches the same
+  source itself — only small control messages cross the P2P link, never media
+  bytes.
+- Real movie files now play: MKV and other containers the webview cannot open,
+  HEVC, AC3/E-AC3/DTS/TrueHD audio, multiple audio tracks, and embedded
+  subtitles. A bundled ffmpeg sidecar remuxes or transcodes to HLS on the fly.
+  Nothing to install — the sidecars ship with the app.
+- What each machine has to do is decided by asking that machine, not by guessing
+  from its operating system. A Mac decodes HEVC natively and only remuxes; a
+  Windows PC without the HEVC Video Extension transcodes the same file. Both
+  stay in sync frame-for-frame, because positions are tracked on the source
+  timeline rather than on whatever each peer's pipeline produced.
+- Audio-track and subtitle selection follow the controller. Subtitle track
+  changes and subtitle delay apply instantly on every peer with no rebuffering.
+  External `.srt`, `.ass`/`.ssa` and `.vtt` files can be shared into the party.
+  Image-based subtitles (PGS, VOBSUB) are listed but greyed out — they cannot be
+  converted to WebVTT.
+
+### Fixed
+
+- Watch party video was blocked outright by the content-security policy, so no
+  remote source could ever play.
+- Playback errors and autoplay blocking are surfaced on the video stage instead
+  of failing silently to a black screen.
+- Subtitle files larger than a few dozen kilobytes overflowed the call stack
+  when shared with the party.
+- External subtitle files were attached as `text/plain`, which no engine parses
+  as captions.
+
+### Removed
+
+- **Linux builds.** Colloquium now ships for macOS and Windows only. The `.deb`,
+  `.rpm` and `.AppImage` targets, the Secret Service keyring backend and the
+  Linux CI matrix are gone.
+- The transparent-window and macOS private-API flags, which existed only for the
+  deleted native video overlay.
+
 ## 0.4.0
 
 ### Changed

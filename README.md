@@ -1,7 +1,7 @@
 # Colloquium
 
 A premium, Discord-inspired peer-to-peer desktop app for persistent text chat
-and voice/video rooms — Windows, macOS, and Linux. Built with Tauri v2 + React
+and voice/video rooms — Windows and macOS. Built with Tauri v2 + React
 + TypeScript + Vite. No custom backend: WebRTC signaling goes through the free
 PeerJS cloud broker with a hosted TURN relay for NAT traversal, and all data
 lives locally in SQLite.
@@ -24,11 +24,6 @@ Download the latest installer from the
 Run the downloaded `.exe`/`.msi` installer, then launch Colloquium from the Start
 menu.
 
-**Linux**
-Install the `.deb`, `.rpm`, or `.AppImage` for your distro. Colloquium stores its
-identity key via the Secret Service D-Bus API, so a keyring provider (GNOME
-Keyring, KWallet, etc.) must be running.
-
 ## Features
 
 - Persistent text chat and 1:1 / room voice & video calls over WebRTC
@@ -47,6 +42,13 @@ Prerequisites: [Node.js](https://nodejs.org/) + [pnpm](https://pnpm.io/),
 pnpm install
 pnpm tauri dev
 ```
+
+Watch party needs `ffmpeg`/`ffprobe`, but **you do not install them** — they are
+bundled sidecars, and `pnpm tauri dev` provisions them automatically before the
+first build. Once checksums are published in `scripts/ffmpeg-manifest.json` this
+is a download; until then the first run compiles a minimal LGPL build from
+source, which takes around ten minutes and only ever happens once. To do it
+ahead of time, run `pnpm ffmpeg`. See [THIRD-PARTY.md](THIRD-PARTY.md).
 
 If `pnpm install` fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`, your
 machine has a global pnpm supply-chain policy that blocks recently-published

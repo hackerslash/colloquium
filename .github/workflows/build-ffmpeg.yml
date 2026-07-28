@@ -1,0 +1,166 @@
+name: Build ffmpeg sidecars
+
+# Produces the minimal LGPL ffmpeg/ffprobe binaries that Colloquium bundles, and
+# publishes them as a release the app's build can download.
+#
+# Run this manually, and only when bumping the pinned ffmpeg version — it is not
+# part of CI or the app release. Afterwards, copy the printed sha256 values into
+# scripts/ffmpeg-manifest.json; until you do, developers fall back to compiling
+# their host's own binaries from source, which still works but is slow.
+#
+# Why build rather than download: every convenient prebuilt static ffmpeg bundles
+# libx264/libx265 (so, GPL) and statically links every codec library going —
+# BtbN's LGPL ffmpeg.exe alone is 113 MB, against ~13 MB for this build. See the
+# header of scripts/build-ffmpeg.sh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ffmpeg_ref:
+        description: 'FFmpeg git tag to build (must match scripts/ffmpeg-manifest.json)'
+        required: true
+        default: 'n8.1.2'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners per architecture rather than cross-compiling: no
+          # cross toolchain, no nasm-for-x86-on-arm, nothing to get subtly wrong.
+          - runner: macos-latest
+            triple: aarch64-apple-darwin
+          - runner: macos-13
+            triple: x86_64-apple-darwin
+          - runner: windows-latest
+            triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install nasm
+
+      # The binary is labelled with the MSVC triple because that is the triple
+      # Rust builds the app for, but it is compiled with mingw-w64. That is fine:
+      # the output is an ordinary PE executable we only ever spawn as a child
+      # process, never link against.
+      - name: Set up MSYS2 (Windows)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            git
+            diffutils
+            make
+            nasm
+            pkg-config
+            mingw-w64-x86_64-gcc
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          FFMPEG_REF: ${{ inputs.ffmpeg_ref }}
+        run: bash scripts/build-ffmpeg.sh out "${{ matrix.triple }}"
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        env:
+          FFMPEG_REF: ${{ inputs.ffmpeg_ref }}
+        run: bash scripts/build-ffmpeg.sh out "${{ matrix.triple }}"
+
+      - name: Verify the build is LGPL and self-contained
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="out/ffmpeg-${{ matrix.triple }}"
+          [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
+          conf="$("$bin" -hide_banner -buildconf 2>&1 || true)"
+          # A GPL component or an external codec library here means
+          # --disable-autodetect failed to keep the build clean.
+          for bad in enable-gpl enable-nonfree libx264 libx265 libvpx libaom libsvtav1; do
+            if printf '%s' "$conf" | grep -q -- "--$bad"; then
+              echo "::error::$bin was built with --$bad"; exit 1
+            fi
+          done
+          echo "$conf"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecars-${{ matrix.triple }}
+          path: out/*
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: macos-latest # needs lipo and codesign
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Assemble archives
+        id: assemble
+        run: |
+          set -euo pipefail
+          mkdir -p out dist
+          cp staging/sidecars-*/* out/
+
+          # Universal macOS binary for the release workflow's
+          # --target universal-apple-darwin build.
+          for tool in ffmpeg ffprobe; do
+            lipo -create \
+              "out/$tool-aarch64-apple-darwin" \
+              "out/$tool-x86_64-apple-darwin" \
+              -output "out/$tool-universal-apple-darwin"
+            # lipo strips the signature off its inputs' signatures; an unsigned
+            # Mach-O is SIGKILLed on Apple Silicon, so re-sign after combining.
+            codesign --force --sign - "out/$tool-universal-apple-darwin"
+            lipo -info "out/$tool-universal-apple-darwin"
+          done
+
+          for triple in aarch64-apple-darwin x86_64-apple-darwin universal-apple-darwin x86_64-pc-windows-msvc; do
+            case "$triple" in *windows*) ext=".exe" ;; *) ext="" ;; esac
+            tar -czf "dist/ffmpeg-sidecars-$triple.tar.gz" -C out \
+              "ffmpeg-$triple$ext" "ffprobe-$triple$ext"
+          done
+
+          {
+            echo '### Paste these into `scripts/ffmpeg-manifest.json`'
+            echo
+            echo '```json'
+            for f in dist/*.tar.gz; do
+              triple="$(basename "$f" .tar.gz)"; triple="${triple#ffmpeg-sidecars-}"
+              printf '"%s": { "sha256": "%s" },\n' "$triple" "$(shasum -a 256 "$f" | cut -d' ' -f1)"
+            done
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          ls -lh dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="ffmpeg-bundle-${{ inputs.ffmpeg_ref }}-1"
+          notes="Minimal LGPL-2.1 ffmpeg/ffprobe ${{ inputs.ffmpeg_ref }} sidecars for Colloquium.
+          Built by .github/workflows/build-ffmpeg.yml with --disable-autodetect and no
+          external codec libraries. H.264 encoding uses the platform encoder
+          (h264_videotoolbox / h264_mf). No TLS backend: the app proxies remote
+          sources over loopback http, so ffmpeg needs no network stack."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* --title "$tag" --notes "$notes"
+          fi

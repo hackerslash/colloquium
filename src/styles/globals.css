@@ -91,6 +91,12 @@
   --shadow-md: 0 4px 12px rgb(0 0 0 / 0.05);
 }
 
+:root {
+  /* Chrome that sits on video is light-on-dark in both themes, because the film
+     is dark in both themes. */
+  --color-chrome-track: oklch(100% 0 0 / 0.25);
+}
+
 html,
 body,
 #root {
@@ -120,6 +126,49 @@ textarea,
 :focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+/* Fade + a hair of scale, per the motion stance — menus never slide. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Slim range track for controls that sit on video, where the surrounding
+   surface is the film rather than a themed panel. The caller sets `--fill` to
+   the filled fraction. */
+.range-slim {
+  --fill: 0%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--fill),
+    var(--color-chrome-track) var(--fill)
+  );
+}
+.range-slim::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 9999px;
+  background: var(--color-accent);
+}
+.range-slim::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border: 0;
+  border-radius: 9999px;
+  background: var(--color-accent);
 }
 
 input:focus-visible,

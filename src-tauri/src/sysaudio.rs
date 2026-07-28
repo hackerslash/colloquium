@@ -973,7 +973,7 @@ mod win {
     use base64::Engine as _;
     use tauri::ipc::Channel;
 
-    use windows::core::{implement, Interface, IUnknown, HRESULT, PROPVARIANT};
+    use windows::core::{implement, Interface, IUnknown, Ref, HRESULT};
     use windows::Win32::Media::Audio::{
         ActivateAudioInterfaceAsync, IActivateAudioInterfaceAsyncOperation,
         IActivateAudioInterfaceCompletionHandler,
@@ -984,6 +984,7 @@ mod win {
         PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE, VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK,
         WAVEFORMATEX,
     };
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
     /// The WebView2 browser process id — the root of the helper tree that
@@ -1044,7 +1045,7 @@ mod win {
     impl IActivateAudioInterfaceCompletionHandler_Impl for ActivateHandler_Impl {
         fn ActivateCompleted(
             &self,
-            _operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+            _operation: Ref<'_, IActivateAudioInterfaceAsyncOperation>,
         ) -> windows::core::Result<()> {
             let (lock, cv) = &*self.signal;
             *lock.lock().unwrap() = true;

@@ -1,6 +1,7 @@
 mod db;
 mod identity;
 mod keychain;
+mod media;
 mod sysaudio;
 mod tray;
 
@@ -56,6 +57,7 @@ pub fn run() {
                 .build(),
         )
         .manage(CloseToTray(Mutex::new(true)))
+        .manage(media::MediaState::default())
         .setup(|app| {
             // Open (and, on first run after this ships, encrypt) the local DB
             // and inject the keyed pool BEFORE anything else — IPC only starts
@@ -73,6 +75,10 @@ pub fn run() {
                 }
             };
             app.manage(TrayAvailable(tray_ok));
+
+            // Drop any watch-party remux cache a previous run left behind — a
+            // crash can strand multi-gigabyte segment directories.
+            media::cleanup_stale(app.handle());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -100,8 +106,22 @@ pub fn run() {
             identity::identity_delete_keypair,
             sysaudio::sysaudio_start,
             sysaudio::sysaudio_stop,
+            media::media_open,
+            media::media_probe,
+            media::media_open_window,
+            media::media_extract_subtitle,
+            media::media_extract_progress,
+            media::media_close,
             set_close_to_tray,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Built rather than `run`, only so ffmpeg children are killed on the way
+        // out. A surviving ffmpeg would keep downloading and writing segments
+        // after the app is gone.
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                media::shutdown(app);
+            }
+        });
 }
