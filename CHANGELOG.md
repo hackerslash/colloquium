@@ -7,7 +7,7 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
-## Unreleased
+## 0.5.0
 
 ### Added
 

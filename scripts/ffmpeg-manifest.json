@@ -17,9 +17,9 @@
     "tag": "ffmpeg-bundle-n8.1.2-1"
   },
   "artifacts": {
-    "aarch64-apple-darwin": { "sha256": null },
-    "x86_64-apple-darwin": { "sha256": null },
-    "universal-apple-darwin": { "sha256": null },
-    "x86_64-pc-windows-msvc": { "sha256": null }
+    "aarch64-apple-darwin": { "sha256": "bf87dd46f43590a054bd6bb5a3b1f3ac71d024dc12b9ee987f349546329dec98" },
+    "x86_64-apple-darwin": { "sha256": "9f327072f9e7220e7cfb3c4cfe80abfe1a6d55d2c02ea6abf881c81a5a4126b5" },
+    "universal-apple-darwin": { "sha256": "9ec13be51449d8021100238a6f96ecdfd3758db7d58e9005d47f9c3df768c69c" },
+    "x86_64-pc-windows-msvc": { "sha256": "075cadaa89f780c1ddb0b7c3e6fb38c51bb361b8dd8b4f9efefaeaac5acfb3c9" }
   }
 }
