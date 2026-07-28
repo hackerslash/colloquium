@@ -9,7 +9,12 @@ import * as watchPartyService from "../services/watchparty/watchPartyService";
 import { useIdentityStore } from "./useIdentityStore";
 import { toast } from "./useToastStore";
 
-export type WatchPartyMember = { id: string; ready: boolean; bufferedSec: number };
+export type WatchPartyMember = {
+  id: string;
+  ready: boolean;
+  primed: boolean;
+  bufferedSec: number;
+};
 export type AnnouncedParty = { partyId: string; ownerId: string; streamUrl: string };
 
 type PlaybackSlice = {
@@ -40,11 +45,17 @@ type WatchPartyStoreState = {
   subDelaySec: number;
   tracks: TrackInfo[];
   subLoading: boolean;
+  /** 0..1 through the source while cues are being extracted, null when unknown.
+   * A 4K source takes minutes, so the wait needs a number against it. */
+  subProgress: number | null;
   buffering: boolean;
-  /** Contiguous buffer ahead of the local playhead, so the scrubber can draw
-   * what is actually loaded rather than a decorative fill. */
+  /** Footage ready ahead of the local playhead, so the scrubber can draw what is
+   * actually loaded rather than a decorative fill. */
   bufferedSec: number;
   members: WatchPartyMember[];
+  /** Peers the controller is waiting on before play starts. Empty unless a play
+   * has actually been asked for and gated. */
+  waitingFor: string[];
   error: string | null;
 
   start: (roomId: string, streamUrl: string) => Promise<void>;
@@ -53,6 +64,7 @@ type WatchPartyStoreState = {
   end: () => void;
   setStreamUrl: (url: string) => Promise<void>;
   togglePlay: () => void;
+  startAnyway: () => void;
   seek: (sec: number) => void;
   setRate: (rate: number) => void;
   setAudioTrack: (id: AudioTrackId) => void;
@@ -72,9 +84,10 @@ type WatchPartyStoreState = {
   _setStreamUrl: (url: string) => void;
   _setPlayback: (v: Partial<PlaybackSlice>) => void;
   _setTracks: (tracks: TrackInfo[]) => void;
-  _setSubLoading: (loading: boolean) => void;
-  _setBuffering: (buffering: boolean, bufferedSec?: number) => void;
-  _setMembers: (members: WatchPartyMember[]) => void;
+  _setSubLoading: (loading: boolean, progress?: number | null) => void;
+  _setBuffering: (buffering: boolean) => void;
+  _setPresence: (members: WatchPartyMember[], bufferedSec: number) => void;
+  _setWaitingFor: (ids: string[]) => void;
   _setError: (error: string | null) => void;
   _setAnnounced: (roomId: string, party: AnnouncedParty) => void;
   _clearAnnounced: (roomId: string) => void;
@@ -102,9 +115,11 @@ const INITIAL: PlaybackSlice & {
   controllerId: null;
   tracks: TrackInfo[];
   subLoading: boolean;
+  subProgress: number | null;
   buffering: boolean;
   bufferedSec: number;
   members: WatchPartyMember[];
+  waitingFor: string[];
   error: null;
 } = {
   active: false,
@@ -122,9 +137,11 @@ const INITIAL: PlaybackSlice & {
   subDelaySec: 0,
   tracks: [] as TrackInfo[],
   subLoading: false,
+  subProgress: null,
   buffering: false,
   bufferedSec: 0,
   members: [],
+  waitingFor: [],
   error: null,
 };
 
@@ -159,6 +176,7 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
     }
   },
   togglePlay: () => watchPartyService.togglePlay(),
+  startAnyway: () => watchPartyService.startAnyway(),
   seek: (sec) => watchPartyService.seek(sec),
   setRate: (rate) => watchPartyService.setRate(rate),
   setAudioTrack: (id) => watchPartyService.setAudioTrack(id),
@@ -188,10 +206,10 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
   _setStreamUrl: (url) => set({ streamUrl: url }),
   _setPlayback: (v) => set(v),
   _setTracks: (tracks) => set({ tracks }),
-  _setSubLoading: (subLoading) => set({ subLoading }),
-  _setBuffering: (buffering, bufferedSec) =>
-    set(bufferedSec === undefined ? { buffering } : { buffering, bufferedSec }),
-  _setMembers: (members) => set({ members }),
+  _setSubLoading: (subLoading, subProgress = null) => set({ subLoading, subProgress }),
+  _setBuffering: (buffering) => set({ buffering }),
+  _setPresence: (members, bufferedSec) => set({ members, bufferedSec }),
+  _setWaitingFor: (waitingFor) => set({ waitingFor }),
   _setError: (error) => set({ error }),
   _setAnnounced: (roomId, party) =>
     set((s) => ({ announcedByRoom: { ...s.announcedByRoom, [roomId]: party } })),

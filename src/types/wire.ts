@@ -459,20 +459,39 @@ export type WatchPartyHandoffMessage = {
   controlEpoch: number;
 };
 
+/** Subtitle cues shared with the party as WebVTT — either a file the controller
+ * uploaded or a track it pulled out of the source. Extracting means reading the
+ * whole container, so the controller does it once and hands the result round
+ * rather than every peer re-downloading the film for the same cues.
+ *
+ * `subId` is set only for the extracted case, naming the ordinal the snapshot
+ * already refers to; without it the receiver files the cues as a new upload,
+ * which is right for a file and wrong for a track of the source. */
 export type WatchPartySubtitleMessage = {
   type: "watch_party_subtitle";
   roomId: string;
   partyId: string;
   name: string;
   contentB64: string;
+  subId?: number;
+  lang?: string | null;
 };
 
+/** Beacon carrying a peer's playback readiness, renewed on a lease.
+ *
+ * `ready` is "not stalled right now"; `primed` is "holding enough footage for the
+ * party to start", which the peer decides itself because only it knows which
+ * pipeline it ended up on — a remux measures against what ffmpeg has written,
+ * while direct play can only report what the webview chose to buffer. One
+ * controller-side threshold would stall on a peer that could never reach it.
+ * Optional: an older build omits it. */
 export type WatchPartyMemberMessage = {
   type: "watch_party_member";
   roomId: string;
   partyId: string;
   fromId: string;
   ready: boolean;
+  primed?: boolean;
   bufferedSec: number;
   leaseExpiresAt: number;
   leaving: boolean;

@@ -23,6 +23,7 @@ import {
   type ProbeStream,
 } from "./codecSupport";
 import { decidePlan, planLabel, type Plan } from "./mediaPlan";
+import { READY_LEAD_SEC } from "./watchPartySync";
 import { assToVtt, looksLikeVtt, shiftVtt, srtToVtt } from "./vtt";
 
 export type TrackInfo = {
@@ -44,9 +45,10 @@ export type WpEvent =
   | { kind: "time"; pos: number; tsMs: number }
   | { kind: "duration"; duration: number }
   | { kind: "pause"; paused: boolean }
-  | { kind: "buffering"; pausedForCache: boolean; cachedSec: number; ready: boolean }
+  | { kind: "buffering"; pausedForCache: boolean; ready: boolean }
   | { kind: "tracks"; tracks: TrackInfo[] }
-  | { kind: "subtitles"; loading: boolean; failed: boolean }
+  /** `progress` is 0..1 through the source, or null when it isn't known yet. */
+  | { kind: "subtitles"; loading: boolean; failed: boolean; progress: number | null }
   | { kind: "eof" }
   | { kind: "error"; message: string };
 
@@ -63,6 +65,13 @@ const REOPEN_DEBOUNCE_MS = 250;
 const REOPEN_COALESCE_SEC = 2;
 /** Fatal hls.js errors to attempt recovery from per window before reporting. */
 const MAX_HLS_RECOVERIES = 3;
+/** Lead required of a direct-play source before it counts as primed. The webview
+ * buffers a plain <video> to its own internal limit, which is far below
+ * READY_LEAD_SEC and cannot be raised from script, so requiring the full lead
+ * there would block playback for good. */
+const DIRECT_PRIME_SEC = 10;
+/** How often to ask the sidecar how far a subtitle extraction has got. */
+const EXTRACT_POLL_MS = 1_000;
 
 const listeners = new Set<Listener>();
 let htmlVideo: HTMLVideoElement | null = null;
@@ -101,6 +110,10 @@ let openCount = 0;
 let openSeq = 0;
 let reopenTimer: number | null = null;
 let pendingTarget = 0;
+/** True from a seek *we* asked for until it lands. hls.js also seeks on its own
+ * to jump buffer gaps, and during one of those the element's clock is still the
+ * truth — so `v.seeking` alone can't decide whether to trust it. */
+let seekPending = false;
 let loadCount = 0;
 
 type SubEntry = { label: string; lang: string | null; vtt: string };
@@ -110,23 +123,74 @@ const subs = new Map<number, SubEntry>();
 let currentSubId: SubTrackId = "no";
 let subDelaySec = 0;
 let subObjectUrl: string | null = null;
+/** Guards the progress poll: an `invoke` already in flight when the extraction
+ * finishes would otherwise re-emit `loading` after the final event. */
+let extracting = false;
 
 function emit(e: WpEvent) {
   for (const l of listeners) l(e);
 }
 
-function bufferedAhead(v: HTMLVideoElement): number {
-  const b = v.buffered;
-  for (let i = 0; i < b.length; i++) {
-    if (b.start(i) <= v.currentTime && v.currentTime <= b.end(i)) {
-      return Math.max(0, b.end(i) - v.currentTime);
+function aheadIn(ranges: TimeRanges, at: number): number {
+  for (let i = 0; i < ranges.length; i++) {
+    if (ranges.start(i) <= at && at <= ranges.end(i)) {
+      return Math.max(0, ranges.end(i) - at);
     }
   }
   return 0;
 }
 
+/**
+ * How much footage is ready ahead of the playhead. For a remux this is what
+ * ffmpeg has *written*, read from hls.js's playlist view: hls.js caps the
+ * SourceBuffer far below it and MSE defines `seekable` in terms of that cap, so
+ * `buffered`/`seekable` would peg the answer near the cap however far ahead the
+ * window had really run. Direct play has no playlist, and nothing on local disk.
+ */
+function loadedAhead(v: HTMLVideoElement): number {
+  if (plan && plan.container !== "direct") {
+    const produced = hls?.levels?.[0]?.details?.fragmentEnd;
+    if (typeof produced === "number" && produced > 0) {
+      return Math.max(0, produced - v.currentTime);
+    }
+  }
+  return aheadIn(v.buffered, v.currentTime);
+}
+
 export function busy(): boolean {
   return loadCount > 0 || openCount > 0 || reopenTimer !== null;
+}
+
+/**
+ * This peer's position on the *source* timeline. Between windows, and during a
+ * seek we issued, the element's clock belongs to no position in particular, so
+ * the position being moved to is reported instead.
+ */
+export function positionSec(): number {
+  const v = htmlVideo;
+  if (!v) return pendingTarget;
+  if (busy() || (seekPending && v.seeking)) return pendingTarget;
+  return v.currentTime + offsetSec;
+}
+
+/**
+ * This peer's lead, and whether it is enough for the party to start. Polled, not
+ * pushed: once the SourceBuffer is full hls.js stops fetching, so the element
+ * goes quiet while the window carries on running ahead of it.
+ *
+ * `primed` is clamped against what is left of the source, so the final minute —
+ * where the lead can never reach the target — does not block playback.
+ */
+export function readiness(): { leadSec: number; primed: boolean } {
+  const v = htmlVideo;
+  if (!v) return { leadSec: 0, primed: false };
+  const leadSec = loadedAhead(v);
+  const direct = !plan || plan.container === "direct";
+  if (busy() || (direct && stalled)) return { leadSec, primed: false };
+  const remaining =
+    sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - positionSec()) : Infinity;
+  const need = Math.min(direct ? DIRECT_PRIME_SEC : READY_LEAD_SEC, remaining);
+  return { leadSec, primed: leadSec >= need };
 }
 
 export function onPlayerEvent(l: Listener): () => void {
@@ -148,7 +212,7 @@ export function attachHtml(video: HTMLVideoElement): void {
     // Mid-reopen the element's clock belongs to no window in particular;
     // reporting it would write a bogus position into the session.
     if (busy()) return;
-    emit({ kind: "time", pos: v.currentTime + offsetSec, tsMs: performance.now() });
+    emit({ kind: "time", pos: positionSec(), tsMs: performance.now() });
   };
   const onDur = () => {
     // On a growing HLS playlist `video.duration` means "produced so far", which
@@ -161,16 +225,15 @@ export function attachHtml(video: HTMLVideoElement): void {
   const onPause = () => emit({ kind: "pause", paused: true });
   const onWaiting = () => {
     stalled = true;
-    emit({ kind: "buffering", pausedForCache: true, cachedSec: bufferedAhead(v), ready: false });
+    emit({ kind: "buffering", pausedForCache: true, ready: false });
   };
   const onReady = () => {
     stalled = false;
-    emit({ kind: "buffering", pausedForCache: false, cachedSec: bufferedAhead(v), ready: true });
+    emit({ kind: "buffering", pausedForCache: false, ready: true });
   };
-  // Buffer growth without a readiness transition — this is what makes the
-  // "is everyone ready" member beacon report a real number instead of 0.
-  const onProgress = () =>
-    emit({ kind: "buffering", pausedForCache: stalled, cachedSec: bufferedAhead(v), ready: !stalled });
+  const onSeeked = () => {
+    seekPending = false;
+  };
   const onEnded = () => emit({ kind: "eof" });
   const onError = () => emit({ kind: "error", message: v.error?.message ?? "playback error" });
 
@@ -181,7 +244,7 @@ export function attachHtml(video: HTMLVideoElement): void {
   v.addEventListener("waiting", onWaiting);
   v.addEventListener("playing", onReady);
   v.addEventListener("canplay", onReady);
-  v.addEventListener("progress", onProgress);
+  v.addEventListener("seeked", onSeeked);
   v.addEventListener("ended", onEnded);
   v.addEventListener("error", onError);
 
@@ -193,7 +256,7 @@ export function attachHtml(video: HTMLVideoElement): void {
     v.removeEventListener("waiting", onWaiting);
     v.removeEventListener("playing", onReady);
     v.removeEventListener("canplay", onReady);
-    v.removeEventListener("progress", onProgress);
+    v.removeEventListener("seeked", onSeeked);
     v.removeEventListener("ended", onEnded);
     v.removeEventListener("error", onError);
   };
@@ -252,7 +315,9 @@ export async function load(url: string): Promise<void> {
 async function loadInner(url: string): Promise<void> {
   await closeSession();
   stalled = false;
+  seekPending = false;
   offsetSec = 0;
+  pendingTarget = 0;
   sourceDurationSec = 0;
   probe = null;
   plan = null;
@@ -302,7 +367,7 @@ async function openWindow(startSec: number): Promise<void> {
   openCount += 1;
   pendingTarget = startSec;
   const resumePlaying = !v.paused;
-  emit({ kind: "buffering", pausedForCache: true, cachedSec: 0, ready: false });
+  emit({ kind: "buffering", pausedForCache: true, ready: false });
   // Torn down *before* the invoke, not after: opening a window kills the old
   // ffmpeg and deletes its segment directory, so an hls.js instance still
   // fetching from it would raise a fatal network error mid-reopen.
@@ -412,9 +477,12 @@ export async function setPause(paused: boolean): Promise<void> {
   }
   try {
     await htmlVideo.play();
-  } catch {
-    // Autoplay was refused. Surface it so the UI can ask for a click, rather
-    // than leaving the follower stuck on a black stage with no explanation.
+  } catch (err) {
+    // Only a refusal means the user has to click. `play()` also rejects with
+    // AbortError when a pause or load interrupts it, which happens routinely on
+    // a reopen — reporting that would paint "click to start" over a stream that
+    // is about to play by itself.
+    if ((err as DOMException)?.name !== "NotAllowedError") return;
     emit({ kind: "error", message: "autoplay-blocked" });
   }
 }
@@ -435,9 +503,10 @@ function withinWindow(target: number): boolean {
 
 function scheduleReopen(target: number) {
   pendingTarget = target;
-  // Reported immediately, so `session.ready` goes false and syncTick's existing
-  // gate holds off corrections for the whole reopen.
-  emit({ kind: "buffering", pausedForCache: true, cachedSec: 0, ready: false });
+  seekPending = false;
+  // Reported immediately, so the follower tick's `ready` gate holds off
+  // corrections for the whole reopen.
+  emit({ kind: "buffering", pausedForCache: true, ready: false });
   if (reopenTimer !== null) window.clearTimeout(reopenTimer);
   reopenTimer = window.setTimeout(() => {
     reopenTimer = null;
@@ -455,7 +524,12 @@ export async function seek(sec: number): Promise<void> {
     sourceDurationSec > 0
       ? Math.min(Math.max(0, sec), Math.max(0, sourceDurationSec - 0.5))
       : Math.max(0, sec);
+  // `pendingTarget` is set only on the paths that move the element, and only
+  // after the coalesce check below — which compares against the reopen already
+  // under way and would otherwise be comparing the target with itself.
   if (!plan || plan.container === "direct") {
+    pendingTarget = target;
+    seekPending = true;
     v.currentTime = target;
     return;
   }
@@ -463,6 +537,8 @@ export async function seek(sec: number): Promise<void> {
   // target a position a second or two away, which HLS has already segmented.
   // No ffmpeg is involved.
   if (withinWindow(target)) {
+    pendingTarget = target;
+    seekPending = true;
     v.currentTime = target - offsetSec;
     return;
   }
@@ -562,13 +638,15 @@ async function ensureSubtitle(id: number): Promise<boolean> {
   if (!sessionId || !probe) return false;
   const stream = streamsOf(probe, "subtitle")[id];
   if (!stream || !isTextSubtitle(stream.codec_name)) return false;
-  // Cues are interleaved through the whole container, so collecting them means
-  // reading the entire source — a minute and a half for a 1.6 GB film, longer
-  // for a remux. Reported, because otherwise selecting a track looks like it did
-  // nothing at all. Still done on first selection rather than at load: eagerly
-  // extracting every track would download the source several times over before
-  // playback started.
-  emit({ kind: "subtitles", loading: true, failed: false });
+  // Cues are interleaved through the container, so this reads the entire source:
+  // ~90 s for a 1.6 GB film, minutes for a 4K one. Hence the progress reporting,
+  // and hence doing it on first selection rather than at load — extracting every
+  // track eagerly would download the source several times before playback.
+  emit({ kind: "subtitles", loading: true, failed: false, progress: null });
+  extracting = true;
+  const poll = window.setInterval(() => {
+    void pollExtractProgress();
+  }, EXTRACT_POLL_MS);
   try {
     const vtt = await invoke<string>("media_extract_subtitle", {
       sessionId,
@@ -579,15 +657,34 @@ async function ensureSubtitle(id: number): Promise<boolean> {
       lang: stream.tags?.language ?? null,
       vtt,
     });
-    emit({ kind: "subtitles", loading: false, failed: false });
+    emit({ kind: "subtitles", loading: false, failed: false, progress: null });
     return true;
   } catch (err) {
     // Deliberately not an `error` event: that paints the "couldn't be played"
     // overlay across a video that is playing perfectly well. The selection just
     // doesn't take, and the menu reverts to what is actually showing.
     console.warn("watch party: subtitle extraction failed", err);
-    emit({ kind: "subtitles", loading: false, failed: true });
+    emit({ kind: "subtitles", loading: false, failed: true, progress: null });
     return false;
+  } finally {
+    extracting = false;
+    window.clearInterval(poll);
+  }
+}
+
+async function pollExtractProgress(): Promise<void> {
+  if (!sessionId || sourceDurationSec <= 0) return;
+  try {
+    const sec = await invoke<number>("media_extract_progress", { sessionId });
+    if (!extracting) return;
+    emit({
+      kind: "subtitles",
+      loading: true,
+      failed: false,
+      progress: Math.min(1, Math.max(0, sec / sourceDurationSec)),
+    });
+  } catch {
+    // Progress is decoration; the extraction reports its own outcome.
   }
 }
 
@@ -630,16 +727,45 @@ function applySubtitle() {
   if (added) added.mode = "showing";
 }
 
-export async function setSubTrack(id: SubTrackId): Promise<void> {
+/**
+ * Selects a subtitle track, reporting whether it took. `extract` is false on a
+ * follower: the controller extracts once and shares the cues, so a follower
+ * without them waits rather than reading the whole source itself — that would be
+ * N copies of a multi-gigabyte download over the links carrying the video.
+ */
+export async function setSubTrack(id: SubTrackId, extract = true): Promise<boolean> {
   if (id === "no") {
     currentSubId = "no";
     applySubtitle();
-    return;
+    return true;
   }
-  if (!(await ensureSubtitle(id))) return;
+  if (!subs.has(id)) {
+    if (!extract) return false;
+    if (!(await ensureSubtitle(id))) return false;
+  }
   currentSubId = id;
   applySubtitle();
   emit({ kind: "tracks", tracks: buildTracks() });
+  return true;
+}
+
+/** Files cues extracted by another peer under the id they belong to, rather than
+ * appending them as a fresh upload the way `addSubtitle` does. */
+export function installSubtitle(
+  id: number,
+  label: string,
+  lang: string | null,
+  vtt: string,
+): void {
+  subs.set(id, { label, lang, vtt });
+  if (currentSubId === id) applySubtitle();
+  emit({ kind: "tracks", tracks: buildTracks() });
+}
+
+/** Cues for an extracted track, for the controller to share. */
+export function subtitleVtt(id: SubTrackId): { label: string; lang: string | null; vtt: string } | null {
+  if (id === "no") return null;
+  return subs.get(id) ?? null;
 }
 
 export async function setSubDelay(sec: number): Promise<void> {
@@ -687,6 +813,8 @@ export function teardown(): Promise<void> {
   probe = null;
   plan = null;
   offsetSec = 0;
+  pendingTarget = 0;
+  seekPending = false;
   rate = 1;
   const closing = closeSession();
   detachHtml();

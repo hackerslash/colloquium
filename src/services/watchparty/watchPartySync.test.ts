@@ -5,9 +5,13 @@ import type {
   WatchPartyStateMessage,
 } from "../../types/wire";
 import {
+  ClockOffsetEstimator,
   decideCorrection,
   HARD_SEEK_THRESHOLD_SEC,
+  NUDGE_ENTER_SEC,
+  NUDGE_EXIT_SEC,
   NUDGE_FACTOR,
+  peersNotPrimed,
   projectTargetPositionSec,
   RttEstimator,
   WatchPartyState,
@@ -90,7 +94,7 @@ describe("WatchPartyState — lifecycle & authority", () => {
   it("rejects messages for a different party id", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    expect(s.applyState(state({ partyId: "other" }), 0)).toBe(false);
+    expect(s.applyState(state({ partyId: "other" }))).toBe(false);
     expect(s.applyEnd({ type: "watch_party_end", roomId: ROOM, partyId: "other", fromId: "x" })).toBe(
       false,
     );
@@ -101,41 +105,40 @@ describe("WatchPartyState — snapshot convergence (LWW)", () => {
   it("accepts the first snapshot and exposes it", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    expect(s.applyState(state({ monotonicSeq: 1, positionSec: 10 }), 100)).toBe(true);
+    expect(s.applyState(state({ monotonicSeq: 1, positionSec: 10 }))).toBe(true);
     expect(s.currentSnapshot()?.positionSec).toBe(10);
-    expect(s.recvLocalMs()).toBe(100);
   });
 
   it("accepts a strictly newer sequence from the same controller", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    s.applyState(state({ monotonicSeq: 1, positionSec: 10 }), 100);
-    expect(s.applyState(state({ monotonicSeq: 2, positionSec: 20 }), 200)).toBe(true);
+    s.applyState(state({ monotonicSeq: 1, positionSec: 10 }));
+    expect(s.applyState(state({ monotonicSeq: 2, positionSec: 20 }))).toBe(true);
     expect(s.currentSnapshot()?.positionSec).toBe(20);
   });
 
   it("rejects a stale (older) sequence — out-of-order delivery", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    s.applyState(state({ monotonicSeq: 5, positionSec: 50 }), 100);
-    expect(s.applyState(state({ monotonicSeq: 4, positionSec: 40 }), 200)).toBe(false);
+    s.applyState(state({ monotonicSeq: 5, positionSec: 50 }));
+    expect(s.applyState(state({ monotonicSeq: 4, positionSec: 40 }))).toBe(false);
     expect(s.currentSnapshot()?.positionSec).toBe(50);
   });
 
   it("is idempotent — a duplicate of the current snapshot changes nothing", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    s.applyState(state({ monotonicSeq: 3 }), 100);
-    expect(s.applyState(state({ monotonicSeq: 3 }), 200)).toBe(false);
+    s.applyState(state({ monotonicSeq: 3 }));
+    expect(s.applyState(state({ monotonicSeq: 3 }))).toBe(false);
   });
 
   it("adopts a higher control epoch (new controller) even at a lower seq", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    s.applyState(state({ controllerId: "alice", controlEpoch: 0, monotonicSeq: 9 }), 100);
+    s.applyState(state({ controllerId: "alice", controlEpoch: 0, monotonicSeq: 9 }));
     // Bob took over at epoch 1 and starts his own seq at 1.
     expect(
-      s.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }), 200),
+      s.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 })),
     ).toBe(true);
     expect(s.currentControllerId()).toBe("bob");
     expect(s.currentControlEpoch()).toBe(1);
@@ -144,9 +147,9 @@ describe("WatchPartyState — snapshot convergence (LWW)", () => {
   it("rejects a lingering snapshot from the demoted controller (lower epoch)", () => {
     const s = new WatchPartyState();
     s.applyStart(start());
-    s.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }), 100);
+    s.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }));
     expect(
-      s.applyState(state({ controllerId: "alice", controlEpoch: 0, monotonicSeq: 99 }), 200),
+      s.applyState(state({ controllerId: "alice", controlEpoch: 0, monotonicSeq: 99 })),
     ).toBe(false);
     expect(s.currentControllerId()).toBe("bob");
   });
@@ -156,13 +159,13 @@ describe("WatchPartyState — snapshot convergence (LWW)", () => {
     // converge on the same winner (alice < bob).
     const a = new WatchPartyState();
     a.applyStart(start());
-    a.applyState(state({ controllerId: "alice", controlEpoch: 1, monotonicSeq: 1 }), 10);
-    a.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }), 20);
+    a.applyState(state({ controllerId: "alice", controlEpoch: 1, monotonicSeq: 1 }));
+    a.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }));
 
     const b = new WatchPartyState();
     b.applyStart(start());
-    b.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }), 10);
-    b.applyState(state({ controllerId: "alice", controlEpoch: 1, monotonicSeq: 1 }), 20);
+    b.applyState(state({ controllerId: "bob", controlEpoch: 1, monotonicSeq: 1 }));
+    b.applyState(state({ controllerId: "alice", controlEpoch: 1, monotonicSeq: 1 }));
 
     expect(a.currentControllerId()).toBe("alice");
     expect(b.currentControllerId()).toBe("alice");
@@ -206,8 +209,9 @@ describe("projectTargetPositionSec", () => {
     expect(projectTargetPositionSec(snap({ paused: true }), 5_000, 1_000)).toBe(100);
   });
 
-  it("advances by wall-clock elapsed while playing", () => {
-    // 2s of real time elapsed since the snapshot arrived.
+  it("advances by elapsed controller time while playing", () => {
+    // Local clock runs 1000ms ahead of the controller's, so local 3000 is
+    // controller 2000 — 2s past the snapshot's own timestamp of 0.
     expect(projectTargetPositionSec(snap(), 3_000, 1_000)).toBeCloseTo(102, 6);
   });
 
@@ -219,12 +223,74 @@ describe("projectTargetPositionSec", () => {
     // 2s elapsed + 200ms one-way delay ⇒ 2.2s ahead of the snapshot position.
     expect(projectTargetPositionSec(snap(), 3_000, 1_000, 200)).toBeCloseTo(102.2, 6);
   });
+
+  it("is unmoved by when the snapshot happened to arrive", () => {
+    // The regression this whole projection exists for. Two snapshots describe the
+    // same timeline — the second is 1s newer by the controller's own clock — but
+    // the second was delayed 400ms in transit. Projected at the same instant they
+    // must agree, or that 400ms of jitter becomes 400ms of phantom drift and the
+    // follower corrects against the network instead of the film.
+    const first = snap({ positionSec: 100, controllerClockMs: 10_000 });
+    const late = snap({ positionSec: 101, controllerClockMs: 11_000 });
+    const offsetMs = 1_000; // filtered from the least-delayed sample
+    const at = 13_000;
+    expect(projectTargetPositionSec(late, at, offsetMs)).toBeCloseTo(
+      projectTargetPositionSec(first, at, offsetMs),
+      6,
+    );
+  });
+});
+
+describe("ClockOffsetEstimator", () => {
+  it("returns 0 before any sample", () => {
+    const e = new ClockOffsetEstimator();
+    expect(e.hasSample()).toBe(false);
+    expect(e.offsetMs()).toBe(0);
+  });
+
+  it("keeps the smallest offset — the least-delayed message", () => {
+    const e = new ClockOffsetEstimator();
+    e.sample(1_000, 1_400); // 400ms of transit
+    e.sample(2_000, 2_120); // 120ms  ← least contaminated
+    e.sample(3_000, 3_900); // 900ms
+    expect(e.offsetMs()).toBe(120);
+  });
+
+  it("keeps a negative offset — the two clocks have unrelated origins", () => {
+    const e = new ClockOffsetEstimator();
+    e.sample(9_000, 1_100);
+    expect(e.offsetMs()).toBe(-7_900);
+  });
+
+  it("forgets everything on reset, for a new controller's clock", () => {
+    const e = new ClockOffsetEstimator();
+    e.sample(1_000, 1_050);
+    e.reset();
+    expect(e.hasSample()).toBe(false);
+    expect(e.offsetMs()).toBe(0);
+  });
+});
+
+describe("peersNotPrimed", () => {
+  it("names only the peers still filling up", () => {
+    expect(
+      peersNotPrimed([
+        { id: "alice", primed: true },
+        { id: "bob", primed: false },
+        { id: "carol", primed: false },
+      ]),
+    ).toEqual(["bob", "carol"]);
+  });
+
+  it("is empty when everyone is ready", () => {
+    expect(peersNotPrimed([{ id: "alice", primed: true }])).toEqual([]);
+  });
 });
 
 describe("decideCorrection", () => {
   it("hard-seeks when drift exceeds the threshold", () => {
-    const c = decideCorrection(100, 100 + HARD_SEEK_THRESHOLD_SEC + 0.5, 1, false);
-    expect(c).toEqual({ kind: "seek", toSec: 101.5 });
+    const target = 100 + HARD_SEEK_THRESHOLD_SEC + 0.5;
+    expect(decideCorrection(100, target, 1, false)).toEqual({ kind: "seek", toSec: target });
   });
 
   it("speeds up (nudge) when behind by a small amount", () => {
@@ -239,6 +305,31 @@ describe("decideCorrection", () => {
 
   it("holds the base rate inside the dead-zone", () => {
     expect(decideCorrection(100, 100.05, 1, false)).toEqual({ kind: "speed", rate: 1 });
+  });
+
+  it("does not start nudging in the gap between the two thresholds", () => {
+    const drift = (NUDGE_ENTER_SEC + NUDGE_EXIT_SEC) / 2;
+    expect(decideCorrection(100, 100 + drift, 1, false, false)).toEqual({
+      kind: "speed",
+      rate: 1,
+    });
+  });
+
+  it("keeps nudging in that same gap once it has started", () => {
+    // The hysteresis. Without it this drift level flips the rate on and off every
+    // tick, and each flip is an audible re-time of the audio renderer.
+    const drift = (NUDGE_ENTER_SEC + NUDGE_EXIT_SEC) / 2;
+    expect(decideCorrection(100, 100 + drift, 1, false, true)).toEqual({
+      kind: "speed",
+      rate: 1 + NUDGE_FACTOR,
+    });
+  });
+
+  it("stops nudging once converged below the exit threshold", () => {
+    expect(decideCorrection(100, 100 + NUDGE_EXIT_SEC / 2, 1, false, true)).toEqual({
+      kind: "speed",
+      rate: 1,
+    });
   });
 
   it("nudges relative to a non-unity base rate", () => {

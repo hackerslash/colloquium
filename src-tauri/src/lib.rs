@@ -110,6 +110,7 @@ pub fn run() {
             media::media_probe,
             media::media_open_window,
             media::media_extract_subtitle,
+            media::media_extract_progress,
             media::media_close,
             set_close_to_tray,
         ])

@@ -13,10 +13,15 @@ import { getPeerRegistry } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
 import { LEASE_MS } from "../call/PresenterSlotManager";
 import {
+  ClockOffsetEstimator,
   decideCorrection,
+  NUDGE_EXIT_SEC,
+  peersNotPrimed,
   projectTargetPositionSec,
+  READY_LEAD_SEC,
   RttEstimator,
   WatchPartyState,
+  type PeerLead,
 } from "./watchPartySync";
 import * as player from "./watchPartyPlayer";
 import type { AudioTrackId, SubTrackId, WpEvent } from "./watchPartyPlayer";
@@ -28,6 +33,14 @@ const HEARTBEAT_MS = 1_500;
 const SYNC_TICK_MS = 500;
 const BEACON_MS = 3_000;
 const PING_MS = 4_000;
+/** Consecutive ticks of hard-seek-sized drift before a follower acts. One tick is
+ * not evidence — a late snapshot or a momentary stall produces it, and on a remux
+ * a seek outside the produced range costs an ffmpeg restart. */
+const DRIFT_STRIKES = 2;
+/** Quiet period after a correction, while the element flushes and refills.
+ * Deciding again before it reports a real position turns one correction into a
+ * run of them. */
+const CORRECTION_HOLD_MS = 1_200;
 
 type Ctrl = {
   paused: boolean;
@@ -37,7 +50,12 @@ type Ctrl = {
   subDelaySec: number;
 };
 
-type MemberInfo = { ready: boolean; bufferedSec: number; leaseExpiresAt: number };
+type MemberInfo = {
+  ready: boolean;
+  primed: boolean;
+  bufferedSec: number;
+  leaseExpiresAt: number;
+};
 
 type Session = {
   self: Identity;
@@ -47,14 +65,19 @@ type Session = {
   memberIds: string[];
   reducer: WatchPartyState;
   rtt: RttEstimator;
+  clock: ClockOffsetEstimator;
   seq: number;
   ctrl: Ctrl;
-  lastPos: number;
-  lastTsMs: number;
   localPaused: boolean;
   appliedRate: number;
   ready: boolean;
+  primed: boolean;
   bufferedSec: number;
+  /** Controller only: play was asked for but some peer is still filling up. */
+  waitingForPeers: boolean;
+  /** Follower only: monotonic ms before which no correction is decided. */
+  holdUntilMs: number;
+  driftStrikes: number;
   members: Map<string, MemberInfo>;
   timers: number[];
   unsub: () => void;
@@ -85,21 +108,6 @@ function isController(): boolean {
   return !!session && session.reducer.isController(session.self.identityId);
 }
 
-function controllerPositionNow(): { pos: number; ts: number } {
-  const now = monoNow();
-  if (!session) return { pos: 0, ts: now };
-  const pos = session.ctrl.paused
-    ? session.lastPos
-    : session.lastPos + (Math.max(0, now - session.lastTsMs) / 1000) * session.ctrl.rate;
-  return { pos, ts: now };
-}
-
-function localPositionNow(): number {
-  if (!session) return 0;
-  if (session.localPaused) return session.lastPos;
-  return session.lastPos + (Math.max(0, monoNow() - session.lastTsMs) / 1000) * session.appliedRate;
-}
-
 function pushSessionToStore() {
   if (!session) return;
   useWatchPartyStore.getState()._setSession({
@@ -115,8 +123,11 @@ function pushPlaybackToStore() {
   if (!session) return;
   const store = useWatchPartyStore.getState();
   store._setPlayback({
-    paused: isController() ? session.ctrl.paused : (session.reducer.currentSnapshot()?.paused ?? session.localPaused),
-    positionSec: localPositionNow(),
+    // A follower reports this machine, not the snapshot: the controller
+    // advertises a reopen as not-playing, and mirroring that would flap the
+    // chrome every time the host changes window.
+    paused: isController() ? session.ctrl.paused : session.localPaused,
+    positionSec: player.positionSec(),
     playbackRate: session.ctrl.rate,
     audioTrackId: session.ctrl.audioTrackId,
     subTrackId: session.ctrl.subTrackId,
@@ -125,16 +136,39 @@ function pushPlaybackToStore() {
   store._setController(session.reducer.currentControllerId());
 }
 
-function pushMembersToStore() {
+/** Everyone the play gate has to agree on: this peer, plus every other one whose
+ * beacon lease is still good. */
+function gateMembers(): PeerLead[] {
+  if (!session) return [];
+  const now = Date.now();
+  return [
+    { id: session.self.identityId, primed: session.primed },
+    ...[...session.members.entries()]
+      .filter(([, m]) => m.leaseExpiresAt > now)
+      .map(([id, m]) => ({ id, primed: m.primed })),
+  ];
+}
+
+function pushPresenceToStore() {
   if (!session) return;
   const now = Date.now();
   const list = [
-    { id: session.self.identityId, ready: session.ready, bufferedSec: session.bufferedSec },
+    {
+      id: session.self.identityId,
+      ready: session.ready,
+      primed: session.primed,
+      bufferedSec: session.bufferedSec,
+    },
     ...[...session.members.entries()]
       .filter(([, m]) => m.leaseExpiresAt > now)
-      .map(([id, m]) => ({ id, ready: m.ready, bufferedSec: m.bufferedSec })),
+      .map(([id, m]) => ({
+        id,
+        ready: m.ready,
+        primed: m.primed,
+        bufferedSec: m.bufferedSec,
+      })),
   ];
-  useWatchPartyStore.getState()._setMembers(list);
+  useWatchPartyStore.getState()._setPresence(list, session.bufferedSec);
 }
 
 function onPlayerEvent(e: WpEvent) {
@@ -142,8 +176,6 @@ function onPlayerEvent(e: WpEvent) {
   const store = useWatchPartyStore.getState();
   switch (e.kind) {
     case "time":
-      session.lastPos = e.pos;
-      session.lastTsMs = monoNow();
       store._setPlayback({ positionSec: e.pos });
       break;
     case "duration":
@@ -154,14 +186,13 @@ function onPlayerEvent(e: WpEvent) {
       break;
     case "buffering":
       session.ready = e.ready;
-      session.bufferedSec = e.cachedSec;
-      store._setBuffering(e.pausedForCache, e.cachedSec);
+      store._setBuffering(e.pausedForCache);
       break;
     case "tracks":
       store._setTracks(e.tracks);
       break;
     case "subtitles":
-      store._setSubLoading(e.loading);
+      store._setSubLoading(e.loading, e.progress);
       if (e.failed) {
         toast.error("Couldn't load subtitles", "That track couldn't be read from this source.");
       }
@@ -193,7 +224,10 @@ function startLoops() {
 
 function broadcastState() {
   if (!session || !isController()) return;
-  const { pos, ts } = controllerPositionNow();
+  // Read adjacently: `controllerClockMs` must be the instant `pos` was true —
+  // that pairing is the basis of every follower's projection.
+  const pos = player.positionSec();
+  const ts = monoNow();
   session.seq += 1;
   const msg: WatchPartyStateMessage = {
     type: "watch_party_state",
@@ -202,7 +236,10 @@ function broadcastState() {
     controllerId: session.self.identityId,
     controlEpoch: session.reducer.currentControlEpoch(),
     monotonicSeq: session.seq,
-    paused: session.ctrl.paused,
+    // Between windows the controller's playhead is frozen, so the shared timeline
+    // is not advancing for anybody. Advertising it as playing makes every
+    // follower project past a standing-still master and be dragged back later.
+    paused: session.ctrl.paused || player.busy(),
     positionSec: pos,
     playbackRate: session.ctrl.rate,
     audioTrackId: session.ctrl.audioTrackId,
@@ -221,10 +258,20 @@ function broadcastMember(leaving: boolean) {
     partyId: session.partyId,
     fromId: session.self.identityId,
     ready: session.ready,
+    primed: session.primed,
     bufferedSec: session.bufferedSec,
     leaseExpiresAt: Date.now() + LEASE_MS,
     leaving,
   } satisfies WatchPartyMemberMessage);
+}
+
+function refreshLocalReadiness() {
+  if (!session) return;
+  const { leadSec, primed } = player.readiness();
+  const changed = primed !== session.primed || Math.abs(leadSec - session.bufferedSec) >= 0.5;
+  session.primed = primed;
+  session.bufferedSec = leadSec;
+  if (changed) pushPresenceToStore();
 }
 
 function sweepMembers() {
@@ -237,7 +284,7 @@ function sweepMembers() {
       changed = true;
     }
   }
-  if (changed) pushMembersToStore();
+  if (changed) pushPresenceToStore();
 }
 
 function pingController() {
@@ -254,32 +301,81 @@ function pingController() {
 }
 
 function syncTick() {
-  if (!session || isController()) return;
+  if (!session) return;
+  refreshLocalReadiness();
+  if (isController()) {
+    gateTick();
+    return;
+  }
+  followerTick();
+}
+
+/** Releases a gated play once every peer has filled up. */
+function gateTick() {
+  if (!session || !session.waitingForPeers) return;
+  const waiting = peersNotPrimed(gateMembers());
+  if (waiting.length === 0) {
+    applyPause(false);
+    return;
+  }
+  setWaitingFor(waiting);
+}
+
+/** Only on a real change: the tick recomputes this twice a second, and a fresh
+ * array each time would re-render the overlay with it. */
+function setWaitingFor(ids: string[]) {
+  const store = useWatchPartyStore.getState();
+  const current = store.waitingFor;
+  if (current.length === ids.length && current.every((id, i) => id === ids[i])) return;
+  store._setWaitingFor(ids);
+}
+
+function followerTick() {
+  if (!session) return;
   const snap = session.reducer.currentSnapshot();
   if (!snap) return;
-  // A window is being (re)opened: the player's clock belongs to no window yet,
-  // so any correction computed from it would be against a stale position.
+  pushPlaybackToStore();
+  // Before the busy() guard: pausing an element with no data costs nothing, and
+  // without it a window that finishes during a host pause plays on anyway —
+  // `openWindow` restores whatever the play state was when it began.
+  if (snap.paused && !session.localPaused) void player.setPause(true);
+  // Mid-reopen the player's clock belongs to no window, so a correction computed
+  // from it would be against a stale position.
   if (player.busy()) return;
   applySnapshotTracks();
-  pushPlaybackToStore();
-  if (session.ready === false) return;
-  if (snap.paused && !session.localPaused) void player.setPause(true);
+  if (!session.ready) return;
   if (!snap.paused && session.localPaused) void player.setPause(false);
-  if (snap.paused) return;
+  if (snap.paused) {
+    // A seek is invisible while paused, so settle up now instead of carrying the
+    // offset into the resume where everyone can see it corrected.
+    if (Math.abs(player.positionSec() - snap.positionSec) > NUDGE_EXIT_SEC) {
+      void player.seek(snap.positionSec);
+    }
+    return;
+  }
+  const now = monoNow();
+  if (now < session.holdUntilMs) return;
+
   const target = projectTargetPositionSec(
     snap,
-    monoNow(),
-    session.reducer.recvLocalMs(),
+    now,
+    session.clock.offsetMs(),
     session.rtt.oneWayDelayMs(),
   );
-  const corr = decideCorrection(localPositionNow(), target, snap.playbackRate, snap.paused);
+  const nudging = session.appliedRate !== snap.playbackRate;
+  const corr = decideCorrection(player.positionSec(), target, snap.playbackRate, false, nudging);
   if (corr.kind === "seek") {
+    session.driftStrikes += 1;
+    if (session.driftStrikes < DRIFT_STRIKES) return;
+    session.driftStrikes = 0;
     void player.seek(corr.toSec);
-    session.lastPos = corr.toSec;
-    session.lastTsMs = monoNow();
     session.appliedRate = snap.playbackRate;
     void player.setSpeed(snap.playbackRate);
-  } else if (corr.rate !== session.appliedRate) {
+    session.holdUntilMs = now + CORRECTION_HOLD_MS;
+    return;
+  }
+  session.driftStrikes = 0;
+  if (corr.rate !== session.appliedRate) {
     session.appliedRate = corr.rate;
     void player.setSpeed(corr.rate);
   }
@@ -307,8 +403,10 @@ function applySnapshotTracks() {
   }
   if (snap.subTrackId !== undefined && snap.subTrackId !== session.ctrl.subTrackId) {
     const target = snap.subTrackId;
-    void player.setSubTrack(target).then(() => {
-      if (session) session.ctrl.subTrackId = target;
+    // Never extracts: the controller reads the source once and shares the cues, so
+    // a miss here just means they haven't arrived and the next tick retries.
+    void player.setSubTrack(target, false).then((ok) => {
+      if (ok && session) session.ctrl.subTrackId = target;
     });
   }
   if (snap.subDelaySec !== undefined && snap.subDelaySec !== session.ctrl.subDelaySec) {
@@ -334,14 +432,17 @@ function makeSession(self: Identity, roomId: string, streamUrl: string, memberId
     memberIds,
     reducer: new WatchPartyState(),
     rtt: new RttEstimator(),
+    clock: new ClockOffsetEstimator(),
     seq: 0,
     ctrl: defaultCtrl(),
-    lastPos: 0,
-    lastTsMs: monoNow(),
     localPaused: true,
     appliedRate: 1,
     ready: false,
+    primed: false,
     bufferedSec: 0,
+    waitingForPeers: false,
+    holdUntilMs: 0,
+    driftStrikes: 0,
     members: new Map(),
     timers: [],
     unsub,
@@ -418,8 +519,11 @@ export async function setStreamUrl(url: string): Promise<void> {
   if (!session || !isController()) return;
   session.streamUrl = url;
   session.ctrl = defaultCtrl();
-  session.lastPos = 0;
-  session.lastTsMs = monoNow();
+  session.waitingForPeers = false;
+  session.primed = false;
+  session.driftStrikes = 0;
+  session.holdUntilMs = 0;
+  setWaitingFor([]);
   const startMsg: WatchPartyStartMessage = {
     type: "watch_party_start",
     roomId: session.roomId,
@@ -434,21 +538,52 @@ export async function setStreamUrl(url: string): Promise<void> {
   broadcastState();
 }
 
-export function togglePlay(): void {
-  if (!session || !isController()) return;
-  session.ctrl.paused = !session.ctrl.paused;
-  const { pos } = controllerPositionNow();
-  session.lastPos = pos;
-  session.lastTsMs = monoNow();
-  void player.setPause(session.ctrl.paused);
+function applyPause(paused: boolean): void {
+  if (!session) return;
+  session.ctrl.paused = paused;
+  session.waitingForPeers = false;
+  setWaitingFor([]);
+  void player.setPause(paused);
   pushPlaybackToStore();
   broadcastState();
 }
 
+export function togglePlay(): void {
+  if (!session || !isController()) return;
+  if (session.waitingForPeers) {
+    // A second press while waiting cancels the wait rather than queuing another.
+    session.waitingForPeers = false;
+    setWaitingFor([]);
+    pushPlaybackToStore();
+    return;
+  }
+  if (!session.ctrl.paused) {
+    applyPause(true);
+    return;
+  }
+  // Gated on every peer holding READY_LEAD_SEC of footage. Without it the slowest
+  // peer starts from an empty buffer and spends its first minute being
+  // drift-corrected, each correction outside its produced range an ffmpeg restart.
+  const waiting = peersNotPrimed(gateMembers());
+  if (waiting.length === 0) {
+    applyPause(false);
+    return;
+  }
+  session.waitingForPeers = true;
+  setWaitingFor(waiting);
+  pushPlaybackToStore();
+}
+
+/** Overrides the readiness gate. A peer can be permanently short of the target —
+ * a slow link, a transcode that cannot outrun realtime — and waiting forever is
+ * worse than starting rough. */
+export function startAnyway(): void {
+  if (!session || !isController() || !session.waitingForPeers) return;
+  applyPause(false);
+}
+
 export function seek(sec: number): void {
   if (!session || !isController()) return;
-  session.lastPos = sec;
-  session.lastTsMs = monoNow();
   void player.seek(sec);
   pushPlaybackToStore();
   broadcastState();
@@ -456,9 +591,6 @@ export function seek(sec: number): void {
 
 export function setRate(rate: number): void {
   if (!session || !isController()) return;
-  const { pos } = controllerPositionNow();
-  session.lastPos = pos;
-  session.lastTsMs = monoNow();
   session.ctrl.rate = rate;
   void player.setSpeed(rate);
   pushPlaybackToStore();
@@ -476,9 +608,31 @@ export function setAudioTrack(id: AudioTrackId): void {
 export function setSubTrack(id: SubTrackId): void {
   if (!session || !isController()) return;
   session.ctrl.subTrackId = id;
-  void player.setSubTrack(id);
   pushPlaybackToStore();
   broadcastState();
+  void player.setSubTrack(id).then((ok) => {
+    if (!ok || !session || !isController() || session.ctrl.subTrackId !== id) return;
+    sendSubtitle(null, id);
+  });
+}
+
+/** Cues for an extracted track, so no follower has to read the source itself.
+ * `to` is null to reach the whole party. */
+function sendSubtitle(to: string | null, id: SubTrackId): void {
+  if (!session || id === "no") return;
+  const entry = player.subtitleVtt(id);
+  if (!entry) return;
+  const msg: WatchPartySubtitleMessage = {
+    type: "watch_party_subtitle",
+    roomId: session.roomId,
+    partyId: session.partyId,
+    name: entry.label,
+    contentB64: toBase64(new TextEncoder().encode(entry.vtt)),
+    subId: id,
+    lang: entry.lang,
+  };
+  if (to) send(to, msg);
+  else broadcast(msg);
 }
 
 export function setSubDelay(sec: number): void {
@@ -551,6 +705,9 @@ export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void 
     if (changed || session.streamUrl !== msg.streamUrl) {
       session.streamUrl = msg.streamUrl;
       session.ctrl = defaultCtrl();
+      session.primed = false;
+      session.driftStrikes = 0;
+      session.holdUntilMs = 0;
       useWatchPartyStore.getState()._setStreamUrl(msg.streamUrl);
       pushSessionToStore();
     }
@@ -559,9 +716,20 @@ export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void 
 
 export function handleState(_self: Identity, msg: WatchPartyStateMessage): void {
   if (!session || session.roomId !== msg.roomId) return;
-  const changed = session.reducer.applyState(msg, monoNow());
+  const recv = monoNow();
+  const previousController = session.reducer.currentControllerId();
+  const changed = session.reducer.applyState(msg);
   if (!changed) return;
-  if (isController()) {
+  const controllerId = session.reducer.currentControllerId();
+  // `performance.now()` is measured from a per-document origin, so a new
+  // controller's timestamps sit on an unrelated scale and the offset filtered
+  // from the previous one is worse than having no estimate at all.
+  if (controllerId !== previousController) session.clock.reset();
+  if (controllerId === msg.controllerId) session.clock.sample(msg.controllerClockMs, recv);
+  // Never from our own snapshot coming back round: the wire `paused` is the
+  // effective timeline state, which a reopen sets without anyone asking to pause,
+  // so adopting it as intent would latch the controller paused.
+  if (isController() && msg.controllerId !== session.self.identityId) {
     session.ctrl.paused = msg.paused;
     session.ctrl.rate = msg.playbackRate;
   }
@@ -572,6 +740,10 @@ export function handleHandoff(_self: Identity, msg: WatchPartyHandoffMessage): v
   if (!session || session.roomId !== msg.roomId) return;
   const changed = session.reducer.applyHandoff(msg);
   if (!changed) return;
+  session.clock.reset();
+  // A gate armed by the outgoing controller is no longer anyone's to release.
+  session.waitingForPeers = false;
+  setWaitingFor([]);
   if (isController()) {
     session.ctrl.paused = session.localPaused;
     broadcastState();
@@ -584,6 +756,17 @@ export function handleSubtitle(_self: Identity, msg: WatchPartySubtitleMessage):
   const bin = atob(msg.contentB64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  if (msg.subId !== undefined) {
+    // Filed under the ordinal the snapshot already refers to. Selection is left
+    // to `applySnapshotTracks`, which retries every tick until these arrive.
+    player.installSubtitle(
+      msg.subId,
+      msg.name,
+      msg.lang ?? null,
+      new TextDecoder("utf-8").decode(bytes),
+    );
+    return;
+  }
   void player.addSubtitle(msg.name, bytes).then((id) => {
     // The player shows what it just added, so the cache has to agree — otherwise
     // the controller turning subtitles off is a no-diff and never applied here.
@@ -593,14 +776,21 @@ export function handleSubtitle(_self: Identity, msg: WatchPartySubtitleMessage):
 
 export function handleMember(_self: Identity, msg: WatchPartyMemberMessage): void {
   if (!session || session.roomId !== msg.roomId) return;
+  const isNew = !session.members.has(msg.fromId);
   if (msg.leaving) session.members.delete(msg.fromId);
   else
     session.members.set(msg.fromId, {
       ready: msg.ready,
+      // An older build omits it; its lead is the closest stand-in, and erring
+      // towards "not primed" only ever makes the gate wait, never start early.
+      primed: msg.primed ?? msg.bufferedSec >= READY_LEAD_SEC,
       bufferedSec: msg.bufferedSec,
       leaseExpiresAt: msg.leaseExpiresAt,
     });
-  pushMembersToStore();
+  // Cues are shared when the track is chosen, so a peer arriving later would
+  // otherwise never see subtitles at all.
+  if (isNew && !msg.leaving && isController()) sendSubtitle(msg.fromId, session.ctrl.subTrackId);
+  pushPresenceToStore();
 }
 
 export function handlePing(_self: Identity, msg: WatchPartyPingMessage): void {

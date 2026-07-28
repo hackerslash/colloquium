@@ -21,6 +21,7 @@ import { useWatchPartyStore, selfIsController } from "../../stores/useWatchParty
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import * as player from "../../services/watchparty/watchPartyPlayer";
+import { READY_LEAD_SEC } from "../../services/watchparty/watchPartySync";
 import { Avatar } from "../ui/Avatar";
 import { Button } from "../ui/Button";
 import { Tooltip } from "../ui/Tooltip";
@@ -46,6 +47,41 @@ const SKIP_SEC = 10;
 const ARROW_SEC = 5;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
+/** Who the gated start is still waiting on, and each peer's lead — otherwise it
+ * is indistinguishable from the app having ignored the play button. */
+function PrimingOverlay() {
+  const waitingFor = useWatchPartyStore((s) => s.waitingFor);
+  const members = useWatchPartyStore((s) => s.members);
+  const startAnyway = useWatchPartyStore((s) => s.startAnyway);
+  const self = useIdentityStore((s) => s.self);
+  const contactsById = useRosterStore((s) => s.contactsById);
+
+  const slowest = members
+    .filter((m) => waitingFor.includes(m.id))
+    .sort((a, b) => a.bufferedSec - b.bufferedSec);
+
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/45 px-10 text-center">
+      <span
+        className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-accent motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <p className="text-sm font-medium text-white">Getting everyone a head start on the film</p>
+      <ul className="flex flex-col gap-1 text-xs text-white/55">
+        {slowest.map((m) => (
+          <li key={m.id}>
+            {m.id === self?.identityId ? "You" : (contactsById[m.id]?.displayName ?? "Guest")} —{" "}
+            {Math.round(m.bufferedSec)}s of {READY_LEAD_SEC}s ready
+          </li>
+        ))}
+      </ul>
+      {selfIsController() && (
+        <ChromeTextButton onClick={startAnyway}>Start anyway</ChromeTextButton>
+      )}
+    </div>
+  );
+}
+
 /**
  * The film. Everything drawn here sits on black in both themes, so its text is
  * light-on-dark rather than token-themed — `text-text-primary` would be near
@@ -64,6 +100,7 @@ function Stage({
   const error = useWatchPartyStore((s) => s.error);
   const controllerId = useWatchPartyStore((s) => s.controllerId);
   const setStreamUrl = useWatchPartyStore((s) => s.setStreamUrl);
+  const gated = useWatchPartyStore((s) => s.waitingFor.length > 0);
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const controller = selfIsController();
@@ -118,7 +155,9 @@ function Stage({
         playsInline
       />
 
-      {buffering && !blocked && !error && (
+      {gated && !error && <PrimingOverlay />}
+
+      {buffering && !gated && !blocked && !error && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span
             className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-accent motion-reduce:animate-none"
@@ -261,6 +300,7 @@ export function WatchPartyWindow() {
   const subTrackId = useWatchPartyStore((s) => s.subTrackId);
   const subDelaySec = useWatchPartyStore((s) => s.subDelaySec);
   const subLoading = useWatchPartyStore((s) => s.subLoading);
+  const subProgress = useWatchPartyStore((s) => s.subProgress);
   const togglePlay = useWatchPartyStore((s) => s.togglePlay);
   const seek = useWatchPartyStore((s) => s.seek);
   const setRate = useWatchPartyStore((s) => s.setRate);
@@ -648,10 +688,19 @@ export function WatchPartyWindow() {
                 footer={
                   <div className="flex flex-col gap-2">
                     {subLoading && (
-                      <p className="text-xs leading-relaxed text-text-muted">
-                        Reading subtitles out of the source — the first time a track is picked
-                        this takes a pass over the whole file.
-                      </p>
+                      <div className="flex flex-col gap-1.5">
+                        <p className="text-xs leading-relaxed text-text-muted">
+                          Reading subtitles out of the source — the first time a track is
+                          picked this takes a pass over the whole file.
+                          {subProgress !== null && ` ${Math.round(subProgress * 100)}%`}
+                        </p>
+                        <span className="h-0.5 overflow-hidden rounded-full bg-border">
+                          <span
+                            className="block h-full bg-accent transition-[width] duration-500"
+                            style={{ width: `${(subProgress ?? 0) * 100}%` }}
+                          />
+                        </span>
+                      </div>
                     )}
                     {subTrackId !== "no" && !subLoading && (
                       <label className="flex items-center justify-between gap-2 text-xs text-text-secondary">

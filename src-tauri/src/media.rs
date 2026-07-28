@@ -15,6 +15,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -131,24 +132,38 @@ struct Session {
     dir: PathBuf,
     generation: u32,
     child: Option<Child>,
+    /// The subtitle extraction in flight. Held so closing the session kills it —
+    /// otherwise a full read of a multi-gigabyte source outlives the party.
+    sub_child: Option<Child>,
+    /// Source seconds the extraction has scanned, for the UI's progress bar.
+    sub_progress_sec: f64,
     probe: Option<serde_json::Value>,
+}
+
+fn reap(mut child: Child) {
+    let _ = child.kill();
+    // Waited on — an unwaited child stays a zombie for the app's lifetime.
+    let _ = child.wait();
+}
+
+fn kill_child(slot: &mut Option<Child>) {
+    if let Some(child) = slot.take() {
+        reap(child);
+    }
 }
 
 impl Session {
     /// Kills the current ffmpeg without disturbing the session, so the next
     /// generation can start clean.
     fn stop_child(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            // Reap it — an unwaited child stays a zombie for the app's lifetime.
-            let _ = child.wait();
-        }
+        kill_child(&mut self.child);
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
         self.stop_child();
+        kill_child(&mut self.sub_child);
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
@@ -737,6 +752,8 @@ pub async fn media_open(app: AppHandle, source: String) -> Result<OpenResult, St
             dir,
             generation: 0,
             child: None,
+            sub_child: None,
+            sub_progress_sec: 0.0,
             probe: None,
         },
     );
@@ -902,6 +919,11 @@ pub async fn media_open_window(
 ///
 /// Bitmap subtitles (PGS, VOBSUB) cannot become WebVTT at all; the frontend
 /// filters those out rather than calling this and failing.
+///
+/// Unavoidably a full read of the source — cues are interleaved through the whole
+/// container, so there is no seeking to just the subtitle packets, and a 4K file
+/// takes minutes. Hence the cues going to a file and `-progress` taking stdout,
+/// which `media_extract_progress` polls.
 #[tauri::command]
 pub async fn media_extract_subtitle(
     app: AppHandle,
@@ -911,23 +933,101 @@ pub async fn media_extract_subtitle(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<MediaState>();
         let port = *state.port.get().ok_or("server not started")?;
-        let token = {
-            let sessions = state.sessions.lock().unwrap();
-            sessions.get(&session_id).ok_or("no such session")?.token.clone()
+        let (token, dir) = {
+            let mut sessions = state.sessions.lock().unwrap();
+            let s = sessions.get_mut(&session_id).ok_or("no such session")?;
+            // Only one extraction at a time: switching tracks mid-read otherwise
+            // leaves two full downloads racing on the same link.
+            kill_child(&mut s.sub_child);
+            s.sub_progress_sec = 0.0;
+            (s.token.clone(), s.dir.clone())
         };
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cache dir: {e}"))?;
+        let out_path = dir.join(format!("sub{stream_index}.vtt"));
+
         let url = format!("http://127.0.0.1:{port}/s/{session_id}/{token}/src");
         let map = format!("0:s:{stream_index}");
-        let out = run(
-            "ffmpeg",
-            &[
-                "-hide_banner", "-loglevel", "error", "-nostdin",
-                "-i", &url, "-map", &map, "-f", "webvtt", "-",
-            ],
-        )?;
-        String::from_utf8(out).map_err(|e| format!("subtitle was not utf-8: {e}"))
+        let mut cmd = base_command("ffmpeg")?;
+        cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]);
+        cmd.args(["-progress", "pipe:1"]);
+        cmd.args(["-i", &url, "-map", &map, "-f", "webvtt"]);
+        cmd.arg(&out_path);
+        cmd.stdout(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("ffmpeg spawn: {e}"))?;
+
+        // Parked on the session before anything else can fail: this child is a
+        // full read of a multi-gigabyte source, and one orphaned here would run
+        // to completion unattached.
+        let stdout = match child.stdout.take() {
+            Some(stdout) => stdout,
+            None => {
+                reap(child);
+                return Err("ffmpeg: no stdout".into());
+            }
+        };
+        {
+            let mut sessions = state.sessions.lock().unwrap();
+            match sessions.get_mut(&session_id) {
+                Some(s) => s.sub_child = Some(child),
+                None => {
+                    reap(child);
+                    return Err("no such session".into());
+                }
+            }
+        }
+
+        // Reading to EOF is also how we wait for it: the pipe closes when ffmpeg
+        // exits, and a killed child ends the loop instead of blocking forever.
+        for line in std::io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if let Some(us) = line.strip_prefix("out_time_us=") {
+                if let Ok(us) = us.trim().parse::<f64>() {
+                    let mut sessions = state.sessions.lock().unwrap();
+                    let Some(s) = sessions.get_mut(&session_id) else { break };
+                    s.sub_progress_sec = us / 1_000_000.0;
+                }
+            }
+        }
+
+        // Taken out before waiting, so the lock is not held across it and a `None`
+        // unambiguously means somebody else killed this run.
+        let mut child = {
+            let mut sessions = state.sessions.lock().unwrap();
+            let s = sessions.get_mut(&session_id).ok_or("no such session")?;
+            s.sub_progress_sec = 0.0;
+            match s.sub_child.take() {
+                Some(child) => child,
+                None => return Err("cancelled".into()),
+            }
+        };
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() {
+            let _ = std::fs::remove_file(&out_path);
+            return Err(format!(
+                "ffmpeg failed extracting subtitles ({})",
+                status.code().unwrap_or(-1)
+            ));
+        }
+        let text = std::fs::read_to_string(&out_path)
+            .map_err(|e| format!("subtitle read: {e}"))?;
+        let _ = std::fs::remove_file(&out_path);
+        Ok(text)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Source seconds the in-flight subtitle extraction has scanned. Polled, because
+/// nothing else in the app uses Tauri events and one long command is not reason
+/// enough to add a push channel.
+#[tauri::command]
+pub async fn media_extract_progress(app: AppHandle, session_id: String) -> Result<f64, String> {
+    let state = app.state::<MediaState>();
+    let sessions = state.sessions.lock().unwrap();
+    Ok(sessions
+        .get(&session_id)
+        .map(|s| s.sub_progress_sec)
+        .unwrap_or(0.0))
 }
 
 #[tauri::command]
@@ -1013,6 +1113,8 @@ mod tests {
             // ffmpeg's in-progress rename target must never be servable.
             "/s/abc/tok/w/1/00001.m4s.tmp",
             "/s/abc/tok/w/1/ffmpeg.log",
+            // Extracted cues are read by the command, never served.
+            "/s/abc/tok/w/1/sub0.vtt",
         ] {
             assert_eq!(route(path), Route::NotFound, "{path}");
         }

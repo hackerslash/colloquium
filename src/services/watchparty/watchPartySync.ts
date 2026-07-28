@@ -22,13 +22,21 @@ import type {
  */
 
 /** Hard-seek if the follower is off by more than this — a jump is less jarring
- * than a long, obvious speed ramp. */
-export const HARD_SEEK_THRESHOLD_SEC = 1.0;
-/** Below this drift we consider ourselves in sync and play at the base rate;
- * keeps small measurement noise from causing constant speed flip-flop. */
-export const NUDGE_DEADZONE_SEC = 0.1;
+ * than a long speed ramp. Set well above anything jitter or a nudge in progress
+ * can reach, because on a remux a seek can cost an ffmpeg restart. */
+export const HARD_SEEK_THRESHOLD_SEC = 2.0;
+/** Drift at which a nudge starts, and the lower drift at which it stops. Two
+ * thresholds, not one: against a single edge the residual noise walks back and
+ * forth across it, and every crossing is a `playbackRate` write that re-times the
+ * audio renderer — audible as stutter even though the drift is not. */
+export const NUDGE_ENTER_SEC = 0.25;
+export const NUDGE_EXIT_SEC = 0.08;
 /** Speed multiplier applied to gently converge sub-threshold drift (±5%). */
 export const NUDGE_FACTOR = 0.05;
+/** Footage every peer must hold before the controller will start playing.
+ * Measured against what a peer's pipeline has *produced*, not what its
+ * SourceBuffer holds — hls.js caps that far below this. */
+export const READY_LEAD_SEC = 60;
 
 export type PlaybackSnapshot = {
   controllerId: string;
@@ -76,8 +84,6 @@ export class WatchPartyState {
   private controllerId: string | null = null;
   private controlEpoch = 0;
   private snapshot: PlaybackSnapshot | null = null;
-  /** Local monotonic clock (ms) when the accepted snapshot arrived. */
-  private snapshotRecvLocalMs = 0;
 
   isActive(): boolean {
     return this.party !== null;
@@ -103,10 +109,6 @@ export class WatchPartyState {
     return this.controllerId === selfId;
   }
 
-  recvLocalMs(): number {
-    return this.snapshotRecvLocalMs;
-  }
-
   applyStart(msg: WatchPartyStartMessage): boolean {
     // A start for a different party supersedes only if it's genuinely new; an
     // echo of the active party is a no-op.
@@ -121,7 +123,6 @@ export class WatchPartyState {
     this.controllerId = msg.ownerId;
     this.controlEpoch = 0;
     this.snapshot = null;
-    this.snapshotRecvLocalMs = 0;
     return true;
   }
 
@@ -137,14 +138,13 @@ export class WatchPartyState {
     return true;
   }
 
-  applyState(msg: WatchPartyStateMessage, recvLocalMs: number): boolean {
+  applyState(msg: WatchPartyStateMessage): boolean {
     if (!this.party || this.party.partyId !== msg.partyId) return false;
     if (!this.stateWins(msg)) return false;
     // Adopt the (possibly newer) authority the snapshot asserts.
     this.controlEpoch = msg.controlEpoch;
     this.controllerId = msg.controllerId;
     this.snapshot = snapshotOf(msg);
-    this.snapshotRecvLocalMs = recvLocalMs;
     return true;
   }
 
@@ -154,7 +154,6 @@ export class WatchPartyState {
     this.controllerId = null;
     this.controlEpoch = 0;
     this.snapshot = null;
-    this.snapshotRecvLocalMs = 0;
     return true;
   }
 
@@ -175,19 +174,26 @@ export class WatchPartyState {
 }
 
 /**
- * Where the shared timeline "should" be right now on this follower, projected
- * from the last accepted snapshot. `oneWayDelayMs` (from RttEstimator) accounts
- * for the transit lag between the controller sending and us receiving; it
- * defaults to 0 so projection works before any RTT sample exists.
+ * Where the shared timeline should be right now on this follower.
+ *
+ * Projected from the controller's *own* clock (`controllerClockMs`, translated by
+ * `clockOffsetMs`), never from when the snapshot arrived. Arrival time carries the
+ * channel's jitter: a snapshot 150 ms late reads as 150 ms behind for the whole
+ * heartbeat, then snaps forward when the next is on time. That sawtooth exceeds
+ * the dead-zone, so the follower ends up correcting against the network.
+ *
+ * `oneWayDelayMs` compensates for the transit delay baked into the offset
+ * estimate; 0 works before any RTT sample exists.
  */
 export function projectTargetPositionSec(
   snapshot: PlaybackSnapshot,
   nowLocalMs: number,
-  snapshotRecvLocalMs: number,
+  clockOffsetMs: number,
   oneWayDelayMs = 0,
 ): number {
   if (snapshot.paused) return snapshot.positionSec;
-  const elapsedMs = Math.max(0, nowLocalMs - snapshotRecvLocalMs) + Math.max(0, oneWayDelayMs);
+  const controllerNowMs = nowLocalMs - clockOffsetMs + Math.max(0, oneWayDelayMs);
+  const elapsedMs = Math.max(0, controllerNowMs - snapshot.controllerClockMs);
   return snapshot.positionSec + (elapsedMs / 1000) * snapshot.playbackRate;
 }
 
@@ -196,23 +202,27 @@ export type Correction =
   | { kind: "speed"; rate: number };
 
 /**
- * Given where we are vs. where we should be, decide the least-jarring
- * correction: hard-seek for large drift, a gentle speed nudge for small drift,
- * or return to the base rate inside the dead-zone. Stateless — the caller holds
- * player state and applies the result.
+ * The least-jarring correction for the gap between where we are and where we
+ * should be. Stateless — the caller holds player state and applies the result.
+ *
+ * `nudging` (a nudge already in progress) selects between the two thresholds, so
+ * a correction runs to completion instead of being abandoned and restarted at the
+ * dead-zone edge.
  */
 export function decideCorrection(
   localPosSec: number,
   targetPosSec: number,
   baseRate: number,
   paused: boolean,
+  nudging = false,
 ): Correction {
   // While paused there's nothing to converge; just hold the base rate so the
   // next un-pause starts clean.
   if (paused) return { kind: "speed", rate: baseRate };
   const drift = targetPosSec - localPosSec; // > 0 ⇒ we're behind and must speed up
   if (Math.abs(drift) > HARD_SEEK_THRESHOLD_SEC) return { kind: "seek", toSec: targetPosSec };
-  if (Math.abs(drift) <= NUDGE_DEADZONE_SEC) return { kind: "speed", rate: baseRate };
+  const threshold = nudging ? NUDGE_EXIT_SEC : NUDGE_ENTER_SEC;
+  if (Math.abs(drift) <= threshold) return { kind: "speed", rate: baseRate };
   const factor = drift > 0 ? 1 + NUDGE_FACTOR : 1 - NUDGE_FACTOR;
   return { kind: "speed", rate: baseRate * factor };
 }
@@ -239,4 +249,42 @@ export class RttEstimator {
   rttMs(): number {
     return this.bestRttMs === Infinity ? 0 : this.bestRttMs;
   }
+}
+
+/**
+ * Offset between this peer's monotonic clock and the controller's, so a snapshot's
+ * `controllerClockMs` can be read locally.
+ *
+ * Each sample is the true offset plus that message's transit delay, so the
+ * smallest is least contaminated — same min-filter as RttEstimator. Reset when the
+ * controller changes: `performance.now()` has a per-document origin, so another
+ * peer's timestamps are on an unrelated scale.
+ */
+export class ClockOffsetEstimator {
+  private bestOffsetMs = Infinity;
+
+  sample(controllerClockMs: number, recvLocalMs: number): void {
+    const offset = recvLocalMs - controllerClockMs;
+    if (offset < this.bestOffsetMs) this.bestOffsetMs = offset;
+  }
+
+  reset(): void {
+    this.bestOffsetMs = Infinity;
+  }
+
+  hasSample(): boolean {
+    return this.bestOffsetMs !== Infinity;
+  }
+
+  offsetMs(): number {
+    return this.bestOffsetMs === Infinity ? 0 : this.bestOffsetMs;
+  }
+}
+
+export type PeerLead = { id: string; primed: boolean };
+
+/** Who is not yet holding enough footage to start. Ids rather than a boolean, so
+ * the UI can name whoever everyone is waiting on. */
+export function peersNotPrimed(members: readonly PeerLead[]): string[] {
+  return members.filter((m) => !m.primed).map((m) => m.id);
 }
