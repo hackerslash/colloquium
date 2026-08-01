@@ -10,7 +10,7 @@ import { cx } from "../../lib/cx";
  * Cameras as a floating column on the film rather than a fixed band beneath it.
  * The old strip took 112px of height from the picture for its whole life,
  * whether or not anyone had a camera on; this rides over the letterbox and
- * follows the chrome unless the viewer pins it.
+ * the viewer can dismiss it outright.
  */
 export function PresenceRail({ roomId, visible }: { roomId: string | null; visible: boolean }) {
   const self = useIdentityStore((s) => s.self);
@@ -31,8 +31,8 @@ export function PresenceRail({ roomId, visible }: { roomId: string | null; visib
   return (
     <div
       className={cx(
-        "pointer-events-none absolute top-16 right-3 bottom-24 z-10 flex w-40 flex-col items-end gap-2 transition-opacity duration-200 motion-reduce:transition-none",
-        visible ? "opacity-100" : "opacity-0",
+        "pointer-events-none absolute top-16 right-3 bottom-24 z-10 flex w-40 flex-col items-end gap-2 transition-[opacity,visibility] duration-200 motion-reduce:transition-none",
+        visible ? "opacity-100" : "invisible opacity-0",
       )}
     >
       {!inCall ? (

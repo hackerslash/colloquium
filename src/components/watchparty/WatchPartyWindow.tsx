@@ -332,7 +332,7 @@ export function WatchPartyWindow() {
   const [fullscreen, setFullscreen] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
-  const [railPinned, setRailPinned] = useState(true);
+  const [railShown, setRailShown] = useState(true);
 
   const controller = selfIsController();
 
@@ -514,7 +514,7 @@ export function WatchPartyWindow() {
     >
       <Stage videoRef={videoRef} onStageClick={onStageClick} />
 
-      <PresenceRail roomId={roomId} visible={railPinned || chromeShown} />
+      <PresenceRail roomId={roomId} visible={railShown} />
 
       <div
         onPointerEnter={() => setHoldChrome(true)}
@@ -740,9 +740,9 @@ export function WatchPartyWindow() {
 
               <ChromeButton
                 icon={Users}
-                label={railPinned ? "Hide cameras" : "Keep cameras visible"}
-                onClick={() => setRailPinned((p) => !p)}
-                className={cx(railPinned && "bg-white/15 text-white")}
+                label={railShown ? "Hide cameras" : "Show cameras"}
+                onClick={() => setRailShown((p) => !p)}
+                className={cx(railShown && "bg-white/15 text-white")}
               />
               <ChromeButton
                 icon={fullscreen ? Minimize : Maximize}
