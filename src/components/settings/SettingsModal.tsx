@@ -10,6 +10,7 @@ import { Avatar } from "../ui/Avatar";
 import { cx } from "../../lib/cx";
 import { toast } from "../../stores/useToastStore";
 import * as avatarService from "../../services/avatar/avatarService";
+import { primeDevicePermission } from "../../services/call/devicePermissions";
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -26,28 +27,6 @@ type SettingsModalProps = {
 const SINK_ID_SUPPORTED = "setSinkId" in HTMLMediaElement.prototype;
 
 type DeviceInfo = { deviceId: string; label: string };
-
-/** Briefly opens the mic + camera, then releases them immediately. This is the
- * only way to unlock labeled device enumeration: until getUserMedia has run
- * once in the document, enumerateDevices() returns an EMPTY list (WKWebView) or
- * entries with blank labels — so every picker comes up empty. Falls back to
- * audio-only if the camera is unavailable/denied, so the mic/speaker lists
- * still populate. */
-async function primeDevicePermission(): Promise<void> {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-    stream.getTracks().forEach((t) => t.stop());
-    return;
-  } catch {
-    // Camera may be unavailable/denied — still try to unlock the mic list.
-  }
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach((t) => t.stop());
-  } catch {
-    // Permission denied outright — nothing more we can do; lists stay limited.
-  }
-}
 
 function useMediaDevices() {
   const [audioInputs, setAudioInputs] = useState<DeviceInfo[]>([]);
