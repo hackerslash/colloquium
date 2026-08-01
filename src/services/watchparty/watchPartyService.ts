@@ -15,6 +15,7 @@ import { LEASE_MS } from "../call/PresenterSlotManager";
 import {
   ClockOffsetEstimator,
   decideCorrection,
+  electController,
   NUDGE_EXIT_SEC,
   peersNotPrimed,
   projectTargetPositionSec,
@@ -41,6 +42,13 @@ const DRIFT_STRIKES = 2;
  * Deciding again before it reports a real position turns one correction into a
  * run of them. */
 const CORRECTION_HOLD_MS = 1_200;
+/** Silence from the controller before the party elects a new one. The controller
+ * heartbeats every HEARTBEAT_MS whether playing or paused, so this is ~6 missed
+ * beats — long enough that a stall is not mistaken for a departure. */
+const CONTROLLER_TIMEOUT_MS = 10_000;
+/** Announcements decay if nothing renews them, so a room stops offering "Join
+ * watch party" for a party whose host died without saying goodbye. */
+const ANNOUNCE_TTL_MS = 15_000;
 
 type Ctrl = {
   paused: boolean;
@@ -54,6 +62,8 @@ type MemberInfo = {
   ready: boolean;
   primed: boolean;
   bufferedSec: number;
+  needSec: number;
+  /** Stamped from our own clock on receipt — never from the sender's. */
   leaseExpiresAt: number;
 };
 
@@ -73,24 +83,34 @@ type Session = {
   ready: boolean;
   primed: boolean;
   bufferedSec: number;
+  needSec: number;
   /** Controller only: play was asked for but some peer is still filling up. */
   waitingForPeers: boolean;
   /** Follower only: monotonic ms before which no correction is decided. */
   holdUntilMs: number;
   driftStrikes: number;
+  /** Monotonic ms of the last snapshot accepted from the current controller.
+   * Its staleness is what triggers an election. */
+  lastControllerStateAt: number;
   members: Map<string, MemberInfo>;
   timers: number[];
   unsub: () => void;
 };
 
 let session: Session | null = null;
+/** Bumped by every start/join so a call that loses the race to another can tell
+ * after its await that the session it was building is no longer wanted. */
+let generation = 0;
 
 function monoNow(): number {
   return performance.now();
 }
 
-function partyIdFor(roomId: string): string {
-  return `wp_${roomId}`;
+/** Unique per party, never derived from the room. A room-derived id made every
+ * party in a room indistinguishable from every previous one, so a peer opening
+ * its own party silently hijacked the live one instead of being rejected. */
+function newPartyId(): string {
+  return `wp_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
 function send(remoteId: string, data: unknown) {
@@ -158,6 +178,7 @@ function pushPresenceToStore() {
       ready: session.ready,
       primed: session.primed,
       bufferedSec: session.bufferedSec,
+      needSec: session.needSec,
     },
     ...[...session.members.entries()]
       .filter(([, m]) => m.leaseExpiresAt > now)
@@ -166,6 +187,7 @@ function pushPresenceToStore() {
         ready: m.ready,
         primed: m.primed,
         bufferedSec: m.bufferedSec,
+        needSec: m.needSec,
       })),
   ];
   useWatchPartyStore.getState()._setPresence(list, session.bufferedSec);
@@ -208,13 +230,12 @@ function onPlayerEvent(e: WpEvent) {
 
 function startLoops() {
   if (!session) return;
-  const t1 = window.setInterval(() => {
-    if (isController()) broadcastState();
-  }, HEARTBEAT_MS);
+  const t1 = window.setInterval(broadcastState, HEARTBEAT_MS);
   const t2 = window.setInterval(syncTick, SYNC_TICK_MS);
   const t3 = window.setInterval(() => {
     broadcastMember(false);
     sweepMembers();
+    void refreshMemberIds();
   }, BEACON_MS);
   const t4 = window.setInterval(() => {
     if (!isController()) pingController();
@@ -222,8 +243,20 @@ function startLoops() {
   session.timers = [t1, t2, t3, t4];
 }
 
+/** The roster is half of every fan-out target set, so without this anyone added
+ * to the room mid-party never hears from us — including the heartbeat that would
+ * tell them a party is running. */
+async function refreshMemberIds() {
+  const roomId = session?.roomId;
+  if (!roomId) return;
+  const ids = await roomMembersRepo.listMembers(roomId);
+  if (session && session.roomId === roomId) session.memberIds = ids;
+}
+
 function broadcastState() {
   if (!session || !isController()) return;
+  const info = session.reducer.info();
+  if (!info) return;
   // Read adjacently: `controllerClockMs` must be the instant `pos` was true —
   // that pairing is the basis of every follower's projection.
   const pos = player.positionSec();
@@ -233,6 +266,10 @@ function broadcastState() {
     type: "watch_party_state",
     roomId: session.roomId,
     partyId: session.partyId,
+    fromId: session.self.identityId,
+    streamUrl: session.streamUrl,
+    ownerId: info.ownerId,
+    startedAt: info.startedAt,
     controllerId: session.self.identityId,
     controlEpoch: session.reducer.currentControlEpoch(),
     monotonicSeq: session.seq,
@@ -260,17 +297,21 @@ function broadcastMember(leaving: boolean) {
     ready: session.ready,
     primed: session.primed,
     bufferedSec: session.bufferedSec,
-    leaseExpiresAt: Date.now() + LEASE_MS,
+    needSec: session.needSec,
     leaving,
   } satisfies WatchPartyMemberMessage);
 }
 
 function refreshLocalReadiness() {
   if (!session) return;
-  const { leadSec, primed } = player.readiness();
-  const changed = primed !== session.primed || Math.abs(leadSec - session.bufferedSec) >= 0.5;
+  const { leadSec, primed, needSec } = player.readiness();
+  const changed =
+    primed !== session.primed ||
+    needSec !== session.needSec ||
+    Math.abs(leadSec - session.bufferedSec) >= 0.5;
   session.primed = primed;
   session.bufferedSec = leadSec;
+  session.needSec = needSec;
   if (changed) pushPresenceToStore();
 }
 
@@ -307,7 +348,51 @@ function syncTick() {
     gateTick();
     return;
   }
+  if (electionTick()) return;
   followerTick();
+}
+
+/**
+ * Takes over when the controller stops heartbeating. Every peer runs this over
+ * the same member list and picks the same winner, so there is nothing to
+ * negotiate; the rare disagreement about who is still alive resolves through
+ * `applyHandoff`'s smaller-id tie-break at the shared epoch.
+ *
+ * Returns whether control came to us this tick.
+ */
+function electionTick(): boolean {
+  if (!session) return false;
+  const now = monoNow();
+  if (now - session.lastControllerStateAt < CONTROLLER_TIMEOUT_MS) return false;
+  // Restarted whoever wins, so a loser doesn't re-run the election every tick
+  // while the winner is still finding its feet.
+  session.lastControllerStateAt = now;
+  const candidates = gateMembers().map((m) => m.id);
+  if (electController(candidates) !== session.self.identityId) return false;
+  claimControl();
+  return true;
+}
+
+function claimControl() {
+  if (!session) return;
+  const epoch = session.reducer.currentControlEpoch() + 1;
+  const msg: WatchPartyHandoffMessage = {
+    type: "watch_party_handoff",
+    roomId: session.roomId,
+    partyId: session.partyId,
+    toId: session.self.identityId,
+    byId: session.self.identityId,
+    controlEpoch: epoch,
+  };
+  if (!session.reducer.applyHandoff(msg)) return;
+  session.clock.reset();
+  session.waitingForPeers = false;
+  setWaitingFor([]);
+  // What this machine is actually doing, so taking over doesn't stop the film.
+  session.ctrl.paused = session.localPaused;
+  broadcast(msg);
+  broadcastState();
+  pushPlaybackToStore();
 }
 
 /** Releases a gated play once every peer has filled up. */
@@ -345,16 +430,24 @@ function followerTick() {
   applySnapshotTracks();
   if (!session.ready) return;
   if (!snap.paused && session.localPaused) void player.setPause(false);
-  if (snap.paused) {
-    // A seek is invisible while paused, so settle up now instead of carrying the
-    // offset into the resume where everyone can see it corrected.
-    if (Math.abs(player.positionSec() - snap.positionSec) > NUDGE_EXIT_SEC) {
-      void player.seek(snap.positionSec);
-    }
-    return;
-  }
   const now = monoNow();
   if (now < session.holdUntilMs) return;
+  if (snap.paused) {
+    // A seek is invisible while paused, so settle up now instead of carrying the
+    // offset into the resume where everyone can see it corrected. On strikes all
+    // the same: acting on the first tick turned one bad snapshot into an instant
+    // jump to the start of the film.
+    if (Math.abs(player.positionSec() - snap.positionSec) <= NUDGE_EXIT_SEC) {
+      session.driftStrikes = 0;
+      return;
+    }
+    session.driftStrikes += 1;
+    if (session.driftStrikes < DRIFT_STRIKES) return;
+    session.driftStrikes = 0;
+    void player.seek(snap.positionSec);
+    session.holdUntilMs = now + CORRECTION_HOLD_MS;
+    return;
+  }
 
   const target = projectTargetPositionSec(
     snap,
@@ -422,12 +515,18 @@ function defaultCtrl(): Ctrl {
   return { paused: true, rate: 1, audioTrackId: "auto", subTrackId: "no", subDelaySec: 0 };
 }
 
-function makeSession(self: Identity, roomId: string, streamUrl: string, memberIds: string[]): Session {
+function makeSession(
+  self: Identity,
+  roomId: string,
+  partyId: string,
+  streamUrl: string,
+  memberIds: string[],
+): Session {
   const unsub = player.onPlayerEvent(onPlayerEvent);
   return {
     self,
     roomId,
-    partyId: partyIdFor(roomId),
+    partyId,
     streamUrl,
     memberIds,
     reducer: new WatchPartyState(),
@@ -440,9 +539,13 @@ function makeSession(self: Identity, roomId: string, streamUrl: string, memberId
     ready: false,
     primed: false,
     bufferedSec: 0,
+    needSec: READY_LEAD_SEC,
     waitingForPeers: false,
     holdUntilMs: 0,
     driftStrikes: 0,
+    // From session creation, so a joiner that never hears from the controller
+    // still elects one instead of waiting forever.
+    lastControllerStateAt: monoNow(),
     members: new Map(),
     timers: [],
     unsub,
@@ -450,16 +553,26 @@ function makeSession(self: Identity, roomId: string, streamUrl: string, memberId
 }
 
 export async function startParty(self: Identity, roomId: string, streamUrl: string): Promise<void> {
+  // The room button aims for this too, but its view can be a heartbeat stale,
+  // and opening a rival party is the expensive mistake to make.
+  if (useWatchPartyStore.getState().announcedByRoom?.[roomId]) {
+    await joinParty(self, roomId);
+    return;
+  }
   if (session) leaveParty();
+  const mine = ++generation;
   const memberIds = await roomMembersRepo.listMembers(roomId);
-  session = makeSession(self, roomId, streamUrl, memberIds);
+  if (mine !== generation) return;
+  const partyId = newPartyId();
+  session = makeSession(self, roomId, partyId, streamUrl, memberIds);
   const startMsg: WatchPartyStartMessage = {
     type: "watch_party_start",
     roomId,
-    partyId: session.partyId,
+    partyId,
     streamUrl,
     ownerId: self.identityId,
     startedAt: Date.now(),
+    fromId: self.identityId,
   };
   session.reducer.applyStart(startMsg);
   session.ctrl = defaultCtrl();
@@ -474,27 +587,36 @@ export async function startParty(self: Identity, roomId: string, streamUrl: stri
 
 export async function joinParty(self: Identity, roomId: string): Promise<void> {
   if (session && session.roomId === roomId) return;
-  if (session) leaveParty();
-  const memberIds = await roomMembersRepo.listMembers(roomId);
   const announced = useWatchPartyStore.getState().announcedByRoom?.[roomId];
-  const streamUrl = announced?.streamUrl ?? "";
-  session = makeSession(self, roomId, streamUrl, memberIds);
-  if (announced) {
-    session.reducer.applyStart({
-      type: "watch_party_start",
-      roomId,
-      partyId: session.partyId,
-      streamUrl: announced.streamUrl,
-      ownerId: announced.ownerId,
-      startedAt: Date.now(),
-    });
+  // Without one the reducer stays empty and drops every snapshot forever — a
+  // window that can never converge. Better to say so than to open it.
+  if (!announced) {
+    toast.error("Couldn't join watch party", "It may have already ended.");
+    return;
   }
+  if (session) leaveParty();
+  const mine = ++generation;
+  const memberIds = await roomMembersRepo.listMembers(roomId);
+  if (mine !== generation) return;
+  session = makeSession(self, roomId, announced.partyId, announced.streamUrl, memberIds);
+  session.reducer.applyStart({
+    type: "watch_party_start",
+    roomId,
+    partyId: announced.partyId,
+    streamUrl: announced.streamUrl,
+    ownerId: announced.ownerId,
+    startedAt: announced.startedAt,
+    fromId: announced.ownerId,
+  });
   pushSessionToStore();
   startLoops();
   broadcastMember(false);
 }
 
 export function leaveParty(): void {
+  // Also cancels a start/join still waiting on the roster read, which would
+  // otherwise finish and hand back the session we just tore down.
+  generation++;
   if (!session) return;
   broadcastMember(true);
   for (const t of session.timers) window.clearInterval(t);
@@ -506,17 +628,30 @@ export function leaveParty(): void {
 
 export function endParty(): void {
   if (!session) return;
+  // Peers reject an end from anyone who is neither host nor controller, so
+  // there is no point sending one they would drop.
+  const info = session.reducer.info();
+  const mayEnd =
+    info?.ownerId === session.self.identityId ||
+    session.reducer.currentControllerId() === session.self.identityId;
+  if (!mayEnd) {
+    leaveParty();
+    return;
+  }
   broadcast({
     type: "watch_party_end",
     roomId: session.roomId,
     partyId: session.partyId,
     fromId: session.self.identityId,
   } satisfies WatchPartyEndMessage);
+  forgetAnnounce(session.roomId);
   leaveParty();
 }
 
 export async function setStreamUrl(url: string): Promise<void> {
   if (!session || !isController()) return;
+  const info = session.reducer.info();
+  if (!info) return;
   session.streamUrl = url;
   session.ctrl = defaultCtrl();
   session.waitingForPeers = false;
@@ -524,15 +659,16 @@ export async function setStreamUrl(url: string): Promise<void> {
   session.driftStrikes = 0;
   session.holdUntilMs = 0;
   setWaitingFor([]);
+  session.reducer.applySourceChange(url);
   const startMsg: WatchPartyStartMessage = {
     type: "watch_party_start",
     roomId: session.roomId,
     partyId: session.partyId,
     streamUrl: url,
-    ownerId: session.reducer.info()?.ownerId ?? session.self.identityId,
-    startedAt: Date.now(),
+    ownerId: info.ownerId,
+    startedAt: info.startedAt,
+    fromId: session.self.identityId,
   };
-  session.reducer.applyStart(startMsg);
   useWatchPartyStore.getState()._setStreamUrl(url);
   broadcast(startMsg);
   broadcastState();
@@ -626,6 +762,7 @@ function sendSubtitle(to: string | null, id: SubTrackId): void {
     type: "watch_party_subtitle",
     roomId: session.roomId,
     partyId: session.partyId,
+    fromId: session.self.identityId,
     name: entry.label,
     contentB64: toBase64(new TextEncoder().encode(entry.vtt)),
     subId: id,
@@ -662,6 +799,7 @@ export async function addSubtitle(file: File): Promise<void> {
     type: "watch_party_subtitle",
     roomId: session.roomId,
     partyId: session.partyId,
+    fromId: session.self.identityId,
     name: file.name,
     contentB64,
   };
@@ -695,44 +833,121 @@ export function handControlTo(id: string): void {
 }
 
 export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void {
+  recordAnnounce(msg);
+  if (!session || session.roomId !== msg.roomId) return;
+
+  // Two parties in one room. `applyStart` keeps the earlier one and every peer
+  // decides identically, but a loser doesn't know it lost until someone says so.
+  if (msg.partyId !== session.partyId) {
+    if (!session.reducer.applyStart(msg)) {
+      sendStart(msg.fromId);
+      return;
+    }
+    adoptParty(msg.partyId, msg.streamUrl);
+    return;
+  }
+
+  // Same party, so the only thing left to say is "we're watching something else
+  // now" — and only the peer actually driving may say it.
+  if (msg.fromId !== session.reducer.currentControllerId()) return;
+  if (!session.reducer.applySourceChange(msg.streamUrl)) return;
+  adoptParty(msg.partyId, msg.streamUrl);
+}
+
+/** Drops everything derived from the previous party or source, so nothing steers
+ * by a position that no longer exists. */
+function adoptParty(partyId: string, streamUrl: string) {
+  if (!session) return;
+  session.partyId = partyId;
+  session.streamUrl = streamUrl;
+  session.ctrl = defaultCtrl();
+  session.primed = false;
+  session.driftStrikes = 0;
+  session.holdUntilMs = 0;
+  session.waitingForPeers = false;
+  session.lastControllerStateAt = monoNow();
+  setWaitingFor([]);
+  useWatchPartyStore.getState()._setStreamUrl(streamUrl);
+  pushSessionToStore();
+}
+
+const announceSeenAt = new Map<string, number>();
+let announceSweeper: number | null = null;
+
+/** Heartbeats announce as well as starts, so a peer that missed the one-shot
+ * start still learns the party exists within a beat. */
+function recordAnnounce(msg: {
+  roomId: string;
+  partyId: string;
+  ownerId: string;
+  streamUrl: string;
+  startedAt: number;
+}) {
   useWatchPartyStore.getState()._setAnnounced(msg.roomId, {
     partyId: msg.partyId,
     ownerId: msg.ownerId,
     streamUrl: msg.streamUrl,
+    startedAt: msg.startedAt,
   });
-  if (session && session.roomId === msg.roomId) {
-    const changed = session.reducer.applyStart(msg);
-    if (changed || session.streamUrl !== msg.streamUrl) {
-      session.streamUrl = msg.streamUrl;
-      session.ctrl = defaultCtrl();
-      session.primed = false;
-      session.driftStrikes = 0;
-      session.holdUntilMs = 0;
-      useWatchPartyStore.getState()._setStreamUrl(msg.streamUrl);
-      pushSessionToStore();
-    }
+  announceSeenAt.set(msg.roomId, Date.now());
+  if (announceSweeper === null) {
+    announceSweeper = window.setInterval(sweepAnnounces, ANNOUNCE_TTL_MS / 3);
   }
 }
 
+function forgetAnnounce(roomId: string) {
+  announceSeenAt.delete(roomId);
+  useWatchPartyStore.getState()._clearAnnounced(roomId);
+}
+
+/** A host that dies without sending an end would otherwise advertise a party
+ * nobody can join for the rest of the session. */
+function sweepAnnounces() {
+  const cutoff = Date.now() - ANNOUNCE_TTL_MS;
+  for (const [roomId, seenAt] of announceSeenAt) {
+    if (seenAt < cutoff) forgetAnnounce(roomId);
+  }
+  if (announceSeenAt.size > 0 || announceSweeper === null) return;
+  window.clearInterval(announceSweeper);
+  announceSweeper = null;
+}
+
+/** Hands one peer the current party so a newcomer converges immediately rather
+ * than waiting for the next heartbeat. */
+function sendStart(to: string) {
+  if (!session) return;
+  const info = session.reducer.info();
+  if (!info) return;
+  send(to, {
+    type: "watch_party_start",
+    roomId: session.roomId,
+    partyId: session.partyId,
+    streamUrl: session.streamUrl,
+    ownerId: info.ownerId,
+    startedAt: info.startedAt,
+    fromId: session.self.identityId,
+  } satisfies WatchPartyStartMessage);
+}
+
 export function handleState(_self: Identity, msg: WatchPartyStateMessage): void {
+  // Ahead of the session check on purpose: this is how a peer *not* in the party
+  // learns one is running, so the room offers "Join" rather than a button that
+  // opens a rival party.
+  recordAnnounce(msg);
   if (!session || session.roomId !== msg.roomId) return;
   const recv = monoNow();
   const previousController = session.reducer.currentControllerId();
   const changed = session.reducer.applyState(msg);
   if (!changed) return;
   const controllerId = session.reducer.currentControllerId();
+  // Proof of life for the election, and only from the peer we now recognise as
+  // controller — a straggler's snapshot must not keep a dead host alive.
+  if (controllerId === msg.controllerId) session.lastControllerStateAt = recv;
   // `performance.now()` is measured from a per-document origin, so a new
   // controller's timestamps sit on an unrelated scale and the offset filtered
   // from the previous one is worse than having no estimate at all.
   if (controllerId !== previousController) session.clock.reset();
   if (controllerId === msg.controllerId) session.clock.sample(msg.controllerClockMs, recv);
-  // Never from our own snapshot coming back round: the wire `paused` is the
-  // effective timeline state, which a reopen sets without anyone asking to pause,
-  // so adopting it as intent would latch the controller paused.
-  if (isController() && msg.controllerId !== session.self.identityId) {
-    session.ctrl.paused = msg.paused;
-    session.ctrl.rate = msg.playbackRate;
-  }
   pushPlaybackToStore();
 }
 
@@ -741,6 +956,9 @@ export function handleHandoff(_self: Identity, msg: WatchPartyHandoffMessage): v
   const changed = session.reducer.applyHandoff(msg);
   if (!changed) return;
   session.clock.reset();
+  // A full timeout for the incoming controller. Carrying the outgoing one's
+  // last-heard time over would unseat a controller that had barely taken over.
+  session.lastControllerStateAt = monoNow();
   // A gate armed by the outgoing controller is no longer anyone's to release.
   session.waitingForPeers = false;
   setWaitingFor([]);
@@ -753,6 +971,10 @@ export function handleHandoff(_self: Identity, msg: WatchPartyHandoffMessage): v
 
 export function handleSubtitle(_self: Identity, msg: WatchPartySubtitleMessage): void {
   if (!session || session.roomId !== msg.roomId || isController()) return;
+  // Only from whoever is driving: the un-`subId` branch below appends a track
+  // every time it runs, so an unsolicited copy is a duplicate in the menu.
+  if (msg.partyId !== session.partyId) return;
+  if (msg.fromId !== session.reducer.currentControllerId()) return;
   const bin = atob(msg.contentB64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -781,15 +1003,19 @@ export function handleMember(_self: Identity, msg: WatchPartyMemberMessage): voi
   else
     session.members.set(msg.fromId, {
       ready: msg.ready,
-      // An older build omits it; its lead is the closest stand-in, and erring
-      // towards "not primed" only ever makes the gate wait, never start early.
-      primed: msg.primed ?? msg.bufferedSec >= READY_LEAD_SEC,
+      primed: msg.primed,
       bufferedSec: msg.bufferedSec,
-      leaseExpiresAt: msg.leaseExpiresAt,
+      needSec: msg.needSec,
+      // Our clock, not theirs: a peer running fast would hold a lease that never
+      // expires and pin the play gate open forever.
+      leaseExpiresAt: Date.now() + LEASE_MS,
     });
-  // Cues are shared when the track is chosen, so a peer arriving later would
-  // otherwise never see subtitles at all.
-  if (isNew && !msg.leaving && isController()) sendSubtitle(msg.fromId, session.ctrl.subTrackId);
+  if (isNew && !msg.leaving && isController()) {
+    // Cues are shared when the track is chosen, so a peer arriving later would
+    // otherwise never see subtitles at all.
+    sendSubtitle(msg.fromId, session.ctrl.subTrackId);
+    sendStart(msg.fromId);
+  }
   pushPresenceToStore();
 }
 
@@ -810,6 +1036,16 @@ export function handlePong(_self: Identity, msg: WatchPartyPongMessage): void {
 }
 
 export function handleEnd(_self: Identity, msg: WatchPartyEndMessage): void {
-  useWatchPartyStore.getState()._clearAnnounced(msg.roomId);
-  if (session && session.roomId === msg.roomId) leaveParty();
+  if (!session || session.roomId !== msg.roomId) {
+    // No session to authorise against, so match the announcement instead. A
+    // heartbeat re-announces within a beat if this turns out to be wrong.
+    const announced = useWatchPartyStore.getState().announcedByRoom?.[msg.roomId];
+    if (announced?.partyId === msg.partyId && announced.ownerId === msg.fromId) {
+      forgetAnnounce(msg.roomId);
+    }
+    return;
+  }
+  if (!session.reducer.applyEnd(msg)) return;
+  forgetAnnounce(msg.roomId);
+  leaveParty();
 }

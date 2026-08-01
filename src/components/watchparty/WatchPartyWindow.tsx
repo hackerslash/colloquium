@@ -20,8 +20,8 @@ import {
 import { useWatchPartyStore, selfIsController } from "../../stores/useWatchPartyStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
+import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import * as player from "../../services/watchparty/watchPartyPlayer";
-import { READY_LEAD_SEC } from "../../services/watchparty/watchPartySync";
 import { Avatar } from "../ui/Avatar";
 import { Button } from "../ui/Button";
 import { Tooltip } from "../ui/Tooltip";
@@ -71,7 +71,7 @@ function PrimingOverlay() {
         {slowest.map((m) => (
           <li key={m.id}>
             {m.id === self?.identityId ? "You" : (contactsById[m.id]?.displayName ?? "Guest")} —{" "}
-            {Math.round(m.bufferedSec)}s of {READY_LEAD_SEC}s ready
+            {Math.round(m.bufferedSec)}s of {Math.round(m.needSec)}s ready
           </li>
         ))}
       </ul>
@@ -242,21 +242,26 @@ function Stage({
 function PartyPresence() {
   const members = useWatchPartyStore((s) => s.members);
   const controllerId = useWatchPartyStore((s) => s.controllerId);
+  const roomId = useWatchPartyStore((s) => s.roomId);
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
+  const callRoomId = useRoomCallStore((s) => s.roomId);
+  const speakingIds = useRoomCallStore((s) => s.speakingIds);
 
+  const inCall = callRoomId === roomId;
   const shown = members.slice(0, 5);
   const overflow = members.length - shown.length;
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className="flex items-center">
-        {shown.map((m) => {
+      <div className="flex items-center py-0.5">
+        {shown.map((m, i) => {
           const name =
             m.id === self?.identityId
               ? (self?.displayName ?? "You")
               : (contactsById[m.id]?.displayName ?? "Guest");
           const isController = m.id === controllerId;
+          const isSpeaking = inCall && speakingIds.has(m.id);
           return (
             <Tooltip
               key={m.id}
@@ -266,10 +271,10 @@ function PartyPresence() {
               }`}
             >
               <span
+                style={{ zIndex: shown.length - i }}
                 className={cx(
-                  "-mr-1.5 inline-flex rounded-full p-0.5 ring-2 last:mr-0",
-                  m.ready ? "ring-accent/70" : "ring-white/25",
-                  isController && "z-10",
+                  "-mr-1.5 inline-flex rounded-full p-0.5 ring-2 transition-all last:mr-0 motion-reduce:transition-none",
+                  isSpeaking ? "ring-success" : "ring-black/70",
                 )}
               >
                 <Avatar id={m.id} name={name} size="sm" />

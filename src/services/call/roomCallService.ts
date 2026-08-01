@@ -315,6 +315,9 @@ function ensureWrapper(remoteId: string): PeerConnectionWrapper {
 
   session.wrappers.set(remoteId, wrapper);
   touchPeer(remoteId); // liveness clock starts now, not at epoch 0
+  // A peer we are only now wiring up — a newcomer, or one we reaped and
+  // re-dialled — has no idea whether our camera is on.
+  sendMediaStateTo(remoteId);
   updateCeilings();
   pushParticipantsToStore();
   return wrapper;
@@ -438,9 +441,11 @@ function onTick() {
     if (hb) broadcast({ ...hb, roomId: session.roomId } satisfies SlotHeartbeatMessage);
   }
 
-  // Occupancy beacon at the slot-heartbeat cadence (every 3rd 1s tick).
+  // Occupancy beacon at the slot-heartbeat cadence (every 3rd 1s tick), plus our
+  // camera state, which is what heals a receiver that dropped the flag.
   if (session.tickCount % Math.max(1, Math.round(HEARTBEAT_MS / 1_000)) === 0) {
     broadcastBeacon(false);
+    broadcastMediaState();
   }
 
   // Reap crashed/vanished peers via either signal:
@@ -790,17 +795,30 @@ export async function switchCameraDevice(): Promise<void> {
 
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---
 
+function mediaStateMessage(): RoomCallMediaStateMessage {
+  return {
+    type: "room_call_media_state",
+    roomId: session!.roomId,
+    fromId: session!.self.identityId,
+    camOn: session!.cameraTrack !== null,
+  };
+}
+
 /** Announces our camera state to the mesh so receivers drop the frozen last
  * frame immediately — WebKit doesn't reliably fire `mute` on remote tracks
- * when our sender replaceTrack(null)s. */
+ * when our sender replaceTrack(null)s.
+ *
+ * Repeated on the beacon rather than sent only on change: the datagram is lossy
+ * and the receiver deletes the flag whenever it reaps us, so a single lost edge
+ * used to leave our tile an avatar until we toggled the camera by hand. */
 function broadcastMediaState() {
   if (!session) return;
-  broadcast({
-    type: "room_call_media_state",
-    roomId: session.roomId,
-    fromId: session.self.identityId,
-    camOn: session.cameraTrack !== null,
-  } satisfies RoomCallMediaStateMessage);
+  broadcast(mediaStateMessage());
+}
+
+function sendMediaStateTo(remoteId: string) {
+  if (!session) return;
+  send(remoteId, mediaStateMessage());
 }
 
 export async function toggleCam() {
@@ -1062,6 +1080,7 @@ export function handleRoomCallJoin(self: Identity, msg: RoomCallJoinMessage) {
     fromId: self.identityId,
     participants: [self.identityId, ...session.wrappers.keys()].filter((id) => id !== msg.fromId),
     slots: session.slots.snapshot(),
+    camOn: session.cameraTrack !== null,
   } satisfies RoomCallPresenceMessage);
 }
 
@@ -1069,6 +1088,7 @@ export function handleRoomCallPresence(_self: Identity, msg: RoomCallPresenceMes
   if (!session || session.roomId !== msg.roomId) return;
   if (!isMember(msg.fromId)) return;
   touchPeer(msg.fromId);
+  useRoomCallStore.getState()._setParticipantCamOn(msg.fromId, msg.camOn);
   session.slots.replaceAll(msg.slots);
   for (const participant of [msg.fromId, ...msg.participants]) {
     if (participant !== session.self.identityId && isMember(participant)) ensureWrapper(participant);

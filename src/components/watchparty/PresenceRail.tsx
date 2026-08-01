@@ -4,6 +4,7 @@ import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { VideoTile } from "../call/VideoTile";
 import { ChromeButton } from "./PlayerChrome";
+import { hasLiveVideo } from "../../lib/mediaTracks";
 import { cx } from "../../lib/cx";
 
 /**
@@ -67,7 +68,10 @@ export function PresenceRail({ roomId, visible }: { roomId: string | null; visib
                 <VideoTile
                   stream={streams[id] ?? null}
                   label={contactsById[id]?.displayName ?? "Guest"}
-                  hasVideo={camOnByParticipant[id] === true}
+                  // Fail open, as RoomCallWindow does: a missing flag means we
+                  // haven't heard yet, not that the camera is off, and treating
+                  // it as off hid live video behind an avatar.
+                  hasVideo={hasLiveVideo(streams[id] ?? null) && camOnByParticipant[id] !== false}
                   fit="grid"
                   participantId={id}
                   avatarSize="md"

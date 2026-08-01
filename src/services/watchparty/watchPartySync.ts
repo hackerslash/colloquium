@@ -76,6 +76,30 @@ function snapshotOf(msg: WatchPartyStateMessage): PlaybackSnapshot {
 }
 
 /**
+ * Which of two parties in the same room is the real one. The earlier start wins,
+ * being the one people are already watching, and the smaller partyId breaks the
+ * tie — so every peer resolves a split identically whatever order it heard them.
+ */
+export function startSupersedes(
+  incoming: Pick<WatchPartyStartMessage, "partyId" | "startedAt">,
+  current: Pick<PartyInfo, "partyId" | "startedAt">,
+): boolean {
+  if (incoming.startedAt !== current.startedAt) return incoming.startedAt < current.startedAt;
+  return incoming.partyId < current.partyId;
+}
+
+/**
+ * Who takes over when the controller goes silent. Lowest id wins, so every peer
+ * computes the same answer from the same member list and there is nothing to
+ * negotiate — the winner just claims the next epoch.
+ */
+export function electController(candidateIds: readonly string[]): string | null {
+  let winner: string | null = null;
+  for (const id of candidateIds) if (winner === null || id < winner) winner = id;
+  return winner;
+}
+
+/**
  * Reducer for one client's view of a party. `apply*` return whether observable
  * state changed (so callers can skip redundant store pushes / player commands).
  */
@@ -110,9 +134,9 @@ export class WatchPartyState {
   }
 
   applyStart(msg: WatchPartyStartMessage): boolean {
-    // A start for a different party supersedes only if it's genuinely new; an
-    // echo of the active party is a no-op.
+    // An echo of the active party is a no-op.
     if (this.party && this.party.partyId === msg.partyId) return false;
+    if (this.party && !startSupersedes(msg, this.party)) return false;
     this.party = {
       partyId: msg.partyId,
       roomId: msg.roomId,
@@ -122,6 +146,19 @@ export class WatchPartyState {
     };
     this.controllerId = msg.ownerId;
     this.controlEpoch = 0;
+    this.snapshot = null;
+    return true;
+  }
+
+  /**
+   * The controller pointed the party at a different file. Not a start: the
+   * party, its owner and the epoch all survive. Dropping the snapshot is the
+   * point — it describes a position in the *previous* file, and a follower
+   * steering by it would seek into the new one at the old offset.
+   */
+  applySourceChange(streamUrl: string): boolean {
+    if (!this.party || this.party.streamUrl === streamUrl) return false;
+    this.party = { ...this.party, streamUrl };
     this.snapshot = null;
     return true;
   }
@@ -148,8 +185,11 @@ export class WatchPartyState {
     return true;
   }
 
+  /** Ending is destructive for everyone, so only the peer who opened the party
+   * or the one currently driving it may close it. */
   applyEnd(msg: WatchPartyEndMessage): boolean {
     if (!this.party || this.party.partyId !== msg.partyId) return false;
+    if (msg.fromId !== this.party.ownerId && msg.fromId !== this.controllerId) return false;
     this.party = null;
     this.controllerId = null;
     this.controlEpoch = 0;

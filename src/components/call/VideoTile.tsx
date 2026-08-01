@@ -39,8 +39,13 @@ function VideoInner({ stream, muted, mirror, label, hasVideo, participantId, qua
 
   useEffect(() => {
     const el = videoRef.current;
-    if (el && el.srcObject !== stream) el.srcObject = stream;
-  }, [stream]);
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream;
+    // `autoPlay` only fires at resource selection, and WebKit can release the
+    // decoder for an element hidden behind display:none or a hidden ancestor,
+    // leaving it paused when it comes back.
+    if (stream && hasVideo) void el.play().catch(() => undefined);
+  }, [stream, hasVideo]);
 
   // Apply the selected audio output device (speaker/headphone routing).
   // setSinkId is only available in Chromium-based browsers; guard before calling.
