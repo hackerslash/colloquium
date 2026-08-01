@@ -97,8 +97,8 @@ async function download(url, dest) {
 
 function extract(archive, into) {
   fs.mkdirSync(into, { recursive: true });
-  // bsdtar ships as tar.exe on Windows 10+, GNU tar elsewhere.
-  const r = spawnSync("tar", ["-xzf", archive, "-C", into], { stdio: "inherit" });
+  const rel = path.relative(into, archive).split(path.sep).join("/");
+  const r = spawnSync("tar", ["-xzf", rel], { cwd: into, stdio: "inherit" });
   if (r.status !== 0) throw new Error(`tar failed on ${archive}`);
 }
 
