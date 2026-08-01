@@ -26,6 +26,45 @@ fn set_close_to_tray(state: tauri::State<CloseToTray>, enabled: bool) {
     *state.0.lock().unwrap() = enabled;
 }
 
+/// Grant the webview camera/mic access up front on Windows.
+///
+/// WKWebView's delegate auto-grants capture (wry does this for us), so on macOS
+/// the only prompt is the OS one, which the system remembers forever. WebView2
+/// has no such delegate by default: it shows its OWN prompt, and it refuses to
+/// persist the answer for the `http://tauri.localhost` origin Tauri serves from
+/// — so every launch asks again. Answering it here makes Windows behave like
+/// macOS, leaving Settings > Privacy > Camera/Microphone as the real gate.
+#[cfg(target_os = "windows")]
+fn grant_media_capture(window: &tauri::WebviewWindow) -> tauri::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    };
+    use webview2_com::PermissionRequestedEventHandler;
+
+    window.with_webview(|webview| unsafe {
+        let Ok(core) = webview.controller().CoreWebView2() else {
+            return;
+        };
+        let mut token = 0i64;
+        let _ = core.add_PermissionRequested(
+            &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                args.PermissionKind(&mut kind)?;
+                if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                    || kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                {
+                    // Setting a state also suppresses WebView2's default prompt.
+                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                }
+                Ok(())
+            })),
+            &mut token,
+        );
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -63,6 +102,15 @@ pub fn run() {
             // and inject the keyed pool BEFORE anything else — IPC only starts
             // after setup returns, so no query can race this.
             tauri::async_runtime::block_on(db::init(app.handle()))?;
+
+            // Before the frontend can reach getUserMedia — it doesn't run until
+            // identity has loaded, but the handler has to be attached first.
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                if let Err(err) = grant_media_capture(&window) {
+                    eprintln!("failed to grant webview media capture: {err}");
+                }
+            }
 
             // Best-effort: some Linux desktop environments have no tray host
             // (no StatusNotifierWatcher), which would otherwise take the

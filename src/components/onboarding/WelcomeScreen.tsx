@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { MessagesSquare } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { primeDevicePermission } from "../../services/call/devicePermissions";
 import { Button } from "../ui/Button";
 
 /** The raw error is a Rust/keyring failure string — not something a
@@ -33,6 +34,10 @@ export function WelcomeScreen() {
     setError(null);
     try {
       await createIdentity(trimmed);
+      // Ask for mic/camera now, while the user is clearly setting the app up —
+      // not mid-call. Not awaited: this screen unmounts as soon as the identity
+      // lands, and the OS dialog sits above whatever renders next.
+      void primeDevicePermission();
     } catch (err) {
       console.error("Failed to create identity:", err);
       setError(friendlyIdentityError(err));

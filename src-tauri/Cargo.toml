@@ -86,6 +86,9 @@ objc2-app-kit = "0.3"
 # and echoes it back; instead we capture natively in EXCLUDE-target-process-tree
 # mode so Colloquium's own audio is left out.
 [target.'cfg(target_os = "windows")'.dependencies]
+# Camera/mic permission grant (see `grant_media_capture` in lib.rs). Must track
+# the version tauri itself uses, since we hand types back to its webview.
+webview2-com = "0.38"
 windows-core = "0.61"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
