@@ -14,12 +14,12 @@
   "ffmpegCommit": "38b88335f99e76ed89ff3c93f877fdefce736c13",
   "release": {
     "repo": "hackerslash/colloquium",
-    "tag": "ffmpeg-bundle-n8.1.2-1"
+    "tag": "ffmpeg-bundle-n8.1.2-2"
   },
   "artifacts": {
-    "aarch64-apple-darwin": { "sha256": "bf87dd46f43590a054bd6bb5a3b1f3ac71d024dc12b9ee987f349546329dec98" },
-    "x86_64-apple-darwin": { "sha256": "9f327072f9e7220e7cfb3c4cfe80abfe1a6d55d2c02ea6abf881c81a5a4126b5" },
-    "universal-apple-darwin": { "sha256": "9ec13be51449d8021100238a6f96ecdfd3758db7d58e9005d47f9c3df768c69c" },
-    "x86_64-pc-windows-msvc": { "sha256": "075cadaa89f780c1ddb0b7c3e6fb38c51bb361b8dd8b4f9efefaeaac5acfb3c9" }
+    "aarch64-apple-darwin": { "sha256": "c1c935f366392546d347cd28a7059e91357941986be65ba83c88370b189cce60" },
+    "x86_64-apple-darwin": { "sha256": "9e7ca36321a7d22fc3f4b720f45d984accaf38983d4dbf16c3207804442d8e37" },
+    "universal-apple-darwin": { "sha256": "1c6f3ddf34e1027b5593c975cd0579676ae749f0f6d15019b1b6d4cecc94bb08" },
+    "x86_64-pc-windows-msvc": { "sha256": "7bd6cb7c712ae1a3bcf8fbc3d8315731c0bf0027c54dc5bac4a8e6f68c72958a" }
   }
 }
