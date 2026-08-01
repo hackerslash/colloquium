@@ -7,6 +7,17 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## 0.5.1
+
+### Fixed
+
+- Watch party playback failed to start on Windows with a missing-entry-point
+  error from `libwinpthread-1.dll`. The bundled ffmpeg sidecars now link their
+  toolchain runtime statically instead of depending on whatever copy happens to
+  be on `PATH`.
+- Windows HLS output wrote `init.mp4` to the wrong directory, so the playlist
+  loaded but every fragment 404'd and playback stalled on a fragment-load error.
+
 ## 0.5.0
 
 ### Added
