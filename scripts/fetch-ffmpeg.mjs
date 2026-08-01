@@ -79,6 +79,22 @@ function present(triple) {
   });
 }
 
+// present() only asks whether a big file is there; the stamp says which release
+// it came from, so re-pinning doesn't leave everyone on the old sidecars.
+const STAMP = MANIFEST.release.tag;
+
+function stampFile(triple) {
+  return path.join(OUT, `.stamp-${triple}`);
+}
+
+function stamped(triple) {
+  try {
+    return fs.readFileSync(stampFile(triple), "utf8").trim() === STAMP;
+  } catch {
+    return false;
+  }
+}
+
 function sha256(file) {
   return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
@@ -173,8 +189,11 @@ async function ensure(triple, { stub, requirePublished }) {
     return;
   }
   if (present(triple)) {
-    console.log(`    ${triple}: already present`);
-    return;
+    if (stamped(triple)) {
+      console.log(`    ${triple}: already present`);
+      return;
+    }
+    console.log(`    ${triple}: not from ${STAMP} — re-provisioning`);
   }
   const entry = MANIFEST.artifacts[triple];
   if (entry?.sha256) {
@@ -192,6 +211,7 @@ async function ensure(triple, { stub, requirePublished }) {
   if (!present(triple)) {
     throw new Error(`${triple}: sidecars still missing after provisioning`);
   }
+  fs.writeFileSync(stampFile(triple), `${STAMP}\n`);
   // Tauri needs these executable; tar preserves the bit but a rebuilt archive
   // might not, and the failure mode (EACCES at spawn) is opaque.
   if (!triple.includes("windows")) {

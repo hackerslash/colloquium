@@ -108,6 +108,7 @@ case "$HOST_OS" in
     # GPU-accelerated when the driver supports it, and LGPL-clean. d3d11va/dxva2
     # give hardware *decode*.
     CONFIGURE_ARGS+=(--enable-mediafoundation --enable-d3d11va --enable-dxva2)
+    CONFIGURE_ARGS+=(--extra-ldexeflags='-static -static-libgcc -static-libstdc++')
     ;;
 esac
 

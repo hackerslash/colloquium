@@ -20,6 +20,10 @@ on:
         description: 'FFmpeg git tag to build (must match scripts/ffmpeg-manifest.json)'
         required: true
         default: 'n8.1.2'
+      revision:
+        description: 'Bump when rebuilding the same ffmpeg tag, so the archives land on a new release tag instead of replacing cached ones'
+        required: true
+        default: '2'
 
 jobs:
   build:
@@ -75,7 +79,7 @@ jobs:
           FFMPEG_REF: ${{ inputs.ffmpeg_ref }}
         run: bash scripts/build-ffmpeg.sh out "${{ matrix.triple }}"
 
-      - name: Verify the build is LGPL and self-contained
+      - name: Verify the build is LGPL
         shell: bash
         run: |
           set -euo pipefail
@@ -90,6 +94,26 @@ jobs:
             fi
           done
           echo "$conf"
+
+      # We ship two bare .exe files, so every import has to be a DLL Windows
+      # already has. Running the binary here proves nothing: /mingw64/bin is on
+      # PATH, so one that needs the toolchain runtime works on the runner and
+      # then fails on a user's machine with "the procedure entry point
+      # clock_gettime64 could not be located in libwinpthread-1.dll".
+      - name: Verify the sidecars import no toolchain DLLs
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          imports="$(objdump -p out/*.exe | sed -n 's/^[[:space:]]*DLL Name: //p' | sort -u)"
+          echo "$imports"
+          # libgcc_s_seh-1, libwinpthread-1, libstdc++-6 and friends. No Windows
+          # component is named lib*, msys-* or mcfgthread*.
+          bad="$(printf '%s\n' "$imports" | grep -iE '^(lib|msys-|mcfgthread)' || true)"
+          if [ -n "$bad" ]; then
+            echo "::error::not self-contained, imports $(echo $bad)"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -153,7 +177,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="ffmpeg-bundle-${{ inputs.ffmpeg_ref }}-1"
+          tag="ffmpeg-bundle-${{ inputs.ffmpeg_ref }}-${{ inputs.revision }}"
           notes="Minimal LGPL-2.1 ffmpeg/ffprobe ${{ inputs.ffmpeg_ref }} sidecars for Colloquium.
           Built by .github/workflows/build-ffmpeg.yml with --disable-autodetect and no
           external codec libraries. H.264 encoding uses the platform encoder

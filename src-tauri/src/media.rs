@@ -83,6 +83,17 @@ fn no_window(cmd: &mut Command) {
     let _ = cmd;
 }
 
+/// The hls muxer finds its output directory with `strrchr(m3u8_name, '/')`, so a
+/// backslashed path writes `init.mp4` to the cwd and every fragment then 404s.
+fn ff_path(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    if cfg!(windows) {
+        s.replace('\\', "/")
+    } else {
+        s.into_owned()
+    }
+}
+
 fn base_command(name: &str) -> Result<Command, String> {
     let mut cmd = Command::new(tool(name)?);
     // Both -nostdin and a null stdin: ffmpeg otherwise treats the inherited
@@ -691,9 +702,9 @@ fn spawn_window(
     cmd.args(["-f", "hls", "-hls_time", &hls_time, "-hls_playlist_type", "event"]);
     cmd.args(["-hls_flags", "independent_segments+temp_file"]);
     cmd.args(["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"]);
-    cmd.arg("-hls_segment_filename").arg(&segments);
+    cmd.arg("-hls_segment_filename").arg(ff_path(&segments));
     cmd.args(["-start_number", "0"]);
-    cmd.arg(&playlist);
+    cmd.arg(ff_path(&playlist));
 
     // ffmpeg's diagnostics are the only way to tell a codec problem from a
     // network one, and there is no console to read them from in a packaged app.
