@@ -795,30 +795,28 @@ export async function switchCameraDevice(): Promise<void> {
 
 // --- Camera: a plain per-participant toggle, full mesh, no slot involved ---
 
-function mediaStateMessage(): RoomCallMediaStateMessage {
+function mediaStateMessage(call: Session): RoomCallMediaStateMessage {
   return {
     type: "room_call_media_state",
-    roomId: session!.roomId,
-    fromId: session!.self.identityId,
-    camOn: session!.cameraTrack !== null,
+    roomId: call.roomId,
+    fromId: call.self.identityId,
+    camOn: call.cameraTrack !== null,
   };
 }
 
-/** Announces our camera state to the mesh so receivers drop the frozen last
- * frame immediately — WebKit doesn't reliably fire `mute` on remote tracks
- * when our sender replaceTrack(null)s.
- *
- * Repeated on the beacon rather than sent only on change: the datagram is lossy
- * and the receiver deletes the flag whenever it reaps us, so a single lost edge
- * used to leave our tile an avatar until we toggled the camera by hand. */
+/** Announces our camera state so receivers drop the frozen last frame immediately —
+ * WebKit doesn't reliably fire `mute` on remote tracks when our sender
+ * replaceTrack(null)s. Repeated on the beacon rather than sent only on change: the
+ * channel is lossy and the receiver drops the flag whenever it reaps us, so a
+ * single lost edge left our tile an avatar until we toggled the camera by hand. */
 function broadcastMediaState() {
   if (!session) return;
-  broadcast(mediaStateMessage());
+  broadcast(mediaStateMessage(session));
 }
 
 function sendMediaStateTo(remoteId: string) {
   if (!session) return;
-  send(remoteId, mediaStateMessage());
+  send(remoteId, mediaStateMessage(session));
 }
 
 export async function toggleCam() {

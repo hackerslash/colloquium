@@ -69,8 +69,7 @@ export function PresenceRail({ roomId, visible }: { roomId: string | null; visib
                   stream={streams[id] ?? null}
                   label={contactsById[id]?.displayName ?? "Guest"}
                   // Fail open, as RoomCallWindow does: a missing flag means we
-                  // haven't heard yet, not that the camera is off, and treating
-                  // it as off hid live video behind an avatar.
+                  // haven't heard yet, not that the camera is off.
                   hasVideo={hasLiveVideo(streams[id] ?? null) && camOnByParticipant[id] !== false}
                   fit="grid"
                   participantId={id}

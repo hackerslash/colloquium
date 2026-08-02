@@ -41,10 +41,14 @@ function VideoInner({ stream, muted, mirror, label, hasVideo, participantId, qua
     const el = videoRef.current;
     if (!el) return;
     if (el.srcObject !== stream) el.srcObject = stream;
-    // `autoPlay` only fires at resource selection, and WebKit can release the
-    // decoder for an element hidden behind display:none or a hidden ancestor,
-    // leaving it paused when it comes back.
-    if (stream && hasVideo) void el.play().catch(() => undefined);
+    if (!stream || !hasVideo) return;
+    const play = () => void el.play().catch(() => undefined);
+    play();
+    // Nothing else restarts it: `autoPlay` fires only at resource selection, and
+    // WebKit pauses an element whose decoder it reclaimed while hidden — which the
+    // rail does by toggling an ancestor, never by remounting the tile.
+    el.addEventListener("pause", play);
+    return () => el.removeEventListener("pause", play);
   }, [stream, hasVideo]);
 
   // Apply the selected audio output device (speaker/headphone routing).

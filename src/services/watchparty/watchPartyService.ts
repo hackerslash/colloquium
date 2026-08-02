@@ -21,7 +21,9 @@ import {
   projectTargetPositionSec,
   READY_LEAD_SEC,
   RttEstimator,
+  startSupersedes,
   WatchPartyState,
+  type PartyInfo,
   type PeerLead,
 } from "./watchPartySync";
 import * as player from "./watchPartyPlayer";
@@ -106,9 +108,9 @@ function monoNow(): number {
   return performance.now();
 }
 
-/** Unique per party, never derived from the room. A room-derived id made every
- * party in a room indistinguishable from every previous one, so a peer opening
- * its own party silently hijacked the live one instead of being rejected. */
+/** Unique per party, never derived from the room: a room-derived id made every
+ * party indistinguishable from every previous one, so a peer opening its own
+ * silently hijacked the live one instead of being rejected. */
 function newPartyId(): string {
   return `wp_${crypto.randomUUID().replace(/-/g, "")}`;
 }
@@ -243,9 +245,9 @@ function startLoops() {
   session.timers = [t1, t2, t3, t4];
 }
 
-/** The roster is half of every fan-out target set, so without this anyone added
- * to the room mid-party never hears from us — including the heartbeat that would
- * tell them a party is running. */
+/** The roster is half of every fan-out target set, so without this anyone added to
+ * the room mid-party never hears from us — including the heartbeat that would tell
+ * them a party is running. */
 async function refreshMemberIds() {
   const roomId = session?.roomId;
   if (!roomId) return;
@@ -352,14 +354,10 @@ function syncTick() {
   followerTick();
 }
 
-/**
- * Takes over when the controller stops heartbeating. Every peer runs this over
- * the same member list and picks the same winner, so there is nothing to
- * negotiate; the rare disagreement about who is still alive resolves through
- * `applyHandoff`'s smaller-id tie-break at the shared epoch.
- *
- * Returns whether control came to us this tick.
- */
+/** Takes over when the controller stops heartbeating, returning whether control
+ * came to us. Every peer elects from the same member list, so there is nothing to
+ * negotiate; a disagreement about who is still alive resolves through
+ * `applyHandoff`'s smaller-id tie-break at the shared epoch. */
 function electionTick(): boolean {
   if (!session) return false;
   const now = monoNow();
@@ -367,7 +365,12 @@ function electionTick(): boolean {
   // Restarted whoever wins, so a loser doesn't re-run the election every tick
   // while the winner is still finding its feet.
   session.lastControllerStateAt = now;
-  const candidates = gateMembers().map((m) => m.id);
+  // Never the peer we just declared silent: its beacon lease can outlive this
+  // timeout, and letting it win its own replacement costs another full one.
+  const silent = session.reducer.currentControllerId();
+  const candidates = gateMembers()
+    .map((m) => m.id)
+    .filter((id) => id !== silent);
   if (electController(candidates) !== session.self.identityId) return false;
   claimControl();
   return true;
@@ -433,10 +436,9 @@ function followerTick() {
   const now = monoNow();
   if (now < session.holdUntilMs) return;
   if (snap.paused) {
-    // A seek is invisible while paused, so settle up now instead of carrying the
-    // offset into the resume where everyone can see it corrected. On strikes all
-    // the same: acting on the first tick turned one bad snapshot into an instant
-    // jump to the start of the film.
+    // A seek is invisible while paused, so settle up now rather than carry the
+    // offset into the resume. On strikes all the same: acting on the first tick
+    // turned one bad snapshot into a jump to the start of the film.
     if (Math.abs(player.positionSec() - snap.positionSec) <= NUDGE_EXIT_SEC) {
       session.driftStrikes = 0;
       return;
@@ -837,7 +839,7 @@ export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void 
   if (!session || session.roomId !== msg.roomId) return;
 
   // Two parties in one room. `applyStart` keeps the earlier one and every peer
-  // decides identically, but a loser doesn't know it lost until someone says so.
+  // decides identically, but a loser only learns it lost when someone says so.
   if (msg.partyId !== session.partyId) {
     if (!session.reducer.applyStart(msg)) {
       sendStart(msg.fromId);
@@ -854,8 +856,8 @@ export function handleStart(_self: Identity, msg: WatchPartyStartMessage): void 
   adoptParty(msg.partyId, msg.streamUrl);
 }
 
-/** Drops everything derived from the previous party or source, so nothing steers
- * by a position that no longer exists. */
+/** Drops everything derived from the previous party or source, so nothing steers by
+ * a position that no longer exists. */
 function adoptParty(partyId: string, streamUrl: string) {
   if (!session) return;
   session.partyId = partyId;
@@ -875,21 +877,23 @@ const announceSeenAt = new Map<string, number>();
 let announceSweeper: number | null = null;
 
 /** Heartbeats announce as well as starts, so a peer that missed the one-shot
- * start still learns the party exists within a beat. */
-function recordAnnounce(msg: {
-  roomId: string;
-  partyId: string;
-  ownerId: string;
-  streamUrl: string;
-  startedAt: number;
-}) {
-  useWatchPartyStore.getState()._setAnnounced(msg.roomId, {
-    partyId: msg.partyId,
-    ownerId: msg.ownerId,
-    streamUrl: msg.streamUrl,
-    startedAt: msg.startedAt,
+ * start still learns the party exists within a beat.
+ *
+ * Resolved with `startSupersedes` against whichever party we already believe in —
+ * our own session's for preference — else a rival advertises itself over the one
+ * people are watching and anyone pressing Join gets the loser. */
+function recordAnnounce(party: PartyInfo) {
+  const store = useWatchPartyStore.getState();
+  const mine = session?.roomId === party.roomId ? session.reducer.info() : null;
+  const current = mine ?? store.announcedByRoom[party.roomId];
+  if (current && current.partyId !== party.partyId && !startSupersedes(party, current)) return;
+  store._setAnnounced(party.roomId, {
+    partyId: party.partyId,
+    ownerId: party.ownerId,
+    streamUrl: party.streamUrl,
+    startedAt: party.startedAt,
   });
-  announceSeenAt.set(msg.roomId, Date.now());
+  announceSeenAt.set(party.roomId, Date.now());
   if (announceSweeper === null) {
     announceSweeper = window.setInterval(sweepAnnounces, ANNOUNCE_TTL_MS / 3);
   }
@@ -998,6 +1002,13 @@ export function handleSubtitle(_self: Identity, msg: WatchPartySubtitleMessage):
 
 export function handleMember(_self: Identity, msg: WatchPartyMemberMessage): void {
   if (!session || session.roomId !== msg.roomId) return;
+  // A beacon from a rival party in the same room. Counting it would let a peer
+  // watching something else hold our play gate shut and show up in our presence
+  // list; telling it which party won is what actually heals the split.
+  if (msg.partyId !== session.partyId) {
+    if (!msg.leaving) sendStart(msg.fromId);
+    return;
+  }
   const isNew = !session.members.has(msg.fromId);
   if (msg.leaving) session.members.delete(msg.fromId);
   else
@@ -1020,7 +1031,7 @@ export function handleMember(_self: Identity, msg: WatchPartyMemberMessage): voi
 }
 
 export function handlePing(_self: Identity, msg: WatchPartyPingMessage): void {
-  if (!session || session.roomId !== msg.roomId) return;
+  if (!session || session.roomId !== msg.roomId || msg.partyId !== session.partyId) return;
   send(msg.fromId, {
     type: "watch_party_pong",
     roomId: session.roomId,
@@ -1031,7 +1042,10 @@ export function handlePing(_self: Identity, msg: WatchPartyPingMessage): void {
 }
 
 export function handlePong(_self: Identity, msg: WatchPartyPongMessage): void {
-  if (!session || session.roomId !== msg.roomId) return;
+  if (!session || session.roomId !== msg.roomId || msg.partyId !== session.partyId) return;
+  // Only the peer we actually pinged: this feeds the one-way delay the whole
+  // timeline projection is corrected by.
+  if (msg.fromId !== session.reducer.currentControllerId()) return;
   session.rtt.sample(msg.t, monoNow());
 }
 

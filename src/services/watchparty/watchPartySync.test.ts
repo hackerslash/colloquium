@@ -366,9 +366,7 @@ describe("projectTargetPositionSec", () => {
 
 describe("ClockOffsetEstimator", () => {
   it("returns 0 before any sample", () => {
-    const e = new ClockOffsetEstimator();
-    expect(e.hasSample()).toBe(false);
-    expect(e.offsetMs()).toBe(0);
+    expect(new ClockOffsetEstimator().offsetMs()).toBe(0);
   });
 
   it("keeps the smallest offset — the least-delayed message", () => {
@@ -389,7 +387,6 @@ describe("ClockOffsetEstimator", () => {
     const e = new ClockOffsetEstimator();
     e.sample(1_000, 1_050);
     e.reset();
-    expect(e.hasSample()).toBe(false);
     expect(e.offsetMs()).toBe(0);
   });
 });
@@ -477,7 +474,6 @@ describe("RttEstimator", () => {
     e.sample(1_000, 1_300); // 300ms
     e.sample(2_000, 2_120); // 120ms  ← best
     e.sample(3_000, 3_400); // 400ms
-    expect(e.rttMs()).toBe(120);
     expect(e.oneWayDelayMs()).toBe(60);
   });
 

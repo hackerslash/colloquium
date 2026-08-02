@@ -410,10 +410,9 @@ export type RoomCallBeaconMessage = {
 // `controlEpoch` mirrors the presenter-slot epoch model: hand-off bumps it, and
 // the holder of the highest epoch is authoritative. ---
 
-/** `partyId` is unique per party, not derived from the room: a peer that missed
- * the announce and opens its own gets a distinct id instead of colliding with
- * the live party. Two parties in one room resolve on (`startedAt`, `partyId`),
- * earlier wins. */
+/** `partyId` is unique per party, not derived from the room, so a peer that missed
+ * the announce and opened its own doesn't collide with the live party. Two parties
+ * in one room resolve on (`startedAt`, `partyId`) — earlier wins. */
 export type WatchPartyStartMessage = {
   type: "watch_party_start";
   roomId: string;
@@ -442,9 +441,9 @@ export type WatchPartyStartMessage = {
  * The three track fields are optional: a peer running an older build omits them,
  * and a follower leaves any absent field untouched rather than resetting it.
  *
- * It also carries the party's identity (`streamUrl`, `ownerId`, `startedAt`) so
- * the heartbeat doubles as a re-announce: `watch_party_start` is a one-shot, and
- * anyone who missed it would otherwise open a rival party instead of joining. */
+ * It also carries the party's identity (`streamUrl`, `ownerId`, `startedAt`) so the
+ * heartbeat doubles as a re-announce — `watch_party_start` is a one-shot, and anyone
+ * who missed it would otherwise open a rival party instead of joining. */
 export type WatchPartyStateMessage = {
   type: "watch_party_state";
   roomId: string;
@@ -499,12 +498,10 @@ export type WatchPartySubtitleMessage = {
 /** Beacon carrying a peer's playback readiness, renewed on a lease.
  *
  * `ready` is "not stalled right now"; `primed` is "holding enough footage for the
- * party to start", which the peer decides itself because only it knows which
- * pipeline it ended up on — a remux measures against what ffmpeg has written,
- * while direct play can only report what the webview chose to buffer. One
- * controller-side threshold would stall on a peer that could never reach it.
- * `needSec` is the threshold this peer measures itself against, so the priming
- * UI shows its real target rather than assuming the remux one.
+ * party to start", which the peer decides itself against its own `needSec` because
+ * only it knows which pipeline it ended up on — a remux measures what ffmpeg has
+ * written, direct play only what the webview chose to buffer. One controller-side
+ * threshold would stall on a peer that could never reach it.
  *
  * No lease on the wire: expiry is stamped from the receiver's clock, so a skewed
  * sender can neither become immortal in the play gate nor flap in and out. */
