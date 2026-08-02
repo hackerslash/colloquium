@@ -7,6 +7,70 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## 0.6.0
+
+### Added
+
+- **The party outlives its host.** If whoever is controlling playback goes quiet
+  — closed the app, lost their connection — the remaining viewers elect a new
+  controller among themselves and the film carries on. No server decides this:
+  every peer runs the same election over the same member list and reaches the
+  same answer, so there is nothing to negotiate.
+- Who is speaking is now shown on the watch party's presence row, so you can
+  follow the conversation without opening the call window.
+
+### Changed
+
+- A room stops offering "Join watch party" for a party whose host vanished
+  without ending it. Announcements now decay unless something renews them.
+- The priming overlay counts each viewer against its own target. A peer playing
+  the file directly needs about ten seconds of lead; one remuxing needs a
+  minute. Both used to be reported against the minute.
+- Party membership leases are stamped from the clock of the machine receiving
+  them rather than the one sending them, so a peer whose clock runs fast can no
+  longer hold the play gate open indefinitely.
+- **Watch party peers must both be on 0.6.0.** The control messages changed
+  shape, and a 0.5.1 peer in the party will block the start gate for everyone.
+
+### Fixed
+
+- A viewer who joined a room while a party was already running, and missed the
+  announcement, opened a party of its own that silently took over the live one —
+  party ids were derived from the room, so every party in a room was
+  indistinguishable from every other. Ids are now unique per party, and when two
+  do exist in one room every peer resolves it identically: the earlier start
+  wins, and the loser is told which party to join.
+- Any participant could end the watch party for everyone. Only the host or the
+  peer currently controlling playback can now.
+- Watch party control messages were attributed to whoever they claimed to be
+  from rather than to the authenticated peer that sent them. Taking control,
+  changing the film and ending the party could all be spoofed by any contact who
+  could open a connection.
+- A rival party's announcement could overwrite the live one, so pressing "Join
+  watch party" put you into a party nobody was watching.
+- A peer watching something else in the same room counted toward the readiness
+  gate, holding the start back for everyone.
+- The election could pick the very peer it had just declared silent, costing
+  another ten seconds before anyone actually took over.
+- Pong replies from any peer, not just the one being timed, skewed the clock
+  estimate that keeps every follower on the same frame.
+- A follower acted on the first out-of-range position it saw while paused, which
+  could jump the whole party to the start of the film.
+- Pointing the party at a different file left followers steering by a position
+  measured in the previous one.
+- Unsolicited subtitle messages added duplicate tracks to the menu.
+- A single lost camera-state message left a participant's tile showing an avatar
+  until they toggled their camera by hand. Camera state now travels with the
+  presence reply and repeats on the beacon, so a newcomer or a reconnected peer
+  learns it without waiting.
+- The watch party's camera rail hid live video behind an avatar whenever it had
+  not yet heard a participant's camera state.
+- A camera tile hidden behind the rail stayed frozen when the rail came back, on
+  macOS and iOS webviews that reclaim the decoder of a hidden video element.
+- Starting and joining a party at the same moment could leave the losing attempt
+  to finish and install a session that had already been torn down.
+- Anyone added to a room while a party was running never heard from it at all.
+
 ## 0.5.1
 
 ### Fixed
