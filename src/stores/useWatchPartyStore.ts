@@ -14,8 +14,16 @@ export type WatchPartyMember = {
   ready: boolean;
   primed: boolean;
   bufferedSec: number;
+  /** This peer's own priming target: a direct-play peer needs far less than a
+   * remuxing one, so one shared threshold misreports both. */
+  needSec: number;
 };
-export type AnnouncedParty = { partyId: string; ownerId: string; streamUrl: string };
+export type AnnouncedParty = {
+  partyId: string;
+  ownerId: string;
+  streamUrl: string;
+  startedAt: number;
+};
 
 type PlaybackSlice = {
   paused: boolean;
@@ -212,9 +220,23 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
   _setWaitingFor: (waitingFor) => set({ waitingFor }),
   _setError: (error) => set({ error }),
   _setAnnounced: (roomId, party) =>
-    set((s) => ({ announcedByRoom: { ...s.announcedByRoom, [roomId]: party } })),
+    set((s) => {
+      // The controller re-announces on every heartbeat, so the unchanged case is
+      // the common one and must not allocate — every room header subscribes.
+      const prev = s.announcedByRoom[roomId];
+      if (
+        prev &&
+        prev.partyId === party.partyId &&
+        prev.ownerId === party.ownerId &&
+        prev.streamUrl === party.streamUrl
+      ) {
+        return {};
+      }
+      return { announcedByRoom: { ...s.announcedByRoom, [roomId]: party } };
+    }),
   _clearAnnounced: (roomId) =>
     set((s) => {
+      if (!s.announcedByRoom[roomId]) return {};
       const next = { ...s.announcedByRoom };
       delete next[roomId];
       return { announcedByRoom: next };

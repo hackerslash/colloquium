@@ -165,10 +165,15 @@ export const useRoomCallStore = create<RoomCallState>((set) => ({
   _setParticipantQuality: (id, quality) =>
     set((s) => ({ qualityByParticipant: { ...s.qualityByParticipant, [id]: quality } })),
   _setParticipantCamOn: (id, on) =>
-    set((s) => ({
-      camOnByParticipant: { ...s.camOnByParticipant, [id]: on },
-      mediaVersion: s.mediaVersion + 1,
-    })),
+    set((s) => {
+      // Re-asserted on every beacon, so the unchanged case is the common one and
+      // must not bump mediaVersion — every tile subscribes to it.
+      if (s.camOnByParticipant[id] === on) return {};
+      return {
+        camOnByParticipant: { ...s.camOnByParticipant, [id]: on },
+        mediaVersion: s.mediaVersion + 1,
+      };
+    }),
   _setLocalStream: (stream) => set({ localStream: stream }),
   _setMicOn: (on) => set({ micOn: on }),
   _setCamOn: (on) => set({ camOn: on }),

@@ -304,6 +304,9 @@ export type RoomCallPresenceMessage = {
   fromId: string;
   participants: string[];
   slots: PresenterSlotWire[];
+  /** Camera state travels here too, else a newcomer can't tell whether to render
+   * our tile until we happen to toggle it. */
+  camOn: boolean;
 };
 
 /** Slots coordinate SCREEN shares only (cameras are full-mesh and slot-free).
@@ -407,6 +410,9 @@ export type RoomCallBeaconMessage = {
 // `controlEpoch` mirrors the presenter-slot epoch model: hand-off bumps it, and
 // the holder of the highest epoch is authoritative. ---
 
+/** `partyId` is unique per party, not derived from the room, so a peer that missed
+ * the announce and opened its own doesn't collide with the live party. Two parties
+ * in one room resolve on (`startedAt`, `partyId`) — earlier wins. */
 export type WatchPartyStartMessage = {
   type: "watch_party_start";
   roomId: string;
@@ -415,6 +421,9 @@ export type WatchPartyStartMessage = {
   /** The participant who opened the party; the initial controller. */
   ownerId: string;
   startedAt: number;
+  /** Not always the owner — the controller re-announces to newcomers. Checked
+   * against the authenticated peer. */
+  fromId: string;
 };
 
 /** The authoritative playback snapshot. Sent on every controller action and as
@@ -430,7 +439,11 @@ export type WatchPartyStartMessage = {
  * `watch_party_subtitle`, so both kinds share one id space.
  *
  * The three track fields are optional: a peer running an older build omits them,
- * and a follower leaves any absent field untouched rather than resetting it. */
+ * and a follower leaves any absent field untouched rather than resetting it.
+ *
+ * It also carries the party's identity (`streamUrl`, `ownerId`, `startedAt`) so the
+ * heartbeat doubles as a re-announce — `watch_party_start` is a one-shot, and anyone
+ * who missed it would otherwise open a rival party instead of joining. */
 export type WatchPartyStateMessage = {
   type: "watch_party_state";
   roomId: string;
@@ -445,6 +458,10 @@ export type WatchPartyStateMessage = {
   subTrackId?: number | "no";
   subDelaySec?: number;
   controllerClockMs: number;
+  fromId: string;
+  streamUrl: string;
+  ownerId: string;
+  startedAt: number;
 };
 
 /** Transfers control authority. The named `toId` becomes the controller at
@@ -471,6 +488,7 @@ export type WatchPartySubtitleMessage = {
   type: "watch_party_subtitle";
   roomId: string;
   partyId: string;
+  fromId: string;
   name: string;
   contentB64: string;
   subId?: number;
@@ -480,20 +498,22 @@ export type WatchPartySubtitleMessage = {
 /** Beacon carrying a peer's playback readiness, renewed on a lease.
  *
  * `ready` is "not stalled right now"; `primed` is "holding enough footage for the
- * party to start", which the peer decides itself because only it knows which
- * pipeline it ended up on — a remux measures against what ffmpeg has written,
- * while direct play can only report what the webview chose to buffer. One
- * controller-side threshold would stall on a peer that could never reach it.
- * Optional: an older build omits it. */
+ * party to start", which the peer decides itself against its own `needSec` because
+ * only it knows which pipeline it ended up on — a remux measures what ffmpeg has
+ * written, direct play only what the webview chose to buffer. One controller-side
+ * threshold would stall on a peer that could never reach it.
+ *
+ * No lease on the wire: expiry is stamped from the receiver's clock, so a skewed
+ * sender can neither become immortal in the play gate nor flap in and out. */
 export type WatchPartyMemberMessage = {
   type: "watch_party_member";
   roomId: string;
   partyId: string;
   fromId: string;
   ready: boolean;
-  primed?: boolean;
+  primed: boolean;
   bufferedSec: number;
-  leaseExpiresAt: number;
+  needSec: number;
   leaving: boolean;
 };
 

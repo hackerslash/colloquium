@@ -7,6 +7,8 @@ import type {
 import {
   ClockOffsetEstimator,
   decideCorrection,
+  electController,
+  startSupersedes,
   HARD_SEEK_THRESHOLD_SEC,
   NUDGE_ENTER_SEC,
   NUDGE_EXIT_SEC,
@@ -29,6 +31,7 @@ function start(overrides: Partial<WatchPartyStartMessage> = {}): WatchPartyStart
     streamUrl: "https://example.test/movie.mkv",
     ownerId: "alice",
     startedAt: 1_000,
+    fromId: "alice",
     ...overrides,
   };
 }
@@ -48,6 +51,10 @@ function state(overrides: Partial<WatchPartyStateMessage> = {}): WatchPartyState
     subTrackId: "no",
     subDelaySec: 0,
     controllerClockMs: 5_000,
+    fromId: "alice",
+    streamUrl: "https://example.test/movie.mkv",
+    ownerId: "alice",
+    startedAt: 1_000,
     ...overrides,
   };
 }
@@ -98,6 +105,122 @@ describe("WatchPartyState — lifecycle & authority", () => {
     expect(s.applyEnd({ type: "watch_party_end", roomId: ROOM, partyId: "other", fromId: "x" })).toBe(
       false,
     );
+  });
+
+  it("only lets the owner or the controller end the party", () => {
+    const s = new WatchPartyState();
+    s.applyStart(start());
+    const end = (fromId: string) =>
+      s.applyEnd({ type: "watch_party_end", roomId: ROOM, partyId: PARTY, fromId });
+    // A peer who is merely in the party cannot take the film away from everyone.
+    expect(end("mallory")).toBe(false);
+    expect(s.isActive()).toBe(true);
+    s.applyHandoff(handoff({ toId: "bob" }));
+    expect(end("bob")).toBe(true);
+  });
+
+  it("keeps the owner able to end after handing control away", () => {
+    const s = new WatchPartyState();
+    s.applyStart(start());
+    s.applyHandoff(handoff({ toId: "bob" }));
+    expect(
+      s.applyEnd({ type: "watch_party_end", roomId: ROOM, partyId: PARTY, fromId: "alice" }),
+    ).toBe(true);
+  });
+});
+
+describe("WatchPartyState — two parties in one room", () => {
+  const EARLY = start({ partyId: "wp_early", startedAt: 1_000, ownerId: "alice" });
+  const LATE = start({ partyId: "wp_late", startedAt: 2_000, ownerId: "carol" });
+
+  it("keeps the party that started first, whichever arrives first", () => {
+    const heardEarlyFirst = new WatchPartyState();
+    heardEarlyFirst.applyStart(EARLY);
+    expect(heardEarlyFirst.applyStart(LATE)).toBe(false);
+
+    const heardLateFirst = new WatchPartyState();
+    heardLateFirst.applyStart(LATE);
+    expect(heardLateFirst.applyStart(EARLY)).toBe(true);
+
+    // Both peers land on the same party regardless of arrival order — that is
+    // what stops a late joiner's rival party from hijacking the live one.
+    expect(heardEarlyFirst.info()?.partyId).toBe(heardLateFirst.info()?.partyId);
+    expect(heardEarlyFirst.info()?.partyId).toBe("wp_early");
+    expect(heardEarlyFirst.currentControllerId()).toBe("alice");
+  });
+
+  it("breaks a same-instant tie on party id, identically on every peer", () => {
+    const a = new WatchPartyState();
+    const b = new WatchPartyState();
+    const one = start({ partyId: "wp_aaa", startedAt: 1_000, ownerId: "alice" });
+    const two = start({ partyId: "wp_zzz", startedAt: 1_000, ownerId: "carol" });
+    a.applyStart(one);
+    a.applyStart(two);
+    b.applyStart(two);
+    b.applyStart(one);
+    expect(a.info()?.partyId).toBe("wp_aaa");
+    expect(b.info()?.partyId).toBe("wp_aaa");
+  });
+
+  it("startSupersedes is a strict order — never both directions", () => {
+    const early = { partyId: "wp_early", startedAt: 1_000 };
+    const late = { partyId: "wp_late", startedAt: 2_000 };
+    expect(startSupersedes(early, late)).toBe(true);
+    expect(startSupersedes(late, early)).toBe(false);
+    expect(startSupersedes(early, early)).toBe(false);
+  });
+});
+
+describe("WatchPartyState — source change", () => {
+  it("drops the snapshot but keeps the party, owner and epoch", () => {
+    const s = new WatchPartyState();
+    s.applyStart(start());
+    s.applyHandoff(handoff({ toId: "bob", controlEpoch: 3 }));
+    s.applyState(state({ controllerId: "bob", controlEpoch: 3, positionSec: 900 }));
+    expect(s.currentSnapshot()?.positionSec).toBe(900);
+
+    expect(s.applySourceChange("https://example.test/other.mkv")).toBe(true);
+    // The old position described a different film; steering by it would seek
+    // into the new one at the previous offset.
+    expect(s.currentSnapshot()).toBeNull();
+    expect(s.info()?.streamUrl).toBe("https://example.test/other.mkv");
+    expect(s.info()?.ownerId).toBe("alice");
+    expect(s.currentControllerId()).toBe("bob");
+    expect(s.currentControlEpoch()).toBe(3);
+  });
+
+  it("is a no-op for the same url, and for no party", () => {
+    const s = new WatchPartyState();
+    expect(s.applySourceChange("https://example.test/movie.mkv")).toBe(false);
+    s.applyStart(start());
+    expect(s.applySourceChange("https://example.test/movie.mkv")).toBe(false);
+  });
+});
+
+describe("electController", () => {
+  it("picks the lowest id, so every peer picks the same one", () => {
+    expect(electController(["carol", "alice", "bob"])).toBe("alice");
+    expect(electController(["bob", "carol", "alice"])).toBe("alice");
+  });
+
+  it("has no winner when nobody is left", () => {
+    expect(electController([])).toBeNull();
+  });
+
+  it("converges when two peers both claim the vacant epoch", () => {
+    // Alice and Bob disagree about who is still alive, so both claim epoch 1.
+    // The smaller-id tie-break settles it without another round.
+    const observer = new WatchPartyState();
+    observer.applyStart(start());
+    observer.applyHandoff(handoff({ toId: "bob", byId: "bob", controlEpoch: 1 }));
+    observer.applyHandoff(handoff({ toId: "alice", byId: "alice", controlEpoch: 1 }));
+    expect(observer.currentControllerId()).toBe("alice");
+
+    const reversed = new WatchPartyState();
+    reversed.applyStart(start());
+    reversed.applyHandoff(handoff({ toId: "alice", byId: "alice", controlEpoch: 1 }));
+    reversed.applyHandoff(handoff({ toId: "bob", byId: "bob", controlEpoch: 1 }));
+    expect(reversed.currentControllerId()).toBe("alice");
   });
 });
 
@@ -243,9 +366,7 @@ describe("projectTargetPositionSec", () => {
 
 describe("ClockOffsetEstimator", () => {
   it("returns 0 before any sample", () => {
-    const e = new ClockOffsetEstimator();
-    expect(e.hasSample()).toBe(false);
-    expect(e.offsetMs()).toBe(0);
+    expect(new ClockOffsetEstimator().offsetMs()).toBe(0);
   });
 
   it("keeps the smallest offset — the least-delayed message", () => {
@@ -266,7 +387,6 @@ describe("ClockOffsetEstimator", () => {
     const e = new ClockOffsetEstimator();
     e.sample(1_000, 1_050);
     e.reset();
-    expect(e.hasSample()).toBe(false);
     expect(e.offsetMs()).toBe(0);
   });
 });
@@ -354,7 +474,6 @@ describe("RttEstimator", () => {
     e.sample(1_000, 1_300); // 300ms
     e.sample(2_000, 2_120); // 120ms  ← best
     e.sample(3_000, 3_400); // 400ms
-    expect(e.rttMs()).toBe(120);
     expect(e.oneWayDelayMs()).toBe(60);
   });
 

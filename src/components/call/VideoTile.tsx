@@ -39,8 +39,17 @@ function VideoInner({ stream, muted, mirror, label, hasVideo, participantId, qua
 
   useEffect(() => {
     const el = videoRef.current;
-    if (el && el.srcObject !== stream) el.srcObject = stream;
-  }, [stream]);
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream;
+    if (!stream || !hasVideo) return;
+    const play = () => void el.play().catch(() => undefined);
+    play();
+    // Nothing else restarts it: `autoPlay` fires only at resource selection, and
+    // WebKit pauses an element whose decoder it reclaimed while hidden — which the
+    // rail does by toggling an ancestor, never by remounting the tile.
+    el.addEventListener("pause", play);
+    return () => el.removeEventListener("pause", play);
+  }, [stream, hasVideo]);
 
   // Apply the selected audio output device (speaker/headphone routing).
   // setSinkId is only available in Chromium-based browsers; guard before calling.

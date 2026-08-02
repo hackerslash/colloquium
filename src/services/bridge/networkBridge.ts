@@ -459,29 +459,31 @@ export function initNetworkBridge(self: Identity): () => void {
       case "slot_release":
         roomCallService.handleSlotRelease(self, msg);
         break;
+      // Attributed to the authenticated peer, not the spoofable wire fromId:
+      // control, the source, and ending the party for everyone hang off it.
       case "watch_party_start":
-        watchPartyService.handleStart(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handleStart(self, msg);
         break;
       case "watch_party_state":
-        watchPartyService.handleState(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handleState(self, msg);
         break;
       case "watch_party_handoff":
-        watchPartyService.handleHandoff(self, msg);
+        if (derivePeerId(msg.byId) === peerId) watchPartyService.handleHandoff(self, msg);
         break;
       case "watch_party_subtitle":
-        watchPartyService.handleSubtitle(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handleSubtitle(self, msg);
         break;
       case "watch_party_member":
-        watchPartyService.handleMember(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handleMember(self, msg);
         break;
       case "watch_party_ping":
-        watchPartyService.handlePing(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handlePing(self, msg);
         break;
       case "watch_party_pong":
-        watchPartyService.handlePong(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handlePong(self, msg);
         break;
       case "watch_party_end":
-        watchPartyService.handleEnd(self, msg);
+        if (derivePeerId(msg.fromId) === peerId) watchPartyService.handleEnd(self, msg);
         break;
     }
   }

@@ -181,16 +181,16 @@ export function positionSec(): number {
  * `primed` is clamped against what is left of the source, so the final minute —
  * where the lead can never reach the target — does not block playback.
  */
-export function readiness(): { leadSec: number; primed: boolean } {
+export function readiness(): { leadSec: number; primed: boolean; needSec: number } {
   const v = htmlVideo;
-  if (!v) return { leadSec: 0, primed: false };
+  if (!v) return { leadSec: 0, primed: false, needSec: READY_LEAD_SEC };
   const leadSec = loadedAhead(v);
   const direct = !plan || plan.container === "direct";
-  if (busy() || (direct && stalled)) return { leadSec, primed: false };
   const remaining =
     sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - positionSec()) : Infinity;
-  const need = Math.min(direct ? DIRECT_PRIME_SEC : READY_LEAD_SEC, remaining);
-  return { leadSec, primed: leadSec >= need };
+  const needSec = Math.min(direct ? DIRECT_PRIME_SEC : READY_LEAD_SEC, remaining);
+  if (busy() || (direct && stalled)) return { leadSec, primed: false, needSec };
+  return { leadSec, primed: leadSec >= needSec, needSec };
 }
 
 export function onPlayerEvent(l: Listener): () => void {
