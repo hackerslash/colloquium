@@ -46,6 +46,17 @@ export async function renameGroupRoom(
   await announceRoom(self, roomId);
 }
 
+/** Sets a room's topic and gossips it. The topic already rides every announce
+ * (and LWW-merges through `upsertGroupRoom`), so this needs no wire change. */
+export async function setRoomTopic(
+  self: Identity,
+  roomId: string,
+  topic: string | null,
+): Promise<void> {
+  await roomRepo.updateRoomTopic(roomId, topic);
+  await announceRoom(self, roomId);
+}
+
 export async function addMembersToGroupRoom(
   self: Identity,
   roomId: string,

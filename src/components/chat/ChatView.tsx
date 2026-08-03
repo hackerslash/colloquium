@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Phone, Video } from "lucide-react";
+import { Bell, BellOff, Download, Phone, Video } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useChatStore } from "../../stores/useChatStore";
@@ -19,6 +19,8 @@ import type { Presence } from "../../types/domain";
 import { toast } from "../../stores/useToastStore";
 import { formatLastSeen } from "../../lib/time";
 import { encodeMentions } from "../../lib/mentions";
+import { buildTranscript, downloadTranscript } from "../../lib/exportTranscript";
+import * as messageRepo from "../../services/db/messageRepo";
 
 const PRESENCE_LABEL: Record<Presence, string> = {
   online: "Online",
@@ -107,6 +109,30 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
     });
   }
 
+  async function handleExport() {
+    if (!roomId || !contact) return;
+    try {
+      // Read from the DB rather than the loaded slice: an export should be the
+      // whole record, independent of what this view happens to hold.
+      const all = await messageRepo.listByRoom(roomId);
+      const now = Date.now();
+      const title = `Conversation with ${contact.displayName}`;
+      downloadTranscript(
+        title,
+        buildTranscript(
+          title,
+          all,
+          (id) => (id === self?.identityId ? (self?.displayName ?? "You") : contact.displayName),
+          now,
+        ),
+        now,
+      );
+    } catch (err) {
+      console.error("Failed to export conversation:", err);
+      toast.error("Export failed", "Couldn't read the conversation.");
+    }
+  }
+
   if (!contact) {
     return (
       <EmptyState icon={UserX} title="Contact not found" />
@@ -134,6 +160,12 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
             active={muted}
             disabled={!roomId}
             onClick={() => roomId && toggleMute(roomId)}
+          />
+          <IconButton
+            icon={Download}
+            label="Export conversation"
+            disabled={!roomId}
+            onClick={() => void handleExport()}
           />
           <IconButton
             icon={Phone}

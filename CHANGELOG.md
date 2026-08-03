@@ -11,6 +11,26 @@ GitHub Release notes.
 
 ### Added
 
+- **Rooms have topics.** The column was always there and always gossiped with
+  every announce; it just had nowhere to be typed. Set one from the space
+  details, and it sits beside the room name in the header.
+- **Export a conversation** to a Markdown file, grouped by day. Deleted messages
+  are kept as a placeholder rather than dropped, so the record doesn't imply a
+  conversation without gaps.
+- **↑ in an empty composer edits your last message**, the way every other chat
+  app does it.
+- **Copy a message's text** from its hover toolbar — copying what the bubble
+  reads as, so mentions and animated emoji don't paste as raw tokens.
+- **A jump-to-latest pill** when you've scrolled away from the newest message,
+  counting what arrived while you were reading back.
+- **Attachment progress.** A 25 MB file takes real seconds to send and the
+  composer used to simply look stuck.
+- **Recently-used emoji** at the top of the picker.
+- **Pause notifications** for 30 minutes, an hour, or eight. The sidebar says so
+  while it's on, and that banner is also how you turn it back off.
+- **Interface scale**, with ⌘+ / ⌘− / ⌘0.
+- **⌘/ lists the keyboard shortcuts.**
+
 - **Attachments catch up.** A file only ever streamed to whoever was online when
   it was sent, so anyone offline received the message with nothing behind it —
   permanently. A missing attachment now offers to fetch itself from the sender,
