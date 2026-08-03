@@ -83,8 +83,10 @@ function mergeById(existing: Message[], fresh: Message[]): Message[] {
 }
 
 /** Keystrokes are far too frequent to write through, so each room's draft is
- * flushed once its typing settles. The trailing edge is enough: the app is only
- * closed by the window going away, and `pagehide` flushes what's still pending. */
+ * flushed once its typing settles. Short enough that the window closing rarely
+ * lands inside it — `pagehide` also kicks whatever is still pending, but that
+ * write is async IPC and a hard quit can outrun it, so the debounce (not the
+ * flush) is what actually keeps drafts safe. */
 const DRAFT_FLUSH_MS = 600;
 const draftFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingDrafts = new Map<string, string>();
@@ -109,8 +111,7 @@ function scheduleDraftFlush(roomId: string, body: string) {
   );
 }
 
-// A draft typed and then immediately quit would otherwise die inside the
-// debounce window — the one case where losing it is most obvious.
+// Best-effort last chance for a draft typed immediately before quitting.
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
     for (const roomId of [...pendingDrafts.keys()]) flushDraft(roomId);
