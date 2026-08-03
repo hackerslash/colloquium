@@ -205,15 +205,31 @@ export async function readVector(roomId: string): Promise<Record<string, number>
   return Object.fromEntries(rows.map((r) => [r.author_id, r.max_seq]));
 }
 
-/** Highest author_seq this device holds for each author in a room — the
- * `have` vector the backfill protocol sends so peers reply with only the gap. */
+/** Highest *contiguous* author_seq this device holds for each author in a room
+ * — the `have` vector the backfill protocol sends so peers reply with only the
+ * gap. Contiguous, not MAX: seqs are dense per (room, author), so a hole means
+ * a message is missing, and a MAX past that hole tells the peer we already
+ * hold it. It would then never resend it — the message is lost for good. A
+ * hole is ordinary, not exotic: a live send lands as soon as its author
+ * reconnects, which can easily beat the sync response carrying the middle. */
+export function contiguousSeqs(
+  pairs: { author_id: string; author_seq: number }[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const { author_id, author_seq } of pairs) {
+    if (author_seq === (out[author_id] ?? 0) + 1) out[author_id] = author_seq;
+  }
+  return out;
+}
+
 export async function highestSeqPerAuthor(roomId: string): Promise<Record<string, number>> {
   const db = await getDb();
-  const rows = await db.select<{ author_id: string; max_seq: number }[]>(
-    "SELECT author_id, MAX(author_seq) AS max_seq FROM messages WHERE room_id = $1 GROUP BY author_id",
+  const rows = await db.select<{ author_id: string; author_seq: number }[]>(
+    `SELECT author_id, author_seq FROM messages WHERE room_id = $1
+      ORDER BY author_id, author_seq`,
     [roomId],
   );
-  return Object.fromEntries(rows.map((r) => [r.author_id, r.max_seq]));
+  return contiguousSeqs(rows);
 }
 
 /** Messages in a room with author_seq strictly greater than the requester's

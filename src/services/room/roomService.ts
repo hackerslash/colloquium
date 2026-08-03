@@ -133,6 +133,11 @@ export async function reannounceAllGroupRooms(self: Identity): Promise<void> {
 }
 
 export async function handleRoomAnnounce(self: Identity, msg: RoomAnnounceMessage): Promise<void> {
+  // Group rooms only. A DM room's id is a pure function of its two members, so
+  // it's publicly derivable — without this, any trusted contact could announce
+  // a "group" carrying our DM room's id and have upsertGroupRoom stamp a name,
+  // topic, and their own membership onto our private conversation's row.
+  if (!msg.room.id.startsWith("grp_")) return;
   // Only materialize rooms we're actually listed in (active or tombstoned —
   // a tombstone for us must be recorded so the room stays hidden).
   const selfEntry = msg.members.find((m) => m.id === self.identityId);

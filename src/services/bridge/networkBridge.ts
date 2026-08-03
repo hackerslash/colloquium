@@ -359,19 +359,28 @@ export function initNetworkBridge(self: Identity): () => void {
         // Edits/tombstones that arrived for messages we already held.
         for (const m of updated) useChatStore.getState().applyMessageUpdate(m);
         await useChatStore.getState().refreshReactions(msg.roomId);
-        const backfillByRoom = new Map<string, number>();
+        const backfilledRooms = new Set<string>();
         for (const m of created) {
           // Ack the author directly (best effort) — the relaying peer isn't
           // necessarily who wrote the message.
           ackMessage(derivePeerId(m.authorId), m.roomId, m.id);
           // Tombstones backfilled as new rows shouldn't inflate unread.
-          if (m.deletedAt) continue;
-          backfillByRoom.set(m.roomId, (backfillByRoom.get(m.roomId) ?? 0) + 1);
+          if (!m.deletedAt) backfilledRooms.add(m.roomId);
         }
-        // Backfilled messages count as unread but don't fire a notification.
-        for (const [roomId, count] of backfillByRoom) markUnreadIfInactive(roomId, count);
-        // A backfilled tombstone can drop a previously-counted unread.
-        if (updated.some((m) => m.deletedAt)) void useRoomStore.getState().loadUnread();
+        // Backfilled messages count as unread (but never notify) — recomputed
+        // from the read cursor, not blind-bumped: a backfill routinely carries
+        // messages older than the cursor (history relayed by a peer who kept
+        // more of it than we did), and counting those shows phantom unread.
+        for (const roomId of backfilledRooms) {
+          const roomStore = useRoomStore.getState();
+          if (roomStore.activeRoomId === roomId && document.hasFocus()) {
+            await roomStore.markRead(roomId);
+          }
+        }
+        // A backfilled tombstone can also drop a previously-counted unread.
+        if (backfilledRooms.size > 0 || updated.some((m) => m.deletedAt)) {
+          await useRoomStore.getState().loadUnread();
+        }
         break;
       }
       case "call_invite":

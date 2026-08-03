@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { toFtsQuery } from "./messageRepo";
+import { contiguousSeqs, toFtsQuery } from "./messageRepo";
+
+describe("contiguousSeqs", () => {
+  const pairs = (author: string, seqs: number[]) =>
+    seqs.map((author_seq) => ({ author_id: author, author_seq }));
+
+  it("reports the full run when there are no gaps", () => {
+    expect(contiguousSeqs(pairs("a", [1, 2, 3]))).toEqual({ a: 3 });
+  });
+
+  it("stops at the first gap so the peer resends the missing middle", () => {
+    expect(contiguousSeqs(pairs("a", [1, 2, 5, 6]))).toEqual({ a: 2 });
+  });
+
+  it("omits an author whose first message is missing", () => {
+    expect(contiguousSeqs(pairs("a", [2, 3]))).toEqual({});
+  });
+
+  it("tracks each author independently", () => {
+    expect(contiguousSeqs([...pairs("a", [1, 2]), ...pairs("b", [1, 3])])).toEqual({ a: 2, b: 1 });
+  });
+
+  it("is empty for a room we hold nothing in", () => {
+    expect(contiguousSeqs([])).toEqual({});
+  });
+});
 
 describe("toFtsQuery", () => {
   it("quotes and prefix-matches a single token", () => {

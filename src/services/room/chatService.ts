@@ -27,6 +27,13 @@ import { tickLocal, tickReceive, type Hlc } from "../../lib/hlc";
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 const CHUNK_SIZE = 16 * 1024;
+/** Chunk count a MAX_FILE_SIZE attachment actually produces, derived the same
+ * way the sender derives it (base64-expand, then divide). The receive gate
+ * must use exactly this: bounding `totalChunks * CHUNK_SIZE * 0.75` against
+ * MAX_FILE_SIZE instead over-counts by up to one whole chunk, which silently
+ * rejected every attachment in the top ~4 KB of the range the Composer
+ * accepts — the message arrived, the file never did. */
+export const MAX_FILE_CHUNKS = Math.ceil((Math.ceil(MAX_FILE_SIZE / 3) * 4) / CHUNK_SIZE);
 /** Drop a partially-received file if no new chunk arrives within this window,
  * so an interrupted transfer doesn't pin its chunks in memory forever. */
 const FILE_ASSEMBLY_TTL_MS = 60_000;
@@ -581,9 +588,9 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
   const now = Date.now();
   sweepStalePartials(now);
 
-  // Reject oversize transfers up front (base64 length ≈ 4/3 × bytes), before
-  // buffering any chunks — a malicious/buggy sender can't exhaust memory.
-  if (msg.totalChunks * CHUNK_SIZE * 0.75 > MAX_FILE_SIZE) return;
+  // Reject oversize transfers up front, before buffering any chunks — a
+  // malicious/buggy sender can't exhaust memory.
+  if (msg.totalChunks > MAX_FILE_CHUNKS) return;
   // The cap above bounds the declared chunk count, but a single chunk can still
   // carry an arbitrarily large payload; bound each chunk to CHUNK_SIZE and
   // reject out-of-range indices (which would otherwise allocate a huge sparse
