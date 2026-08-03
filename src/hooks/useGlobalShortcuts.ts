@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { register, unregister } from "@tauri-apps/plugin-global-shortcut";
-import { useSettingsStore } from "../stores/useSettingsStore";
+import { useSettingsStore, ZOOM_STEP } from "../stores/useSettingsStore";
 import { useCallStore } from "../stores/useCallStore";
 import { useRoomCallStore } from "../stores/useRoomCallStore";
 import * as callService from "../services/call/callService";
@@ -30,9 +30,10 @@ function isTypingTarget(el: EventTarget | null): boolean {
 type Options = {
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  onOpenShortcuts: () => void;
 };
 
-export function useGlobalShortcuts({ onOpenSettings, onOpenSearch }: Options) {
+export function useGlobalShortcuts({ onOpenSettings, onOpenSearch, onOpenShortcuts }: Options) {
   const pushToTalk = useSettingsStore((s) => s.pushToTalk);
 
   // In-app (DOM) shortcuts.
@@ -49,6 +50,20 @@ export function useGlobalShortcuts({ onOpenSettings, onOpenSearch }: Options) {
         onOpenSearch();
         return;
       }
+      if (mod && e.key === "/") {
+        e.preventDefault();
+        onOpenShortcuts();
+        return;
+      }
+      // Interface zoom, the desktop-app convention. Read the current value from
+      // the store rather than closing over it, so held-down repeats compound
+      // instead of all resolving against the same starting scale.
+      if (mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
+        e.preventDefault();
+        const { zoom, setZoom } = useSettingsStore.getState();
+        void setZoom(e.key === "0" ? 1 : e.key === "-" ? zoom - ZOOM_STEP : zoom + ZOOM_STEP);
+        return;
+      }
       // Mute toggle with "m" while in a call and not typing.
       if (!mod && (e.key === "m" || e.key === "M") && anyCallActive() && !isTypingTarget(e.target)) {
         e.preventDefault();
@@ -58,7 +73,7 @@ export function useGlobalShortcuts({ onOpenSettings, onOpenSearch }: Options) {
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onOpenSettings, onOpenSearch]);
+  }, [onOpenSettings, onOpenSearch, onOpenShortcuts]);
 
   // OS-level push-to-talk: hold to unmute, release to mute — works even when
   // the window is unfocused. Registered only while the setting is enabled.

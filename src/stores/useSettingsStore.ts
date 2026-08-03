@@ -53,6 +53,14 @@ type SettingsState = {
   videoInputDeviceId: string | null;
   /** Selected audio output device (speaker/headphones). null = browser default. */
   audioOutputDeviceId: string | null;
+  /** Epoch ms until which notifications and chimes are paused, or null when
+   * they aren't. A timer clears it on expiry so the state never lies. */
+  snoozeUntil: number | null;
+  /** Interface scale, 1 = 100%. Applied as CSS zoom on the root element. */
+  zoom: number;
+  /** Most-recently-picked emoji (newest first), surfaced at the top of the
+   * picker. Holds plain glyphs and `:fx:id:` animated tokens alike. */
+  recentEmoji: string[];
   loaded: boolean;
 
   loadSettings: () => Promise<void>;
@@ -68,7 +76,54 @@ type SettingsState = {
   setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
   setVideoInputDeviceId: (deviceId: string | null) => Promise<void>;
   setAudioOutputDeviceId: (deviceId: string | null) => Promise<void>;
+  /** Pauses notifications for `minutes`, or lifts the pause with null. */
+  setSnooze: (minutes: number | null) => Promise<void>;
+  setZoom: (zoom: number) => Promise<void>;
+  /** Records an emoji as recently used and persists the trimmed list. */
+  noteEmojiUsed: (emoji: string) => void;
 };
+
+export const ZOOM_MIN = 0.8;
+export const ZOOM_MAX = 1.5;
+export const ZOOM_STEP = 0.1;
+const MAX_RECENT_EMOJI = 16;
+
+/** Scales the whole interface. `zoom` (not a font-size bump) so fixed-px
+ * spacing and iconography scale with the text instead of drifting apart. */
+export function applyZoom(zoom: number) {
+  document.documentElement.style.zoom = zoom === 1 ? "" : String(zoom);
+}
+
+export function clampZoom(zoom: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoom * 10) / 10));
+}
+
+/** Whether notifications and chimes are currently paused. Read at the moment
+ * of alerting rather than subscribed to, so an expiry needs no re-render. */
+export function notificationsSnoozed(): boolean {
+  const until = useSettingsStore.getState().snoozeUntil;
+  return until !== null && Date.now() < until;
+}
+
+let snoozeTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Clears `snoozeUntil` the moment it lapses, so the UI stops claiming
+ * notifications are paused without anything having to poll. */
+function armSnoozeExpiry(until: number | null) {
+  if (snoozeTimer) clearTimeout(snoozeTimer);
+  snoozeTimer = null;
+  if (until === null) return;
+  const remaining = until - Date.now();
+  if (remaining <= 0) {
+    useSettingsStore.setState({ snoozeUntil: null });
+    return;
+  }
+  snoozeTimer = setTimeout(() => {
+    snoozeTimer = null;
+    useSettingsStore.setState({ snoozeUntil: null });
+    void settingsRepo.set("snoozeUntil", null).catch(() => {});
+  }, remaining);
+}
 
 function systemPrefersDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -132,6 +187,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   audioInputDeviceId: null,
   videoInputDeviceId: null,
   audioOutputDeviceId: null,
+  snoozeUntil: null,
+  zoom: 1,
+  recentEmoji: [],
   loaded: false,
 
   loadSettings: async () => {
@@ -148,9 +206,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
     const videoInputDeviceId = (all.videoInputDeviceId as string | null) ?? null;
     const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
+    // A snooze that lapsed while the app was closed is simply over.
+    const storedSnooze = (all.snoozeUntil as number | null) ?? null;
+    const snoozeUntil = storedSnooze !== null && storedSnooze > Date.now() ? storedSnooze : null;
+    const zoom = clampZoom((all.zoom as number) ?? 1);
+    const recentEmoji = Array.isArray(all.recentEmoji)
+      ? (all.recentEmoji as string[]).filter((e) => typeof e === "string").slice(0, MAX_RECENT_EMOJI)
+      : [];
     applyTheme(theme);
     applyAccent(accent);
+    applyZoom(zoom);
+    armSnoozeExpiry(snoozeUntil);
     set({
+      snoozeUntil,
+      zoom,
+      recentEmoji,
       theme,
       accent,
       pushToTalk,
@@ -335,6 +405,49 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ audioOutputDeviceId: previous });
       toast.error("Setting not saved", "Please try again.");
     }
+  },
+
+  setSnooze: async (minutes) => {
+    const previous = get().snoozeUntil;
+    const until = minutes === null ? null : Date.now() + minutes * 60_000;
+    set({ snoozeUntil: until });
+    armSnoozeExpiry(until);
+    try {
+      await settingsRepo.set("snoozeUntil", until);
+    } catch (err) {
+      console.error("Failed to save notification snooze:", err);
+      set({ snoozeUntil: previous });
+      armSnoozeExpiry(previous);
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setZoom: async (zoom) => {
+    const previous = get().zoom;
+    const next = clampZoom(zoom);
+    if (next === previous) return;
+    applyZoom(next);
+    set({ zoom: next });
+    try {
+      await settingsRepo.set("zoom", next);
+    } catch (err) {
+      console.error("Failed to save zoom setting:", err);
+      applyZoom(previous);
+      set({ zoom: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  noteEmojiUsed: (emoji) => {
+    const next = [emoji, ...get().recentEmoji.filter((e) => e !== emoji)].slice(
+      0,
+      MAX_RECENT_EMOJI,
+    );
+    set({ recentEmoji: next });
+    // Fire-and-forget: an unpersisted recents list is not worth a toast.
+    void settingsRepo
+      .set("recentEmoji", next)
+      .catch((err) => console.error("failed to persist recent emoji", err));
   },
 }));
 

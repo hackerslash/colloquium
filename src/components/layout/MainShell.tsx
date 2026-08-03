@@ -15,6 +15,7 @@ import { RoomCallWindow } from "../call/RoomCallWindow";
 import { WatchPartyWindow } from "../watchparty/WatchPartyWindow";
 import { SettingsModal } from "../settings/SettingsModal";
 import { SearchModal } from "../search/SearchModal";
+import { ShortcutsModal } from "../ui/ShortcutsModal";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
 let bridgeStarted = false;
@@ -38,11 +39,13 @@ export function MainShell() {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<{ key: string; messageId: string } | null>(null);
 
   useGlobalShortcuts({
     onOpenSettings: () => setSettingsOpen(true),
     onOpenSearch: () => setSearchOpen(true),
+    onOpenShortcuts: () => setShortcutsOpen((v) => !v),
   });
 
   function selectionForRoom(roomId: string): Selection | null {
@@ -137,6 +140,7 @@ export function MainShell() {
           setJumpTarget(messageId ? { key: selectionKey(sel), messageId } : null);
         }}
       />
+      <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CallOverlay />
       <RoomCallWindow />
       <WatchPartyWindow />

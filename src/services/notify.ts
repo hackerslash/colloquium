@@ -5,7 +5,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { toast } from "../stores/useToastStore";
-import { useSettingsStore } from "../stores/useSettingsStore";
+import { notificationsSnoozed, useSettingsStore } from "../stores/useSettingsStore";
 
 // Only the OS *prompt* is one-shot (re-asking on every call would be
 // obnoxious); actual grant state is re-checked every time so a permission the
@@ -37,6 +37,7 @@ async function ensurePermission(): Promise<boolean> {
 export async function notifyIfUnfocused(title: string, body: string): Promise<boolean> {
   try {
     if (!useSettingsStore.getState().desktopNotifications) return false;
+    if (notificationsSnoozed()) return false;
     if (await getCurrentWindow().isFocused()) return false;
     if (!(await ensurePermission())) return false;
     sendNotification({ title, body });

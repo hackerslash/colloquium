@@ -1,4 +1,4 @@
-import { useSettingsStore } from "../stores/useSettingsStore";
+import { notificationsSnoozed, useSettingsStore } from "../stores/useSettingsStore";
 
 let audioCtx: AudioContext | null = null;
 
@@ -15,6 +15,7 @@ function getCtx(): AudioContext {
  * unsupported AudioContext should never break message handling. */
 export function playMessageSound(): void {
   if (!useSettingsStore.getState().notificationSounds) return;
+  if (notificationsSnoozed()) return;
   try {
     const ctx = getCtx();
     if (ctx.state === "suspended") void ctx.resume().catch(() => {});

@@ -6,7 +6,9 @@ import {
   animatedEmojiToken,
   getAnimatedEmojiPoster,
   resolveAnimatedEmojiUrl,
+  resolveEmoji,
 } from "../../lib/animatedEmoji";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 
 type EmojiCategory = {
   id: string;
@@ -253,6 +255,15 @@ export function EmojiPicker({
   const [activeCategory, setActiveCategory] = useState<string>("smileys");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const popoverRef = useRef<HTMLDivElement>(null);
+  const recentEmoji = useSettingsStore((s) => s.recentEmoji);
+  const noteEmojiUsed = useSettingsStore((s) => s.noteEmojiUsed);
+
+  // Recording lives here rather than at each call site, so the composer and the
+  // reaction picker both feed the same list without repeating themselves.
+  function select(emoji: string) {
+    noteEmojiUsed(emoji);
+    onSelectEmoji(emoji);
+  }
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -352,6 +363,33 @@ export function EmojiPicker({
 
       {/* Emoji Grid */}
       <div className="flex-1 overflow-y-auto p-3 scrollbar-thin scrollbar-thumb-border">
+        {!searchQuery && recentEmoji.length > 0 && (
+          <div className="mb-3 border-b border-border/40 pb-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+              Recently used
+            </p>
+            <div className="grid grid-cols-8 gap-1.5 text-xl">
+              {recentEmoji.map((raw) => {
+                const resolved = resolveEmoji(raw);
+                return (
+                  <button
+                    key={raw}
+                    type="button"
+                    title={resolved.kind === "animated" ? resolved.name : raw}
+                    onClick={() => select(raw)}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
+                  >
+                    {resolved.kind === "animated" ? (
+                      <img src={resolved.url} alt={resolved.name} className="h-7 w-7" />
+                    ) : (
+                      <span>{resolved.glyph}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
         {!searchQuery && (
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
             {activeCategory === ANIMATED_TAB_ID
@@ -365,7 +403,7 @@ export function EmojiPicker({
               <button
                 key={`glyph-${hit.glyph}-${idx}`}
                 type="button"
-                onClick={() => onSelectEmoji(hit.glyph)}
+                onClick={() => select(hit.glyph)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
               >
                 <span>{hit.glyph}</span>
@@ -375,7 +413,7 @@ export function EmojiPicker({
                 key={`animated-${hit.id}`}
                 id={hit.id}
                 name={hit.name}
-                onSelect={() => onSelectEmoji(animatedEmojiToken(hit.id))}
+                onSelect={() => select(animatedEmojiToken(hit.id))}
               />
             ),
           )}
