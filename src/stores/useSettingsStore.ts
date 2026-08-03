@@ -89,9 +89,15 @@ const MAX_RECENT_EMOJI = 16;
  * window.innerWidth stay in the same coordinate space — popover placement math
  * reads both. */
 function applyZoom(zoom: number) {
-  void getCurrentWebview()
-    .setZoom(zoom)
-    .catch((err) => console.warn("failed to apply zoom", err));
+  // Never throws: loadSettings calls this before committing state, so a failure
+  // here must not abort the rest of the boot.
+  try {
+    void getCurrentWebview()
+      .setZoom(zoom)
+      .catch((err) => console.warn("failed to apply zoom", err));
+  } catch (err) {
+    console.warn("failed to apply zoom", err);
+  }
 }
 
 function clampZoom(zoom: number): number {
