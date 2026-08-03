@@ -145,6 +145,7 @@ async function sendFileChunks(
   recipients: string[],
   file: { id: string; name: string; type: string },
   bytes: Uint8Array,
+  onProgress?: (sent: number, total: number) => void,
 ): Promise<void> {
   const base64Data = bytesToBase64(bytes);
   // max(1): a 0-byte file still needs one (empty) terminal chunk, otherwise
@@ -166,9 +167,11 @@ async function sendFileChunks(
     // Yield to the event loop every 10 chunks to allow WebRTC buffers to drain
     // and prevent the UI thread from freezing.
     if (i % 10 === 0) {
+      onProgress?.(i + 1, totalChunks);
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
   }
+  onProgress?.(totalChunks, totalChunks);
 }
 
 /** Asks a message's author to re-send an attachment whose bytes we never got.
@@ -224,6 +227,7 @@ export async function sendMessage(
   attachment?: { id: string; name: string; size: number; type: string },
   fileBuffer?: Uint8Array,
   replyToId?: string | null,
+  onProgress?: (sent: number, total: number) => void,
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));
@@ -267,7 +271,7 @@ export async function sendMessage(
 
   // If there's a file, chunk and send it BEFORE the message so it's ready when the message arrives
   if (attachment && fileBuffer) {
-    await sendFileChunks(recipients, attachment, fileBuffer);
+    await sendFileChunks(recipients, attachment, fileBuffer, onProgress);
   }
 
   const delivered = broadcastToRoomMembers(recipients, payload);

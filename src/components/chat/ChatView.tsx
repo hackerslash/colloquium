@@ -79,6 +79,8 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   const replyingTo = useChatStore((s) => (roomId ? s.replyingToByRoom[roomId] : null)) ?? null;
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const editing = useChatStore((s) => (roomId ? s.editingByRoom[roomId] : null)) ?? null;
+  const beginEditLast = useChatStore((s) => s.beginEditLast);
+  const upload = useChatStore((s) => (roomId ? s.uploadByRoom[roomId] : undefined)) ?? null;
 
   // Re-render once a minute while offline so a "5m ago" label keeps advancing.
   const [, setTick] = useState(0);
@@ -173,6 +175,8 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
         onCancelReply={() => roomId && setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => roomId && cancelEdit(roomId)}
+        onEditLast={() => roomId && beginEditLast(roomId)}
+        upload={upload}
         onChange={(v) => {
           if (!roomId) return;
           setDraft(roomId, v);

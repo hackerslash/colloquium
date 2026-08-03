@@ -20,6 +20,10 @@ type ComposerProps = {
   onCancelEdit?: () => void;
   /** Members mentionable in this room (excludes self). Enables @-autocomplete. */
   mentionCandidates?: MentionCandidate[];
+  /** Invoked on ↑ in an empty composer — edits the last message you sent. */
+  onEditLast?: () => void;
+  /** In-flight attachment upload for this room, shown as a progress banner. */
+  upload?: { name: string; pct: number } | null;
 };
 
 const MAX_MENTION_MATCHES = 8;
@@ -43,7 +47,19 @@ export type ComposerHandle = {
 };
 
 export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Composer(
-  { value, placeholder, onChange, onSend, replyingTo, onCancelReply, editing, onCancelEdit, mentionCandidates },
+  {
+    value,
+    placeholder,
+    onChange,
+    onSend,
+    replyingTo,
+    onCancelReply,
+    editing,
+    onCancelEdit,
+    mentionCandidates,
+    onEditLast,
+    upload,
+  },
   ref,
 ) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -159,6 +175,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         setMentionQuery(null);
         return;
       }
+    }
+    // ↑ on an empty composer edits your last message. Guarded on empty so it
+    // never steals caret movement from someone editing what they've typed.
+    if (e.key === "ArrowUp" && !value && !selectedFile && !editing && onEditLast) {
+      e.preventDefault();
+      onEditLast();
+      return;
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -281,6 +304,40 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             >
               <X size={14} />
             </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Upload Progress — a 25 MB attachment takes real seconds to chunk out,
+          and without this the composer just looks stuck. */}
+      <AnimatePresence>
+        {upload && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="mb-2.5 flex items-center gap-3 rounded-xl bg-bg-elevated px-4 py-2 text-sm shadow-md border border-border/60"
+          >
+            <Paperclip size={16} className="shrink-0 text-accent" />
+            <span className="min-w-0 max-w-[40%] truncate text-xs text-text-secondary">
+              {upload.name}
+            </span>
+            <div
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary"
+              role="progressbar"
+              aria-label="Sending attachment"
+              aria-valuenow={upload.pct}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
+              <div
+                className="h-full rounded-full bg-accent transition-[width] duration-150"
+                style={{ width: `${upload.pct}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-xs font-medium tabular-nums text-text-muted">
+              {upload.pct}%
+            </span>
           </motion.div>
         )}
       </AnimatePresence>

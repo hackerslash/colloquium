@@ -22,6 +22,9 @@ type ChatState = {
   /** The draft stashed when an edit began, restored on cancel/commit so an
    * in-progress message survives the edit detour. */
   stashedDraftByRoom: Record<string, string>;
+  /** In-flight attachment upload per room, so the composer can show progress
+   * instead of appearing to hang while a large file chunks out. */
+  uploadByRoom: Record<string, { name: string; pct: number }>;
 
   loadMessages: (roomId: string) => Promise<void>;
   /** Restores drafts persisted by a previous session. Call once at boot. */
@@ -32,6 +35,9 @@ type ChatState = {
   /** Enters edit mode for a message: stashes the current draft and seeds the
    * composer with the message body. */
   beginEdit: (roomId: string, message: Message) => void;
+  /** Enters edit mode on the most recent message the local user can still
+   * edit. Bound to ↑ in an empty composer; a no-op when there's nothing. */
+  beginEditLast: (roomId: string) => void;
   /** Leaves edit mode, restoring the stashed draft. */
   cancelEdit: (roomId: string) => void;
   /** Edits one of the local user's messages: re-signs, persists, broadcasts. */
@@ -131,6 +137,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   replyingToByRoom: {},
   editingByRoom: {},
   stashedDraftByRoom: {},
+  uploadByRoom: {},
 
   loadMessages: async (roomId) => {
     const [messages, reactions] = await Promise.all([
@@ -171,16 +178,34 @@ export const useChatStore = create<ChatState>((set, get) => ({
       attachment = { id, name: file.name, size: file.size, type: file.type };
     }
 
-    const message = await chatService.sendMessage(
-      self,
-      roomId,
-      memberIds,
-      trimmed,
-      Date.now(),
-      attachment,
-      fileBuffer,
-      get().replyingToByRoom[roomId]?.id ?? null
-    );
+    const setUpload = (upload: { name: string; pct: number } | null) =>
+      set((state) => {
+        const next = { ...state.uploadByRoom };
+        if (upload) next[roomId] = upload;
+        else delete next[roomId];
+        return { uploadByRoom: next };
+      });
+
+    let message: Message;
+    try {
+      message = await chatService.sendMessage(
+        self,
+        roomId,
+        memberIds,
+        trimmed,
+        Date.now(),
+        attachment,
+        fileBuffer,
+        get().replyingToByRoom[roomId]?.id ?? null,
+        attachment
+          ? (sent, total) =>
+              setUpload({ name: attachment.name, pct: Math.round((sent / total) * 100) })
+          : undefined,
+      );
+    } finally {
+      // Also on failure: a stuck progress bar reads as "still sending".
+      setUpload(null);
+    }
     scheduleDraftFlush(roomId, "");
     set((state) => ({
       messagesByRoom: {
@@ -222,6 +247,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
       stashedDraftByRoom: { ...state.stashedDraftByRoom, [roomId]: state.draftByRoom[roomId] ?? "" },
       draftByRoom: { ...state.draftByRoom, [roomId]: seeded },
     }));
+  },
+
+  beginEditLast: (roomId) => {
+    const selfId = useIdentityStore.getState().self?.identityId;
+    const loaded = get().messagesByRoom[roomId];
+    if (!selfId || !loaded) return;
+    // Same eligibility the hover Edit button enforces: our own, still text, not
+    // tombstoned. Scanning back means the newest editable one wins.
+    for (let i = loaded.length - 1; i >= 0; i--) {
+      const m = loaded[i];
+      if (m.authorId === selfId && m.contentType === "text" && !m.deletedAt) {
+        get().beginEdit(roomId, m);
+        return;
+      }
+    }
   },
 
   cancelEdit: (roomId) => {

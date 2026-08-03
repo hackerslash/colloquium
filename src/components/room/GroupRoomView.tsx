@@ -44,6 +44,8 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
   const replyingTo = useChatStore((s) => s.replyingToByRoom[roomId]) ?? null;
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const editing = useChatStore((s) => s.editingByRoom[roomId]) ?? null;
+  const beginEditLast = useChatStore((s) => s.beginEditLast);
+  const upload = useChatStore((s) => s.uploadByRoom[roomId]) ?? null;
   const contactsById = useRosterStore((s) => s.contactsById);
 
   const callRoomId = useRoomCallStore((s) => s.roomId);
@@ -208,6 +210,8 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
         onCancelReply={() => setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => cancelEdit(roomId)}
+        onEditLast={() => beginEditLast(roomId)}
+        upload={upload}
         onChange={(v) => {
           setDraft(roomId, v);
           if (v) notifyTyping(roomId, memberIds);
