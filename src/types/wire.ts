@@ -554,6 +554,16 @@ export type FileChunkMessage = {
   data: string;
 };
 
+/** Asks a message's author to re-send an attachment we never received. The
+ * chunk stream is live-only, so a member who was offline when the message was
+ * sent converges the row via room sync but holds nothing behind it. */
+export type FileRequestMessage = {
+  type: "file_request";
+  roomId: string;
+  messageId: string;
+  fileId: string;
+};
+
 /** Sent to a trusted peer on connect and after a local avatar change, so they
  * can tell whether the copy they hold is current without transferring bytes. */
 export type ProfileAnnounceMessage = {
@@ -577,6 +587,7 @@ export type ColloquiumMessage =
   | AvatarRequestMessage
   | AvatarDataMessage
   | FileChunkMessage
+  | FileRequestMessage
   | InviteConsumeMessage
   | InviteAckMessage
   | RosterSyncMessage

@@ -7,6 +7,44 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **Attachments catch up.** A file only ever streamed to whoever was online when
+  it was sent, so anyone offline received the message with nothing behind it —
+  permanently. A missing attachment now offers to fetch itself from the sender,
+  and arrives in place. Only the author serves the bytes, only for a file one of
+  their live messages actually references, and only to someone already entitled
+  to that room.
+- **Drafts survive quitting.** Half-written messages lived only in memory, so
+  closing the window discarded them without a word. They are now kept per room
+  and restored on the next launch.
+- **⌘K jumps to people and rooms**, not just messages. Matching conversations
+  appear above the message hits and open on Enter.
+
+### Fixed
+
+- **Messages could be lost for good.** The room-sync `have` vector reported the
+  highest sequence number held per author, which hides a gap — and a peer told
+  we already held a message never resent it. Anything in the hole was gone. The
+  vector now reports the highest *contiguous* sequence. This is not an exotic
+  case: a live send lands the moment its author reconnects, which easily beats
+  the sync response carrying the middle.
+- **Large attachments never arrived.** The receiving side rejected any file in
+  roughly the top 4 KB of the 25 MB range the composer accepts. The message
+  showed up, the file silently did not.
+- **Push-to-talk left the microphone open.** With push-to-talk on, a call
+  transmitted from the moment it connected until the shortcut was pressed for
+  the first time — the exact opposite of what the setting means. Calls now open
+  muted.
+- Rooms no longer show phantom unread after reconnecting. A backfill routinely
+  carries messages older than your read cursor, and each one was counted.
+- A contact can no longer write a name, topic, or their own membership onto one
+  of your direct-message rooms. Those room ids are derived from their two
+  members, so they are guessable by design; group announcements are now confined
+  to the group namespace.
+
 ## 0.6.0
 
 ### Added

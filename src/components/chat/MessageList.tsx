@@ -22,6 +22,8 @@ import {
 } from "../../lib/animatedEmoji";
 import { cx } from "../../lib/cx";
 import * as fileRepo from "../../services/db/fileRepo";
+import * as chatService from "../../services/room/chatService";
+import { toast } from "../../stores/useToastStore";
 
 const GROUP_GAP_MS = 5 * 60_000;
 
@@ -61,6 +63,9 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   const [url, setUrl] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+  const requestTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(requestTimer.current), []);
 
   useEffect(() => {
     if (!message.attachmentId) return;
@@ -70,6 +75,11 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
 
     function checkFile() {
       const id = message.attachmentId!;
+      // Presence is tracked for images too, so a picture whose bytes never
+      // arrived can offer to fetch them instead of rendering a bare filename.
+      fileRepo.fileExists(id).then((ok) => {
+        if (!cancelled) setAvailable(ok);
+      });
       if (isImage) {
         fileRepo.getFile(id).then((file) => {
           if (cancelled || !file) return;
@@ -77,10 +87,6 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
           if (objectUrl) URL.revokeObjectURL(objectUrl);
           objectUrl = URL.createObjectURL(blob);
           setUrl(objectUrl);
-        });
-      } else {
-        fileRepo.fileExists(id).then((ok) => {
-          if (!cancelled) setAvailable(ok);
         });
       }
     }
@@ -90,6 +96,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     const handleFileEvent = (e: Event) => {
       const customEvent = e as CustomEvent<string>;
       if (customEvent.detail === message.attachmentId) {
+        setRequesting(false);
         checkFile();
       }
     };
@@ -102,6 +109,20 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);
+
+  // The chunk stream is live-only, so an attachment sent while this device was
+  // offline arrives as a row with no bytes. Ask the author to re-send them.
+  function fetchFromSender() {
+    if (!chatService.requestAttachment(message)) {
+      toast.info("Sender is offline", "The file will be available when they're back online.");
+      return;
+    }
+    setRequesting(true);
+    // Cleared by the transfer landing (see the file-downloaded listener) or by
+    // this backstop, so an author who goes quiet doesn't wedge the button.
+    clearTimeout(requestTimer.current);
+    requestTimer.current = setTimeout(() => setRequesting(false), 30_000);
+  }
 
   async function downloadFile() {
     if (!message.attachmentId) return;
@@ -177,7 +198,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     <div className={cx("mt-1 flex items-center gap-2 rounded px-2 py-1 text-xs", isOwn ? "bg-black/20" : "bg-black/10")}>
       <Paperclip size={12} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{message.attachmentName}</span>
-      {available && (
+      {available ? (
         <button
           type="button"
           onClick={() => void downloadFile()}
@@ -190,6 +211,21 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
         >
           <Download size={12} />
         </button>
+      ) : (
+        // Our own attachment can't be missing (we stored it before sending), so
+        // the fetch affordance only makes sense on someone else's message.
+        !isOwn && (
+          <button
+            type="button"
+            onClick={fetchFromSender}
+            disabled={requesting}
+            aria-label={`Fetch ${message.attachmentName ?? "file"} from sender`}
+            title="Not downloaded yet — fetch from sender"
+            className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent transition-colors hover:bg-black/10 disabled:text-text-muted"
+          >
+            {requesting ? "Fetching…" : "Fetch"}
+          </button>
+        )
       )}
     </div>
   );

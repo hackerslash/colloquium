@@ -251,6 +251,9 @@ export function initNetworkBridge(self: Identity): () => void {
       case "file_chunk":
         await chatService.handleFileChunk(msg);
         break;
+      case "file_request":
+        if (sender) await chatService.handleFileRequest(self.identityId, sender.identityId, msg);
+        break;
       case "chat_message": {
         const result = await chatService.handleChatMessage(self, msg, Date.now());
         if (!result) break;

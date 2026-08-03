@@ -3,6 +3,7 @@ import type { DeliveryStatus, Message, Reaction } from "../types/domain";
 import * as messageRepo from "../services/db/messageRepo";
 import * as reactionRepo from "../services/db/reactionRepo";
 import * as fileRepo from "../services/db/fileRepo";
+import * as draftRepo from "../services/db/draftRepo";
 import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
 import { useRoomStore } from "./useRoomStore";
@@ -23,6 +24,8 @@ type ChatState = {
   stashedDraftByRoom: Record<string, string>;
 
   loadMessages: (roomId: string) => Promise<void>;
+  /** Restores drafts persisted by a previous session. Call once at boot. */
+  loadDrafts: () => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
   setReplyingTo: (roomId: string, message: Message | null) => void;
@@ -77,6 +80,41 @@ function mergeById(existing: Message[], fresh: Message[]): Message[] {
   for (const m of existing) byId.set(m.id, m);
   for (const m of fresh) byId.set(m.id, m);
   return [...byId.values()].sort(byHlc);
+}
+
+/** Keystrokes are far too frequent to write through, so each room's draft is
+ * flushed once its typing settles. The trailing edge is enough: the app is only
+ * closed by the window going away, and `pagehide` flushes what's still pending. */
+const DRAFT_FLUSH_MS = 600;
+const draftFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingDrafts = new Map<string, string>();
+
+function flushDraft(roomId: string) {
+  const body = pendingDrafts.get(roomId);
+  if (body === undefined) return;
+  pendingDrafts.delete(roomId);
+  draftFlushTimers.delete(roomId);
+  void draftRepo
+    .saveDraft(roomId, body, Date.now())
+    .catch((err) => console.error("failed to persist draft", roomId, err));
+}
+
+function scheduleDraftFlush(roomId: string, body: string) {
+  pendingDrafts.set(roomId, body);
+  const existing = draftFlushTimers.get(roomId);
+  if (existing) clearTimeout(existing);
+  draftFlushTimers.set(
+    roomId,
+    setTimeout(() => flushDraft(roomId), DRAFT_FLUSH_MS),
+  );
+}
+
+// A draft typed and then immediately quit would otherwise die inside the
+// debounce window — the one case where losing it is most obvious.
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    for (const roomId of [...pendingDrafts.keys()]) flushDraft(roomId);
+  });
 }
 
 function groupByMessage(reactions: Reaction[]): Record<string, Reaction[]> {
@@ -142,6 +180,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       fileBuffer,
       get().replyingToByRoom[roomId]?.id ?? null
     );
+    scheduleDraftFlush(roomId, "");
     set((state) => ({
       messagesByRoom: {
         ...state.messagesByRoom,
@@ -153,8 +192,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void useRoomStore.getState().loadRooms();
   },
 
-  setDraft: (roomId, draft) =>
-    set((state) => ({ draftByRoom: { ...state.draftByRoom, [roomId]: draft } })),
+  loadDrafts: async () => {
+    const stored = await draftRepo.listDrafts();
+    // Merge under what's already typed: boot is async, and a draft the user has
+    // started in this session must win over the one on disk.
+    set((state) => ({ draftByRoom: { ...stored, ...state.draftByRoom } }));
+  },
+
+  setDraft: (roomId, draft) => {
+    scheduleDraftFlush(roomId, draft);
+    set((state) => ({ draftByRoom: { ...state.draftByRoom, [roomId]: draft } }));
+  },
 
   setReplyingTo: (roomId, message) =>
     set((state) => ({
@@ -163,23 +211,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       editingByRoom: message ? { ...state.editingByRoom, [roomId]: null } : state.editingByRoom,
     })),
 
-  beginEdit: (roomId, message) =>
+  beginEdit: (roomId, message) => {
+    // Show readable @Name in the composer; re-encoded to tokens on save.
+    const seeded = message.body ? humanizeMentions(message.body) : "";
+    scheduleDraftFlush(roomId, seeded);
     set((state) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: message },
       replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
       stashedDraftByRoom: { ...state.stashedDraftByRoom, [roomId]: state.draftByRoom[roomId] ?? "" },
-      draftByRoom: {
-        ...state.draftByRoom,
-        // Show readable @Name in the composer; re-encoded to tokens on save.
-        [roomId]: message.body ? humanizeMentions(message.body) : "",
-      },
-    })),
+      draftByRoom: { ...state.draftByRoom, [roomId]: seeded },
+    }));
+  },
 
-  cancelEdit: (roomId) =>
+  cancelEdit: (roomId) => {
+    scheduleDraftFlush(roomId, get().stashedDraftByRoom[roomId] ?? "");
     set((state) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: null },
       draftByRoom: { ...state.draftByRoom, [roomId]: state.stashedDraftByRoom[roomId] ?? "" },
-    })),
+    }));
+  },
 
   editMessage: async (roomId, memberIds, messageId, body) => {
     const self = useIdentityStore.getState().self;
@@ -187,6 +237,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const updated = await chatService.sendEdit(self, roomId, memberIds, messageId, body.trim(), Date.now());
     if (updated) get().applyMessageUpdate(updated);
     // Leave edit mode and restore the pre-edit draft.
+    scheduleDraftFlush(roomId, get().stashedDraftByRoom[roomId] ?? "");
     set((state) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: null },
       draftByRoom: { ...state.draftByRoom, [roomId]: state.stashedDraftByRoom[roomId] ?? "" },

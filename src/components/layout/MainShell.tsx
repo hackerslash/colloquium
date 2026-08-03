@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { useChatStore } from "../../stores/useChatStore";
 import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar, type Selection } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
@@ -25,6 +26,7 @@ function selectionKey(s: Selection): string {
 export function MainShell() {
   const self = useIdentityStore((s) => s.self);
   const loadRoster = useRosterStore((s) => s.loadRoster);
+  const loadDrafts = useChatStore((s) => s.loadDrafts);
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const loadUnread = useRoomStore((s) => s.loadUnread);
   const loadMuted = useRoomStore((s) => s.loadMuted);
@@ -55,10 +57,11 @@ export function MainShell() {
 
   useEffect(() => {
     void loadRoster();
+    void loadDrafts();
     // Mute state must load before unread so the first badge computation
     // already excludes muted rooms from the dock count.
     void loadRooms().then(() => loadMuted().then(() => loadUnread()));
-  }, [loadRoster, loadRooms, loadMuted, loadUnread]);
+  }, [loadRoster, loadDrafts, loadRooms, loadMuted, loadUnread]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;
@@ -130,7 +133,8 @@ export function MainShell() {
           const sel = selectionForRoom(roomId);
           if (!sel) return;
           setSelection(sel);
-          setJumpTarget({ key: selectionKey(sel), messageId });
+          // A conversation jump has no message to scroll to — just open it.
+          setJumpTarget(messageId ? { key: selectionKey(sel), messageId } : null);
         }}
       />
       <CallOverlay />

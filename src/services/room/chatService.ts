@@ -9,11 +9,13 @@ import type {
   RoomSyncRequestMessage,
   RoomSyncResponseMessage,
   FileChunkMessage,
+  FileRequestMessage,
 } from "../../types/wire";
 import * as identityService from "../identity/identity";
 import * as messageRepo from "../db/messageRepo";
 import * as reactionRepo from "../db/reactionRepo";
 import * as roomRepo from "../db/roomRepo";
+import * as roomMembersRepo from "../db/roomMembersRepo";
 import * as rosterRepo from "../db/rosterRepo";
 import { getPeerRegistry } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
@@ -137,6 +139,82 @@ function broadcastToRoomMembers(roomMemberIds: string[], data: unknown): number 
   return delivered;
 }
 
+/** Chunks a file onto the wire for the given recipients. Shared by the initial
+ * send and by re-serving a peer that asked for bytes it never received. */
+async function sendFileChunks(
+  recipients: string[],
+  file: { id: string; name: string; type: string },
+  bytes: Uint8Array,
+): Promise<void> {
+  const base64Data = bytesToBase64(bytes);
+  // max(1): a 0-byte file still needs one (empty) terminal chunk, otherwise
+  // the receiver never learns the transfer is complete and stores no blob.
+  const totalChunks = Math.max(1, Math.ceil(base64Data.length / CHUNK_SIZE));
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkMsg: FileChunkMessage = {
+      type: "file_chunk",
+      fileId: file.id,
+      fileName: file.name,
+      mimeType: file.type,
+      chunkIndex: i,
+      totalChunks,
+      data: base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+    };
+    broadcastToRoomMembers(recipients, chunkMsg);
+
+    // Yield to the event loop every 10 chunks to allow WebRTC buffers to drain
+    // and prevent the UI thread from freezing.
+    if (i % 10 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+}
+
+/** Asks a message's author to re-send an attachment whose bytes we never got.
+ * Returns false when that author isn't currently reachable. */
+export function requestAttachment(message: Message): boolean {
+  if (!message.attachmentId) return false;
+  const payload: FileRequestMessage = {
+    type: "file_request",
+    roomId: message.roomId,
+    messageId: message.id,
+    fileId: message.attachmentId,
+  };
+  return getPeerRegistry().send(derivePeerId(message.authorId), payload);
+}
+
+/** Re-serves one of our own attachments to a peer that asked for it. Only ever
+ * sends the blob a live message in that room actually references, and only to
+ * someone entitled to that room — so a file id can't be used to pull arbitrary
+ * stored bytes out of us. */
+export async function handleFileRequest(
+  selfId: string,
+  senderId: string,
+  msg: FileRequestMessage,
+): Promise<void> {
+  const message = await messageRepo.getById(msg.messageId);
+  if (!message || message.roomId !== msg.roomId) return;
+  // Only the author re-serves: everyone else's copy is incidental, and relaying
+  // it would let a member pull a room's files through an uninvolved peer.
+  if (message.authorId !== selfId) return;
+  if (message.attachmentId !== msg.fileId || message.deletedAt) return;
+
+  if (msg.roomId.startsWith("dm_")) {
+    if (msg.roomId !== (await dmRoomId(selfId, senderId))) return;
+  } else if (!(await roomMembersRepo.listMembers(msg.roomId)).includes(senderId)) {
+    return;
+  }
+
+  const file = await fileRepo.getFile(msg.fileId);
+  if (!file) return;
+  await sendFileChunks(
+    [senderId],
+    { id: file.id, name: file.name, type: file.mimeType },
+    file.data,
+  );
+}
+
 export async function sendMessage(
   self: Identity,
   roomId: string,
@@ -189,30 +267,7 @@ export async function sendMessage(
 
   // If there's a file, chunk and send it BEFORE the message so it's ready when the message arrives
   if (attachment && fileBuffer) {
-    const base64Data = bytesToBase64(fileBuffer);
-    // max(1): a 0-byte file still needs one (empty) terminal chunk, otherwise
-    // the receiver never learns the transfer is complete and stores no blob.
-    const totalChunks = Math.max(1, Math.ceil(base64Data.length / CHUNK_SIZE));
-
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkData = base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      const chunkMsg: FileChunkMessage = {
-        type: "file_chunk",
-        fileId: attachment.id,
-        fileName: attachment.name,
-        mimeType: attachment.type,
-        chunkIndex: i,
-        totalChunks,
-        data: chunkData
-      };
-      broadcastToRoomMembers(recipients, chunkMsg);
-      
-      // Yield to the event loop every 10 chunks to allow WebRTC buffers to drain
-      // and prevent the UI thread from freezing.
-      if (i % 10 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-    }
+    await sendFileChunks(recipients, attachment, fileBuffer);
   }
 
   const delivered = broadcastToRoomMembers(recipients, payload);
