@@ -20,9 +20,7 @@ type ComposerProps = {
   onCancelEdit?: () => void;
   /** Members mentionable in this room (excludes self). Enables @-autocomplete. */
   mentionCandidates?: MentionCandidate[];
-  /** Invoked on ↑ in an empty composer — edits the last message you sent. */
   onEditLast?: () => void;
-  /** In-flight attachment upload for this room, shown as a progress banner. */
   upload?: { name: string; pct: number } | null;
 };
 
@@ -176,8 +174,6 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         return;
       }
     }
-    // ↑ on an empty composer edits your last message. Guarded on empty so it
-    // never steals caret movement from someone editing what they've typed.
     if (e.key === "ArrowUp" && !value && !selectedFile && !editing && onEditLast) {
       e.preventDefault();
       onEditLast();
@@ -308,8 +304,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         )}
       </AnimatePresence>
 
-      {/* Upload Progress — a 25 MB attachment takes real seconds to chunk out,
-          and without this the composer just looks stuck. */}
+      {/* Upload Progress */}
       <AnimatePresence>
         {upload && (
           <motion.div

@@ -85,7 +85,6 @@ export async function touchLastMessage(roomId: string, at: number): Promise<void
   );
 }
 
-/** Sets (or clears, with null) a group room's topic. */
 export async function updateRoomTopic(roomId: string, topic: string | null): Promise<void> {
   const db = await getDb();
   await db.execute("UPDATE rooms SET topic = $1 WHERE id = $2 AND type = 'group'", [topic, roomId]);

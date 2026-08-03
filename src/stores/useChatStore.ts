@@ -22,12 +22,9 @@ type ChatState = {
   /** The draft stashed when an edit began, restored on cancel/commit so an
    * in-progress message survives the edit detour. */
   stashedDraftByRoom: Record<string, string>;
-  /** In-flight attachment upload per room, so the composer can show progress
-   * instead of appearing to hang while a large file chunks out. */
   uploadByRoom: Record<string, { name: string; pct: number }>;
 
   loadMessages: (roomId: string) => Promise<void>;
-  /** Restores drafts persisted by a previous session. Call once at boot. */
   loadDrafts: () => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
@@ -35,8 +32,6 @@ type ChatState = {
   /** Enters edit mode for a message: stashes the current draft and seeds the
    * composer with the message body. */
   beginEdit: (roomId: string, message: Message) => void;
-  /** Enters edit mode on the most recent message the local user can still
-   * edit. Bound to ↑ in an empty composer; a no-op when there's nothing. */
   beginEditLast: (roomId: string) => void;
   /** Leaves edit mode, restoring the stashed draft. */
   cancelEdit: (roomId: string) => void;
@@ -88,11 +83,8 @@ function mergeById(existing: Message[], fresh: Message[]): Message[] {
   return [...byId.values()].sort(byHlc);
 }
 
-/** Keystrokes are far too frequent to write through, so each room's draft is
- * flushed once its typing settles. Short enough that the window closing rarely
- * lands inside it — `pagehide` also kicks whatever is still pending, but that
- * write is async IPC and a hard quit can outrun it, so the debounce (not the
- * flush) is what actually keeps drafts safe. */
+// The pagehide flush is async IPC and a hard quit can outrun it, so this
+// interval is what actually bounds how much of a draft can be lost.
 const DRAFT_FLUSH_MS = 600;
 const draftFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingDrafts = new Map<string, string>();
@@ -107,6 +99,10 @@ function flushDraft(roomId: string) {
     .catch((err) => console.error("failed to persist draft", roomId, err));
 }
 
+export function flushPendingDrafts() {
+  for (const roomId of [...pendingDrafts.keys()]) flushDraft(roomId);
+}
+
 function scheduleDraftFlush(roomId: string, body: string) {
   pendingDrafts.set(roomId, body);
   const existing = draftFlushTimers.get(roomId);
@@ -115,13 +111,6 @@ function scheduleDraftFlush(roomId: string, body: string) {
     roomId,
     setTimeout(() => flushDraft(roomId), DRAFT_FLUSH_MS),
   );
-}
-
-// Best-effort last chance for a draft typed immediately before quitting.
-if (typeof window !== "undefined") {
-  window.addEventListener("pagehide", () => {
-    for (const roomId of [...pendingDrafts.keys()]) flushDraft(roomId);
-  });
 }
 
 function groupByMessage(reactions: Reaction[]): Record<string, Reaction[]> {
@@ -162,7 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const trimmed = body.trim();
     if (!trimmed && !file) return;
 
-    let attachment: { id: string; name: string; size: number; type: string } | undefined;
+    let attachment: chatService.Attachment | undefined;
     let fileBuffer: Uint8Array | undefined;
     if (file) {
       const id = crypto.randomUUID();
@@ -188,23 +177,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     let message: Message;
     try {
-      message = await chatService.sendMessage(
-        self,
-        roomId,
-        memberIds,
-        trimmed,
-        Date.now(),
+      message = await chatService.sendMessage(self, roomId, memberIds, trimmed, Date.now(), {
         attachment,
         fileBuffer,
-        get().replyingToByRoom[roomId]?.id ?? null,
-        attachment
+        replyToId: get().replyingToByRoom[roomId]?.id ?? null,
+        onProgress: attachment
           ? (sent, total) =>
               setUpload({ name: attachment.name, pct: Math.round((sent / total) * 100) })
           : undefined,
-      );
+      });
     } finally {
-      // Also on failure: a stuck progress bar reads as "still sending".
-      setUpload(null);
+      if (attachment) setUpload(null);
     }
     scheduleDraftFlush(roomId, "");
     set((state) => ({
@@ -220,8 +203,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadDrafts: async () => {
     const stored = await draftRepo.listDrafts();
-    // Merge under what's already typed: boot is async, and a draft the user has
-    // started in this session must win over the one on disk.
+    // Anything typed while this was in flight outranks what was on disk.
     set((state) => ({ draftByRoom: { ...stored, ...state.draftByRoom } }));
   },
 
@@ -238,7 +220,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })),
 
   beginEdit: (roomId, message) => {
-    // Show readable @Name in the composer; re-encoded to tokens on save.
+    // Readable @Name in the composer; re-encoded to tokens on save.
     const seeded = message.body ? humanizeMentions(message.body) : "";
     scheduleDraftFlush(roomId, seeded);
     set((state) => ({
@@ -253,8 +235,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const selfId = useIdentityStore.getState().self?.identityId;
     const loaded = get().messagesByRoom[roomId];
     if (!selfId || !loaded) return;
-    // Same eligibility the hover Edit button enforces: our own, still text, not
-    // tombstoned. Scanning back means the newest editable one wins.
     for (let i = loaded.length - 1; i >= 0; i--) {
       const m = loaded[i];
       if (m.authorId === selfId && m.contentType === "text" && !m.deletedAt) {
@@ -277,12 +257,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!self) return;
     const updated = await chatService.sendEdit(self, roomId, memberIds, messageId, body.trim(), Date.now());
     if (updated) get().applyMessageUpdate(updated);
-    // Leave edit mode and restore the pre-edit draft.
-    scheduleDraftFlush(roomId, get().stashedDraftByRoom[roomId] ?? "");
-    set((state) => ({
-      editingByRoom: { ...state.editingByRoom, [roomId]: null },
-      draftByRoom: { ...state.draftByRoom, [roomId]: state.stashedDraftByRoom[roomId] ?? "" },
-    }));
+    get().cancelEdit(roomId);
   },
 
   deleteMessage: async (roomId, memberIds, messageId) => {

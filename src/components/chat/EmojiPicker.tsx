@@ -258,8 +258,6 @@ export function EmojiPicker({
   const recentEmoji = useSettingsStore((s) => s.recentEmoji);
   const noteEmojiUsed = useSettingsStore((s) => s.noteEmojiUsed);
 
-  // Recording lives here rather than at each call site, so the composer and the
-  // reaction picker both feed the same list without repeating themselves.
   function select(emoji: string) {
     noteEmojiUsed(emoji);
     onSelectEmoji(emoji);

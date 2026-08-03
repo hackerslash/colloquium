@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MAX_FILE_CHUNKS, MAX_FILE_SIZE } from "./chatService";
 
-/** Mirrors the send path in `sendMessage`: base64-encode, then slice into
- * CHUNK_SIZE pieces. The receive gate must accept everything this produces for
- * any file the Composer lets through. */
+/** Mirrors the send path: base64-encode, then slice into CHUNK_SIZE pieces. */
 function chunksFor(bytes: number): number {
   const base64Length = Math.ceil(bytes / 3) * 4;
   return Math.max(1, Math.ceil(base64Length / (16 * 1024)));

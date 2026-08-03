@@ -117,8 +117,6 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
 
   async function handleExport() {
     try {
-      // Read from the DB rather than the loaded slice: an export should be the
-      // whole record, independent of what this view happens to hold.
       const all = await messageRepo.listByRoom(roomId);
       const now = Date.now();
       const title = room?.name ?? "Room";

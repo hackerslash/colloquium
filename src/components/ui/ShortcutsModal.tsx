@@ -1,16 +1,15 @@
 import { Modal } from "./Modal";
-import { isMacOS } from "../../services/call/systemAudio";
 
 type ShortcutsModalProps = {
   open: boolean;
   onClose: () => void;
 };
 
-/** `mod` renders as the platform's own modifier so the sheet matches the keys
- * actually under the user's fingers. */
+const IS_MAC = navigator.platform.includes("Mac");
+
 function keysFor(spec: string[]): string[] {
-  const mod = isMacOS() ? "⌘" : "Ctrl";
-  const shift = isMacOS() ? "⇧" : "Shift";
+  const mod = IS_MAC ? "⌘" : "Ctrl";
+  const shift = IS_MAC ? "⇧" : "Shift";
   return spec.map((k) => (k === "mod" ? mod : k === "shift" ? shift : k));
 }
 

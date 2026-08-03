@@ -44,13 +44,6 @@ function buildVideoConstraints(): MediaTrackConstraints {
   };
 }
 
-/** The mic state a call should open with. Push-to-talk means "transmit only
- * while the key is held", so a PTT user must start muted — otherwise their mic
- * is live from the moment the call connects until they press the shortcut once. */
-function initialMicOn(): boolean {
-  return !useSettingsStore.getState().pushToTalk;
-}
-
 /** Ring timeout on both sides. */
 const RING_TIMEOUT_MS = 30_000;
 /** How long an undeliverable invite waits in the Outbox before the call is
@@ -529,7 +522,7 @@ export async function startCall(self: Identity, roomId: string, remoteId: string
   store._setLocalStream(localStream);
   const micOn = initialMicOn();
   store._setMediaFlags(micOn, withVideo && localStream.getVideoTracks().length > 0);
-  setMic(micOn); // carries the flag onto the track we actually transmit
+  setMic(micOn);
 
   const invite: CallInviteMessage = {
     type: "call_invite",
@@ -835,6 +828,10 @@ export async function stopScreenShare(source: ScreenStopSource = "user") {
 export function toggleMic() {
   if (!ctx?.localStream) return;
   setMic(!useCallStore.getState().micOn);
+}
+
+function initialMicOn(): boolean {
+  return !useSettingsStore.getState().pushToTalk;
 }
 
 export function setMic(enabled: boolean) {

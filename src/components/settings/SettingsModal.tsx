@@ -20,7 +20,6 @@ import { toast } from "../../stores/useToastStore";
 import * as avatarService from "../../services/avatar/avatarService";
 import { primeDevicePermission } from "../../services/call/devicePermissions";
 
-/** Durations offered for pausing notifications; null lifts the pause. */
 const SNOOZE_OPTIONS: { label: string; minutes: number | null }[] = [
   { label: "Off", minutes: null },
   { label: "30m", minutes: 30 },
@@ -528,7 +527,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       onClick={() => void setSnooze(opt.minutes)}
                       className={cx(
                         "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                        (opt.minutes === null) === (snoozeUntil === null)
+                        opt.minutes === null && snoozeUntil === null
                           ? "border-accent/60 bg-accent/15 text-accent"
                           : "border-border bg-bg-tertiary text-text-secondary hover:border-border-strong",
                       )}

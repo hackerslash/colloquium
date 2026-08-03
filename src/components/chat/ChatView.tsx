@@ -112,8 +112,6 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   async function handleExport() {
     if (!roomId || !contact) return;
     try {
-      // Read from the DB rather than the loaded slice: an export should be the
-      // whole record, independent of what this view happens to hold.
       const all = await messageRepo.listByRoom(roomId);
       const now = Date.now();
       const title = `Conversation with ${contact.displayName}`;

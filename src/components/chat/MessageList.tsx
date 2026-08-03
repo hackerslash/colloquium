@@ -75,18 +75,19 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
 
     function checkFile() {
       const id = message.attachmentId!;
-      // Presence is tracked for images too, so a picture whose bytes never
-      // arrived can offer to fetch them instead of rendering a bare filename.
-      fileRepo.fileExists(id).then((ok) => {
-        if (!cancelled) setAvailable(ok);
-      });
       if (isImage) {
         fileRepo.getFile(id).then((file) => {
-          if (cancelled || !file) return;
+          if (cancelled) return;
+          setAvailable(!!file);
+          if (!file) return;
           const blob = new Blob([file.data], { type: file.mimeType });
           if (objectUrl) URL.revokeObjectURL(objectUrl);
           objectUrl = URL.createObjectURL(blob);
           setUrl(objectUrl);
+        });
+      } else {
+        fileRepo.fileExists(id).then((ok) => {
+          if (!cancelled) setAvailable(ok);
         });
       }
     }
@@ -110,16 +111,12 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     };
   }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);
 
-  // The chunk stream is live-only, so an attachment sent while this device was
-  // offline arrives as a row with no bytes. Ask the author to re-send them.
   function fetchFromSender() {
     if (!chatService.requestAttachment(message)) {
       toast.info("Sender is offline", "The file will be available when they're back online.");
       return;
     }
     setRequesting(true);
-    // Cleared by the transfer landing (see the file-downloaded listener) or by
-    // this backstop, so an author who goes quiet doesn't wedge the button.
     clearTimeout(requestTimer.current);
     requestTimer.current = setTimeout(() => setRequesting(false), 30_000);
   }
@@ -212,8 +209,6 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
           <Download size={12} />
         </button>
       ) : (
-        // Our own attachment can't be missing (we stored it before sending), so
-        // the fetch affordance only makes sense on someone else's message.
         !isOwn && (
           <button
             type="button"
@@ -295,8 +290,6 @@ const MessageRow = memo(function MessageRow({
   const jumboIds =
     !deleted && !message.attachmentName ? jumboAnimatedEmojiIds(message.body) : null;
 
-  // Copies what the bubble reads as, not the raw body: mention tokens and
-  // animated-emoji tokens would otherwise paste as `@[Name](id)` / `:fx:id:`.
   function copyBody() {
     const text = humanizeAnimatedEmoji(humanizeMentions(message.body ?? ""));
     void navigator.clipboard.writeText(text).then(() => {
@@ -631,7 +624,6 @@ export function MessageList({
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  // Scrolled away from the newest message, and how much landed while away.
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [missedCount, setMissedCount] = useState(0);
   // Delegated on the container: every mouseover recomputes which message is
@@ -701,11 +693,8 @@ export function MessageList({
     }
   }, [roomId]);
 
-  // Keyed on the scroller actually existing: messages load after mount, so the
-  // skeleton is what's rendered on the first pass and there was no element to
-  // bind to. With `[]` deps these listeners were never attached at all, which
-  // left wasNearBottom permanently true — the list yanked itself to the bottom
-  // on every new message even while you were reading history.
+  // Keyed on the scroller existing: messages load after mount, so with `[]`
+  // deps this bound to nothing and wasNearBottom stayed permanently true.
   const hasList = messages !== undefined && messages.length > 0;
   useEffect(() => {
     const container = containerRef.current;
@@ -739,9 +728,8 @@ export function MessageList({
     const container = containerRef.current;
     if (!container) return;
 
-    // Captured (and advanced) here, not during render: the effect body runs
-    // after the render phase, so a render-time write would already have
-    // overwritten it and every comparison below would read as "no change".
+    // Advanced here, not during render: a render-phase write lands before this
+    // body runs, making every comparison below read as "no change".
     const prevLength = prevLengthRef.current;
     prevLengthRef.current = messages.length;
 
@@ -786,7 +774,6 @@ export function MessageList({
     } else if (wasNearBottom.current) {
       bottomRef.current?.scrollIntoView({ block: "end" });
     } else if (messages.length > prevLength) {
-      // Reading history — don't drag them away, just count what arrived.
       setMissedCount((n) => n + (messages.length - prevLength));
     }
   }, [messages, roomId]);

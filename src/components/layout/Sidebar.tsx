@@ -434,8 +434,6 @@ export function Sidebar({
         )}
       </ul>
 
-      {/* Paused-notifications banner. Doubles as the way back out — a silent app
-          with no visible reason is the failure mode this guards against. */}
       {snoozeUntil !== null && (
         <button
           type="button"

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as settingsRepo from "../services/db/settingsRepo";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
@@ -53,13 +54,10 @@ type SettingsState = {
   videoInputDeviceId: string | null;
   /** Selected audio output device (speaker/headphones). null = browser default. */
   audioOutputDeviceId: string | null;
-  /** Epoch ms until which notifications and chimes are paused, or null when
-   * they aren't. A timer clears it on expiry so the state never lies. */
+  /** Epoch ms until which notifications and chimes are paused, or null. */
   snoozeUntil: number | null;
-  /** Interface scale, 1 = 100%. Applied as CSS zoom on the root element. */
   zoom: number;
-  /** Most-recently-picked emoji (newest first), surfaced at the top of the
-   * picker. Holds plain glyphs and `:fx:id:` animated tokens alike. */
+  /** Newest first; holds plain glyphs and `:fx:id:` tokens alike. */
   recentEmoji: string[];
   loaded: boolean;
 
@@ -76,10 +74,9 @@ type SettingsState = {
   setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
   setVideoInputDeviceId: (deviceId: string | null) => Promise<void>;
   setAudioOutputDeviceId: (deviceId: string | null) => Promise<void>;
-  /** Pauses notifications for `minutes`, or lifts the pause with null. */
+  /** Pass null to lift the pause. */
   setSnooze: (minutes: number | null) => Promise<void>;
   setZoom: (zoom: number) => Promise<void>;
-  /** Records an emoji as recently used and persists the trimmed list. */
   noteEmojiUsed: (emoji: string) => void;
 };
 
@@ -88,18 +85,19 @@ export const ZOOM_MAX = 1.5;
 export const ZOOM_STEP = 0.1;
 const MAX_RECENT_EMOJI = 16;
 
-/** Scales the whole interface. `zoom` (not a font-size bump) so fixed-px
- * spacing and iconography scale with the text instead of drifting apart. */
-export function applyZoom(zoom: number) {
-  document.documentElement.style.zoom = zoom === 1 ? "" : String(zoom);
+/** Zooms the webview rather than the CSS root, so getBoundingClientRect and
+ * window.innerWidth stay in the same coordinate space — popover placement math
+ * reads both. */
+function applyZoom(zoom: number) {
+  void getCurrentWebview()
+    .setZoom(zoom)
+    .catch((err) => console.warn("failed to apply zoom", err));
 }
 
-export function clampZoom(zoom: number): number {
+function clampZoom(zoom: number): number {
   return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoom * 10) / 10));
 }
 
-/** Whether notifications and chimes are currently paused. Read at the moment
- * of alerting rather than subscribed to, so an expiry needs no re-render. */
 export function notificationsSnoozed(): boolean {
   const until = useSettingsStore.getState().snoozeUntil;
   return until !== null && Date.now() < until;
@@ -107,8 +105,6 @@ export function notificationsSnoozed(): boolean {
 
 let snoozeTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Clears `snoozeUntil` the moment it lapses, so the UI stops claiming
- * notifications are paused without anything having to poll. */
 function armSnoozeExpiry(until: number | null) {
   if (snoozeTimer) clearTimeout(snoozeTimer);
   snoozeTimer = null;
@@ -206,7 +202,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
     const videoInputDeviceId = (all.videoInputDeviceId as string | null) ?? null;
     const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
-    // A snooze that lapsed while the app was closed is simply over.
     const storedSnooze = (all.snoozeUntil as number | null) ?? null;
     const snoozeUntil = storedSnooze !== null && storedSnooze > Date.now() ? storedSnooze : null;
     const zoom = clampZoom((all.zoom as number) ?? 1);
@@ -444,7 +439,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       MAX_RECENT_EMOJI,
     );
     set({ recentEmoji: next });
-    // Fire-and-forget: an unpersisted recents list is not worth a toast.
     void settingsRepo
       .set("recentEmoji", next)
       .catch((err) => console.error("failed to persist recent emoji", err));

@@ -55,9 +55,6 @@ export function useGlobalShortcuts({ onOpenSettings, onOpenSearch, onOpenShortcu
         onOpenShortcuts();
         return;
       }
-      // Interface zoom, the desktop-app convention. Read the current value from
-      // the store rather than closing over it, so held-down repeats compound
-      // instead of all resolving against the same starting scale.
       if (mod && (e.key === "=" || e.key === "+" || e.key === "-" || e.key === "0")) {
         e.preventDefault();
         const { zoom, setZoom } = useSettingsStore.getState();

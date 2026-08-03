@@ -2,13 +2,16 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-set-fullscreen",
     "core:window:allow-set-badge-count",
     "core:window:allow-set-overlay-icon",
+    "core:webview:allow-set-webview-zoom",
     "core:image:allow-new",
     "sql:default",
     "sql:allow-execute",

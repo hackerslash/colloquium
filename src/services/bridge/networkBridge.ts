@@ -370,17 +370,12 @@ export function initNetworkBridge(self: Identity): () => void {
           // Tombstones backfilled as new rows shouldn't inflate unread.
           if (!m.deletedAt) backfilledRooms.add(m.roomId);
         }
-        // Backfilled messages count as unread (but never notify) — recomputed
-        // from the read cursor, not blind-bumped: a backfill routinely carries
-        // messages older than the cursor (history relayed by a peer who kept
-        // more of it than we did), and counting those shows phantom unread.
         for (const roomId of backfilledRooms) {
           const roomStore = useRoomStore.getState();
           if (roomStore.activeRoomId === roomId && document.hasFocus()) {
             await roomStore.markRead(roomId);
           }
         }
-        // A backfilled tombstone can also drop a previously-counted unread.
         if (backfilledRooms.size > 0 || updated.some((m) => m.deletedAt)) {
           await useRoomStore.getState().loadUnread();
         }

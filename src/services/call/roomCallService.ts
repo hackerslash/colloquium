@@ -397,8 +397,6 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
   const store = useRoomCallStore.getState();
   store._setSession(roomId);
   store._setLocalStream(localStream);
-  // Push-to-talk means "transmit only while the key is held", so a PTT user
-  // must join muted rather than with a live mic until the first key press.
   setMic(!useSettingsStore.getState().pushToTalk);
   pushParticipantsToStore();
   pushSlotsToStore();

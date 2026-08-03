@@ -1,6 +1,5 @@
 import { getDb } from "./client";
 
-/** Every room with unsent composer text, restored into the store at boot. */
 export async function listDrafts(): Promise<Record<string, string>> {
   const db = await getDb();
   const rows = await db.select<{ room_id: string; body: string }[]>(
@@ -9,7 +8,6 @@ export async function listDrafts(): Promise<Record<string, string>> {
   return Object.fromEntries(rows.map((r) => [r.room_id, r.body]));
 }
 
-/** Persists a draft, or drops the row when it's been emptied. */
 export async function saveDraft(roomId: string, body: string, at: number): Promise<void> {
   const db = await getDb();
   if (!body) {

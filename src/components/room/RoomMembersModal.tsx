@@ -99,8 +99,6 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
 
   async function handleTopic() {
     const trimmed = newTopic.trim();
-    // Blank clears it rather than storing an empty string, so "no topic" is one
-    // state on the wire instead of two that render the same.
     const next = trimmed.length > 0 ? trimmed : null;
     if (!self || !room || savingTopic || next === (room.topic ?? null)) {
       setIsEditingTopic(false);
@@ -199,8 +197,6 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
           )}
         </div>
 
-        {/* Topic — the column has always been gossiped with every announce; this
-            is just the first place it can actually be set. */}
         <div className="mb-4 rounded-xl border border-border bg-bg-secondary p-3">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
             Topic

@@ -205,13 +205,8 @@ export async function readVector(roomId: string): Promise<Record<string, number>
   return Object.fromEntries(rows.map((r) => [r.author_id, r.max_seq]));
 }
 
-/** Highest *contiguous* author_seq this device holds for each author in a room
- * — the `have` vector the backfill protocol sends so peers reply with only the
- * gap. Contiguous, not MAX: seqs are dense per (room, author), so a hole means
- * a message is missing, and a MAX past that hole tells the peer we already
- * hold it. It would then never resend it — the message is lost for good. A
- * hole is ordinary, not exotic: a live send lands as soon as its author
- * reconnects, which can easily beat the sync response carrying the middle. */
+/** Contiguous, never MAX: a seq past a hole tells the peer we hold what we are
+ * missing, and it then never resends it. */
 export function contiguousSeqs(
   pairs: { author_id: string; author_seq: number }[],
 ): Record<string, number> {

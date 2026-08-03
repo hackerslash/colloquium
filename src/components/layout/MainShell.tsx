@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
-import { useChatStore } from "../../stores/useChatStore";
+import { flushPendingDrafts, useChatStore } from "../../stores/useChatStore";
 import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar, type Selection } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
@@ -73,6 +73,11 @@ export function MainShell() {
   }, [self]);
 
   useEffect(() => {
+    window.addEventListener("pagehide", flushPendingDrafts);
+    return () => window.removeEventListener("pagehide", flushPendingDrafts);
+  }, []);
+
+  useEffect(() => {
     function onFocus() {
       if (activeRoomId) void markRead(activeRoomId);
     }
@@ -136,7 +141,6 @@ export function MainShell() {
           const sel = selectionForRoom(roomId);
           if (!sel) return;
           setSelection(sel);
-          // A conversation jump has no message to scroll to — just open it.
           setJumpTarget(messageId ? { key: selectionKey(sel), messageId } : null);
         }}
       />

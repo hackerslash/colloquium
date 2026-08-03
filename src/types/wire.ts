@@ -554,9 +554,7 @@ export type FileChunkMessage = {
   data: string;
 };
 
-/** Asks a message's author to re-send an attachment we never received. The
- * chunk stream is live-only, so a member who was offline when the message was
- * sent converges the row via room sync but holds nothing behind it. */
+/** Re-request for an attachment whose chunks we never received. */
 export type FileRequestMessage = {
   type: "file_request";
   roomId: string;

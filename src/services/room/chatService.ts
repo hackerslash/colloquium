@@ -29,12 +29,6 @@ import { tickLocal, tickReceive, type Hlc } from "../../lib/hlc";
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 const CHUNK_SIZE = 16 * 1024;
-/** Chunk count a MAX_FILE_SIZE attachment actually produces, derived the same
- * way the sender derives it (base64-expand, then divide). The receive gate
- * must use exactly this: bounding `totalChunks * CHUNK_SIZE * 0.75` against
- * MAX_FILE_SIZE instead over-counts by up to one whole chunk, which silently
- * rejected every attachment in the top ~4 KB of the range the Composer
- * accepts — the message arrived, the file never did. */
 export const MAX_FILE_CHUNKS = Math.ceil((Math.ceil(MAX_FILE_SIZE / 3) * 4) / CHUNK_SIZE);
 /** Drop a partially-received file if no new chunk arrives within this window,
  * so an interrupted transfer doesn't pin its chunks in memory forever. */
@@ -139,8 +133,6 @@ function broadcastToRoomMembers(roomMemberIds: string[], data: unknown): number 
   return delivered;
 }
 
-/** Chunks a file onto the wire for the given recipients. Shared by the initial
- * send and by re-serving a peer that asked for bytes it never received. */
 async function sendFileChunks(
   recipients: string[],
   file: { id: string; name: string; type: string },
@@ -148,8 +140,8 @@ async function sendFileChunks(
   onProgress?: (sent: number, total: number) => void,
 ): Promise<void> {
   const base64Data = bytesToBase64(bytes);
-  // max(1): a 0-byte file still needs one (empty) terminal chunk, otherwise
-  // the receiver never learns the transfer is complete and stores no blob.
+  // A 0-byte file still needs one empty terminal chunk, else the receiver never
+  // sees the transfer complete.
   const totalChunks = Math.max(1, Math.ceil(base64Data.length / CHUNK_SIZE));
 
   for (let i = 0; i < totalChunks; i++) {
@@ -164,8 +156,7 @@ async function sendFileChunks(
     };
     broadcastToRoomMembers(recipients, chunkMsg);
 
-    // Yield to the event loop every 10 chunks to allow WebRTC buffers to drain
-    // and prevent the UI thread from freezing.
+    // Let the WebRTC buffers drain and keep the UI thread responsive.
     if (i % 10 === 0) {
       onProgress?.(i + 1, totalChunks);
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -174,8 +165,6 @@ async function sendFileChunks(
   onProgress?.(totalChunks, totalChunks);
 }
 
-/** Asks a message's author to re-send an attachment whose bytes we never got.
- * Returns false when that author isn't currently reachable. */
 export function requestAttachment(message: Message): boolean {
   if (!message.attachmentId) return false;
   const payload: FileRequestMessage = {
@@ -187,10 +176,8 @@ export function requestAttachment(message: Message): boolean {
   return getPeerRegistry().send(derivePeerId(message.authorId), payload);
 }
 
-/** Re-serves one of our own attachments to a peer that asked for it. Only ever
- * sends the blob a live message in that room actually references, and only to
- * someone entitled to that room — so a file id can't be used to pull arbitrary
- * stored bytes out of us. */
+/** Author-only, and only a blob a live message in that room references, so a
+ * file id can't pull arbitrary stored bytes out of us. */
 export async function handleFileRequest(
   selfId: string,
   senderId: string,
@@ -198,8 +185,6 @@ export async function handleFileRequest(
 ): Promise<void> {
   const message = await messageRepo.getById(msg.messageId);
   if (!message || message.roomId !== msg.roomId) return;
-  // Only the author re-serves: everyone else's copy is incidental, and relaying
-  // it would let a member pull a room's files through an uninvolved peer.
   if (message.authorId !== selfId) return;
   if (message.attachmentId !== msg.fileId || message.deletedAt) return;
 
@@ -218,16 +203,22 @@ export async function handleFileRequest(
   );
 }
 
+export type Attachment = { id: string; name: string; size: number; type: string };
+
+export type SendOptions = {
+  attachment?: Attachment;
+  fileBuffer?: Uint8Array;
+  replyToId?: string | null;
+  onProgress?: (sent: number, total: number) => void;
+};
+
 export async function sendMessage(
   self: Identity,
   roomId: string,
   memberIds: string[],
   body: string,
   physicalNow: number,
-  attachment?: { id: string; name: string; size: number; type: string },
-  fileBuffer?: Uint8Array,
-  replyToId?: string | null,
-  onProgress?: (sent: number, total: number) => void,
+  { attachment, fileBuffer, replyToId, onProgress }: SendOptions = {},
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));

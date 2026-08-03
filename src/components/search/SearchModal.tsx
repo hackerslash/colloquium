@@ -43,11 +43,9 @@ function highlight(snippet: string): React.ReactNode[] {
   return parts;
 }
 
-/** How many name matches the "Jump to" section shows before the message hits. */
 const MAX_JUMP_MATCHES = 5;
 
-/** A conversation matched by name, or a message matched by content. Both live
- * in one flat list so ↑/↓ and Enter cross the section boundary naturally. */
+/** One flat list so ↑/↓ and Enter cross the name/message boundary. */
 type Item =
   | { kind: "jump"; key: string; roomId: string; name: string; dm: boolean }
   | { kind: "message"; key: string; result: SearchResult };
@@ -140,8 +138,6 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
 
   const trimmed = query.trim();
 
-  // Name matches come straight from the stores already in memory, so they
-  // render as the user types rather than waiting on the message-search debounce.
   const jumps = useMemo<Item[]>(() => {
     const needle = trimmed.toLowerCase();
     if (needle.length < MIN_CHARS) return [];
@@ -170,8 +166,7 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
     [jumps, results],
   );
 
-  // Clamped, not stored clamped: the list shrinks as the query narrows, and a
-  // stale index past the end would leave Enter doing nothing at all.
+  // The list shrinks as the query narrows; a stale index would break Enter.
   const activeIndex = Math.min(selected, items.length - 1);
 
   function pick(item: Item) {
