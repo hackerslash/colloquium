@@ -11,6 +11,8 @@
 
 [Download](#install) · [Features](#features) · [How it works](#how-it-works) · [Development](#development) · [Contributing](CONTRIBUTING.md)
 
+<img src="docs/screenshot.png" alt="Colloquium's home screen: a sidebar of spaces and connections beside an invite panel reading “Welcome home. Connect with the people you trust. No servers in the middle, just you and them.”" width="900">
+
 </div>
 
 ---
