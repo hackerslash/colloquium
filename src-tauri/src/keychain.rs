@@ -2,6 +2,9 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use keyring::Entry;
 use rand_core::{OsRng, RngCore};
 
+#[cfg(debug_assertions)]
+const SERVICE: &str = "colloquiumapp.dev";
+#[cfg(not(debug_assertions))]
 const SERVICE: &str = "colloquiumapp";
 const ACCOUNT: &str = "identity-private-key";
 const DB_KEY_ACCOUNT: &str = "db-encryption-key";

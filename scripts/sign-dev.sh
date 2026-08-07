@@ -19,6 +19,6 @@ fi
 
 [ -f "$BIN" ] || { echo "sign-dev: $BIN not built yet — run a build first."; exit 0; }
 
-codesign --force --identifier colloquiumapp --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$BIN"
+codesign --force --identifier colloquiumapp.dev --entitlements "$ENTITLEMENTS" -s "$IDENTITY" "$BIN"
 echo "sign-dev: signed $BIN with '$IDENTITY'"
 codesign -d --requirements - "$BIN" 2>&1 | grep designated || true

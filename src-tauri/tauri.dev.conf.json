@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Colloquium Dev",
+  "identifier": "colloquiumapp.dev",
+  "app": {
+    "windows": [
+      {
+        "title": "Colloquium — Dev",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "visible": false,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

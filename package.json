@@ -14,8 +14,8 @@
     "predev": "node scripts/fetch-ffmpeg.mjs",
     "prebuild": "node scripts/fetch-ffmpeg.mjs",
     "sign:dev": "bash scripts/sign-dev.sh",
-    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev",
-    "tauri:dev:win": "pnpm ffmpeg && tauri dev"
+    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev:win": "pnpm ffmpeg && tauri dev --config src-tauri/tauri.dev.conf.json"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
