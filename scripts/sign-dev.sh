@@ -3,13 +3,12 @@
 # that granted TCC permissions (Screen Recording, Accessibility, Camera, Mic)
 # survive rebuilds. Without this, the linker's ad-hoc signature pins the grant to
 # a cdhash that changes every build, forcing macOS to re-prompt each launch.
+[ "$(uname)" = "Darwin" ] || { echo "sign-dev: not macOS, skipping"; exit 0; }
 set -euo pipefail
 
 IDENTITY="Colloquium Dev"
 BIN="$(cd "$(dirname "$0")/.." && pwd)/src-tauri/target/debug/colloquium"
 ENTITLEMENTS="$(cd "$(dirname "$0")/.." && pwd)/src-tauri/entitlements.plist"
-
-[ "$(uname)" = "Darwin" ] || { echo "sign-dev: not macOS, skipping"; exit 0; }
 
 if ! security find-identity -p codesigning | grep -q "$IDENTITY"; then
   echo "sign-dev: '$IDENTITY' code-signing identity not found in keychain — skipping."
