@@ -22,6 +22,7 @@ import {
   resolveEmoji,
 } from "../../lib/animatedEmoji";
 import { cx } from "../../lib/cx";
+import { saveToDisk } from "../../lib/saveFile";
 import * as fileRepo from "../../services/db/fileRepo";
 import * as chatService from "../../services/room/chatService";
 import { toast } from "../../stores/useToastStore";
@@ -125,16 +126,11 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   async function downloadFile() {
     if (!message.attachmentId) return;
     const file = await fileRepo.getFile(message.attachmentId);
-    if (!file) return;
-    const blob = new Blob([file.data], { type: file.mimeType });
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    if (!file) {
+      toast.error("Download failed", "This file is no longer stored locally.");
+      return;
+    }
+    await saveToDisk(file.name, file.data, file.mimeType);
   }
 
   useEffect(() => {

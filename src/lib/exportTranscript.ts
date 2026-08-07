@@ -1,6 +1,7 @@
 import type { Message } from "../types/domain";
 import { humanizeMentions } from "./mentions";
 import { humanizeAnimatedEmoji } from "./animatedEmoji";
+import { saveToDisk } from "./saveFile";
 
 function dayHeading(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, {
@@ -66,17 +67,16 @@ export function buildTranscript(
   return lines.join("\n");
 }
 
-export function downloadTranscript(title: string, markdown: string, exportedAt: number): void {
-  const stamp = new Date(exportedAt).toISOString().slice(0, 10);
-  const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `colloquium-${slugify(title)}-${stamp}.md`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+export function transcriptFileName(title: string, exportedAt: number): string {
+  return `colloquium-${slugify(title)}-${new Date(exportedAt).toISOString().slice(0, 10)}.md`;
+}
+
+export function downloadTranscript(title: string, markdown: string, exportedAt: number): Promise<boolean> {
+  return saveToDisk(
+    transcriptFileName(title, exportedAt),
+    new TextEncoder().encode(markdown),
+    "text/markdown;charset=utf-8",
+  );
 }
 
 export async function exportRoom(
@@ -87,5 +87,5 @@ export async function exportRoom(
 ): Promise<void> {
   const all = await listByRoom(roomId);
   const now = Date.now();
-  downloadTranscript(title, buildTranscript(title, all, nameOf, now), now);
+  await downloadTranscript(title, buildTranscript(title, all, nameOf, now), now);
 }

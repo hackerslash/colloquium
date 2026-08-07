@@ -13,6 +13,8 @@
     "core:image:allow-new",
     "sql:default",
     "sql:allow-execute",
+    "dialog:allow-save",
+    "fs:allow-write-file",
     "notification:default",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
