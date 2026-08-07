@@ -1,0 +1,82 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Colloquium is peer-to-peer, so a lot of bugs depend on what the *other*
+        side was doing. Please say what both ends were up to where it's relevant.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a call with one other person
+        2. Share the screen with quality set to Max
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Colloquium version
+      description: Settings → About, or the installer filename.
+      placeholder: v0.7.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows 11
+        - Windows 10
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Chat / messages
+        - Voice messages
+        - File attachments
+        - Voice / video calls
+        - Screen sharing
+        - Watch party
+        - Notifications
+        - Sync between peers
+        - Install / launch
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: peer-os
+    attributes:
+      label: Other peer's OS and version
+      description: For anything involving calls, sync, or watch party.
+      placeholder: Windows 11, v0.7.0
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or errors
+      description: Anything from the devtools console or terminal. Paste as text.
+      render: shell
