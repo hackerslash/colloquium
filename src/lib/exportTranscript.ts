@@ -69,5 +69,16 @@ export function downloadTranscript(title: string, markdown: string, exportedAt: 
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function exportRoom(
+  title: string,
+  listByRoom: (roomId: string) => Promise<Message[]>,
+  roomId: string,
+  nameOf: (id: string) => string,
+): Promise<void> {
+  const all = await listByRoom(roomId);
+  const now = Date.now();
+  downloadTranscript(title, buildTranscript(title, all, nameOf, now), now);
 }

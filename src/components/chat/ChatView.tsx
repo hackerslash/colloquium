@@ -19,7 +19,7 @@ import type { Presence } from "../../types/domain";
 import { toast } from "../../stores/useToastStore";
 import { formatLastSeen } from "../../lib/time";
 import { encodeMentions } from "../../lib/mentions";
-import { buildTranscript, downloadTranscript } from "../../lib/exportTranscript";
+import { exportRoom } from "../../lib/exportTranscript";
 import * as messageRepo from "../../services/db/messageRepo";
 
 const PRESENCE_LABEL: Record<Presence, string> = {
@@ -112,18 +112,11 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   async function handleExport() {
     if (!roomId || !contact) return;
     try {
-      const all = await messageRepo.listByRoom(roomId);
-      const now = Date.now();
-      const title = `Conversation with ${contact.displayName}`;
-      downloadTranscript(
-        title,
-        buildTranscript(
-          title,
-          all,
-          (id) => (id === self?.identityId ? (self?.displayName ?? "You") : contact.displayName),
-          now,
-        ),
-        now,
+      await exportRoom(
+        `Conversation with ${contact.displayName}`,
+        messageRepo.listByRoom,
+        roomId,
+        (id) => (id === self?.identityId ? (self?.displayName ?? "You") : contact.displayName),
       );
     } catch (err) {
       console.error("Failed to export conversation:", err);

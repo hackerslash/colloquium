@@ -16,6 +16,7 @@ import { Button } from "../ui/Button";
 import { Avatar } from "../ui/Avatar";
 import { IconButton } from "../ui/IconButton";
 import { cx } from "../../lib/cx";
+import { isMac } from "../../lib/platform";
 import { toast } from "../../stores/useToastStore";
 import * as avatarService from "../../services/avatar/avatarService";
 import { primeDevicePermission } from "../../services/call/devicePermissions";
@@ -343,6 +344,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
   const setEchoCancellation = useSettingsStore((s) => s.setEchoCancellation);
   const snoozeUntil = useSettingsStore((s) => s.snoozeUntil);
+  const snoozeMinutes = useSettingsStore((s) => s.snoozeMinutes);
   const setSnooze = useSettingsStore((s) => s.setSnooze);
   const zoom = useSettingsStore((s) => s.zoom);
   const setZoom = useSettingsStore((s) => s.setZoom);
@@ -445,7 +447,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 <div>
                   <p className="text-sm text-text-secondary">Interface scale</p>
                   <p className="text-xs text-text-secondary/70">
-                    {navigator.platform.includes("Mac") ? "⌘+ / ⌘− / ⌘0" : "Ctrl +/−/0"} anywhere in
+                    {isMac() ? "⌘+ / ⌘− / ⌘0" : "Ctrl +/−/0"} anywhere in
                     the app
                   </p>
                 </div>
@@ -515,7 +517,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               <div className="border-t border-border/60 pt-4">
                 <p className="text-sm text-text-primary">Pause notifications</p>
                 <p className="mb-2 text-xs text-text-secondary">
-                  {snoozeUntil
+                  {snoozeUntil !== null && Date.now() < snoozeUntil
                     ? `Paused until ${new Date(snoozeUntil).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Mentions stay silent too.`
                     : "Silences notifications and chimes for a while. Unread counts still accrue."}
                 </p>
@@ -527,7 +529,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                       onClick={() => void setSnooze(opt.minutes)}
                       className={cx(
                         "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                        opt.minutes === null && snoozeUntil === null
+                        opt.minutes === snoozeMinutes
                           ? "border-accent/60 bg-accent/15 text-accent"
                           : "border-border bg-bg-tertiary text-text-secondary hover:border-border-strong",
                       )}
@@ -566,7 +568,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
               <SettingRow
                 title="Push-to-talk"
-                description={`Hold ${navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to unmute while in a call`}
+                description={`Hold ${isMac() ? "⌘⇧Space" : "Ctrl+Shift+Space"} to unmute while in a call`}
                 control={
                   <Switch checked={pushToTalk} onChange={setPushToTalk} aria-label="Push-to-talk" />
                 }

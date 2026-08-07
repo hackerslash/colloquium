@@ -689,6 +689,7 @@ export function MessageList({
       isStabilizingRef.current = true;
       didInitialRender.current = false;
       prevLengthRef.current = 0;
+      wasNearBottom.current = true;
       setMissedCount(0);
     }
   }, [roomId]);

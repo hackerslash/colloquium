@@ -174,7 +174,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         return;
       }
     }
-    if (e.key === "ArrowUp" && !value && !selectedFile && !editing && onEditLast) {
+    if (e.key === "ArrowUp" && !value.trim() && !selectedFile && !editing && onEditLast) {
       e.preventDefault();
       onEditLast();
       return;

@@ -210,8 +210,11 @@ export async function readVector(roomId: string): Promise<Record<string, number>
 export function contiguousSeqs(
   pairs: { author_id: string; author_seq: number }[],
 ): Record<string, number> {
+  const sorted = [...pairs].sort(
+    (a, b) => a.author_id.localeCompare(b.author_id) || a.author_seq - b.author_seq,
+  );
   const out: Record<string, number> = {};
-  for (const { author_id, author_seq } of pairs) {
+  for (const { author_id, author_seq } of sorted) {
     if (author_seq === (out[author_id] ?? 0) + 1) out[author_id] = author_seq;
   }
   return out;

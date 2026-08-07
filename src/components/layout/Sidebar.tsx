@@ -87,6 +87,7 @@ export function Sidebar({
   const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
   const micOn = useRoomCallStore((s) => s.micOn);
   const snoozeUntil = useSettingsStore((s) => s.snoozeUntil);
+  const snoozed = snoozeUntil !== null && Date.now() < snoozeUntil;
   const setSnooze = useSettingsStore((s) => s.setSnooze);
   const camOn = useRoomCallStore((s) => s.camOn);
 
@@ -434,7 +435,7 @@ export function Sidebar({
         )}
       </ul>
 
-      {snoozeUntil !== null && (
+      {snoozed && (
         <button
           type="button"
           onClick={() => void setSnooze(null)}
@@ -443,8 +444,8 @@ export function Sidebar({
         >
           <BellOff size={14} className="shrink-0 text-accent" aria-hidden="true" />
           <span className="min-w-0 flex-1 text-[12px] leading-tight text-text-secondary">
-            Notifications paused until{" "}
-            {new Date(snoozeUntil).toLocaleTimeString(undefined, {
+            Paused until{" "}
+            {new Date(snoozeUntil!).toLocaleTimeString(undefined, {
               hour: "numeric",
               minute: "2-digit",
             })}

@@ -167,7 +167,7 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
   );
 
   // The list shrinks as the query narrows; a stale index would break Enter.
-  const activeIndex = Math.min(selected, items.length - 1);
+  const activeIndex = items.length === 0 ? 0 : Math.min(selected, items.length - 1);
 
   function pick(item: Item) {
     if (item.kind === "jump") onPick(item.roomId, null);

@@ -5,7 +5,9 @@ type ShortcutsModalProps = {
   onClose: () => void;
 };
 
-const IS_MAC = navigator.platform.includes("Mac");
+const IS_MAC =
+  typeof navigator !== "undefined" &&
+  (/Mac/i.test(navigator.userAgent) || (navigator.platform ?? "").includes("Mac"));
 
 function keysFor(spec: string[]): string[] {
   const mod = IS_MAC ? "⌘" : "Ctrl";

@@ -19,7 +19,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { RoomMembersModal } from "./RoomMembersModal";
 import { toast } from "../../stores/useToastStore";
 import { encodeMentions } from "../../lib/mentions";
-import { buildTranscript, downloadTranscript } from "../../lib/exportTranscript";
+import { exportRoom } from "../../lib/exportTranscript";
 import * as messageRepo from "../../services/db/messageRepo";
 
 type GroupRoomViewProps = {
@@ -117,21 +117,14 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
 
   async function handleExport() {
     try {
-      const all = await messageRepo.listByRoom(roomId);
-      const now = Date.now();
-      const title = room?.name ?? "Room";
-      downloadTranscript(
-        title,
-        buildTranscript(
-          title,
-          all,
-          (id) =>
-            id === self?.identityId
-              ? (self?.displayName ?? "You")
-              : (contactsById[id]?.displayName ?? "Unknown"),
-          now,
-        ),
-        now,
+      await exportRoom(
+        room?.name ?? "Room",
+        messageRepo.listByRoom,
+        roomId,
+        (id) =>
+          id === self?.identityId
+            ? (self?.displayName ?? "You")
+            : (contactsById[id]?.displayName ?? "Unknown"),
       );
     } catch (err) {
       console.error("Failed to export conversation:", err);

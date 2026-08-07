@@ -56,6 +56,7 @@ type SettingsState = {
   audioOutputDeviceId: string | null;
   /** Epoch ms until which notifications and chimes are paused, or null. */
   snoozeUntil: number | null;
+  snoozeMinutes: number | null;
   zoom: number;
   /** Newest first; holds plain glyphs and `:fx:id:` tokens alike. */
   recentEmoji: string[];
@@ -117,13 +118,14 @@ function armSnoozeExpiry(until: number | null) {
   if (until === null) return;
   const remaining = until - Date.now();
   if (remaining <= 0) {
-    useSettingsStore.setState({ snoozeUntil: null });
+    useSettingsStore.setState({ snoozeUntil: null, snoozeMinutes: null });
     return;
   }
   snoozeTimer = setTimeout(() => {
     snoozeTimer = null;
-    useSettingsStore.setState({ snoozeUntil: null });
+    useSettingsStore.setState({ snoozeUntil: null, snoozeMinutes: null });
     void settingsRepo.set("snoozeUntil", null).catch(() => {});
+    void settingsRepo.set("snoozeMinutes", null).catch(() => {});
   }, remaining);
 }
 
@@ -190,6 +192,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   videoInputDeviceId: null,
   audioOutputDeviceId: null,
   snoozeUntil: null,
+  snoozeMinutes: null,
   zoom: 1,
   recentEmoji: [],
   loaded: false,
@@ -210,6 +213,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
     const storedSnooze = (all.snoozeUntil as number | null) ?? null;
     const snoozeUntil = storedSnooze !== null && storedSnooze > Date.now() ? storedSnooze : null;
+    const snoozeMinutes = snoozeUntil !== null ? ((all.snoozeMinutes as number | null) ?? null) : null;
     const zoom = clampZoom((all.zoom as number) ?? 1);
     const recentEmoji = Array.isArray(all.recentEmoji)
       ? (all.recentEmoji as string[]).filter((e) => typeof e === "string").slice(0, MAX_RECENT_EMOJI)
@@ -220,6 +224,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     armSnoozeExpiry(snoozeUntil);
     set({
       snoozeUntil,
+      snoozeMinutes,
       zoom,
       recentEmoji,
       theme,
@@ -409,16 +414,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setSnooze: async (minutes) => {
-    const previous = get().snoozeUntil;
+    const previousUntil = get().snoozeUntil;
+    const previousMinutes = get().snoozeMinutes;
     const until = minutes === null ? null : Date.now() + minutes * 60_000;
-    set({ snoozeUntil: until });
+    set({ snoozeUntil: until, snoozeMinutes: minutes });
     armSnoozeExpiry(until);
     try {
       await settingsRepo.set("snoozeUntil", until);
+      await settingsRepo.set("snoozeMinutes", minutes);
     } catch (err) {
       console.error("Failed to save notification snooze:", err);
-      set({ snoozeUntil: previous });
-      armSnoozeExpiry(previous);
+      set({ snoozeUntil: previousUntil, snoozeMinutes: previousMinutes });
+      armSnoozeExpiry(previousUntil);
       toast.error("Setting not saved", "Please try again.");
     }
   },
