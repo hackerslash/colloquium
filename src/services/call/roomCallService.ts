@@ -397,7 +397,7 @@ export async function joinRoomCall(self: Identity, roomId: string, memberIds: st
   const store = useRoomCallStore.getState();
   store._setSession(roomId);
   store._setLocalStream(localStream);
-  store._setMicOn(true);
+  setMic(!useSettingsStore.getState().pushToTalk);
   pushParticipantsToStore();
   pushSlotsToStore();
 

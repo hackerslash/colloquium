@@ -14,14 +14,16 @@
     "predev": "node scripts/fetch-ffmpeg.mjs",
     "prebuild": "node scripts/fetch-ffmpeg.mjs",
     "sign:dev": "bash scripts/sign-dev.sh",
-    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev",
-    "tauri:dev:win": "pnpm ffmpeg && tauri dev"
+    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev:win": "pnpm ffmpeg && tauri dev --config src-tauri/tauri.dev.conf.json"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",
     "@fontsource-variable/inter": "^5.2.8",
     "@sapphi-red/web-noise-suppressor": "^0.3.5",
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
+    "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-global-shortcut": "^2.3.2",
     "@tauri-apps/plugin-notification": "^2.3.3",
     "@tauri-apps/plugin-sql": "^2.4.0",

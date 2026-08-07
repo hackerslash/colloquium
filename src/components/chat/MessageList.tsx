@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, Check, CheckCheck, Clock, Download, MessageSquare, Paperclip, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowDown, Check, CheckCheck, Clock, Copy, Download, MessageSquare, Paperclip, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import type { DeliveryStatus, Message, Reaction } from "../../types/domain";
 import { useChatStore } from "../../stores/useChatStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
@@ -12,6 +12,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
 import { EmojiPicker } from "./EmojiPicker";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { VoicePlayer } from "./VoicePlayer";
 import { humanizeMentions } from "../../lib/mentions";
 import {
   ANIMATED_EMOJI,
@@ -21,7 +22,10 @@ import {
   resolveEmoji,
 } from "../../lib/animatedEmoji";
 import { cx } from "../../lib/cx";
+import { saveToDisk } from "../../lib/saveFile";
+import { fetchAttachment } from "../../lib/fetchAttachment";
 import * as fileRepo from "../../services/db/fileRepo";
+import { toast } from "../../stores/useToastStore";
 
 const GROUP_GAP_MS = 5 * 60_000;
 
@@ -61,6 +65,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   const [url, setUrl] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [requesting, setRequesting] = useState(false);
 
   useEffect(() => {
     if (!message.attachmentId) return;
@@ -72,7 +77,9 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
       const id = message.attachmentId!;
       if (isImage) {
         fileRepo.getFile(id).then((file) => {
-          if (cancelled || !file) return;
+          if (cancelled) return;
+          setAvailable(!!file);
+          if (!file) return;
           const blob = new Blob([file.data], { type: file.mimeType });
           if (objectUrl) URL.revokeObjectURL(objectUrl);
           objectUrl = URL.createObjectURL(blob);
@@ -90,6 +97,7 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     const handleFileEvent = (e: Event) => {
       const customEvent = e as CustomEvent<string>;
       if (customEvent.detail === message.attachmentId) {
+        setRequesting(false);
         checkFile();
       }
     };
@@ -103,19 +111,19 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
     };
   }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);
 
+  function fetchFromSender() {
+    setRequesting(true);
+    void fetchAttachment(message).finally(() => setRequesting(false));
+  }
+
   async function downloadFile() {
     if (!message.attachmentId) return;
     const file = await fileRepo.getFile(message.attachmentId);
-    if (!file) return;
-    const blob = new Blob([file.data], { type: file.mimeType });
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    if (!file) {
+      toast.error("Download failed", "This file is no longer stored locally.");
+      return;
+    }
+    await saveToDisk(file.name, file.data, file.mimeType);
   }
 
   useEffect(() => {
@@ -174,10 +182,18 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   }
 
   return (
-    <div className={cx("mt-1 flex items-center gap-2 rounded px-2 py-1 text-xs", isOwn ? "bg-black/20" : "bg-black/10")}>
+    // The inset surface only separates this row from a caption above it; with no
+    // caption the bubble is the container and a second tinted box reads as a
+    // stray double border.
+    <div
+      className={cx(
+        "flex items-center gap-2 text-xs",
+        message.body && cx("mt-1 rounded px-2 py-1", isOwn ? "bg-black/20" : "bg-black/10"),
+      )}
+    >
       <Paperclip size={12} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{message.attachmentName}</span>
-      {available && (
+      {available ? (
         <button
           type="button"
           onClick={() => void downloadFile()}
@@ -190,6 +206,19 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
         >
           <Download size={12} />
         </button>
+      ) : (
+        !isOwn && (
+          <button
+            type="button"
+            onClick={fetchFromSender}
+            disabled={requesting}
+            aria-label={`Fetch ${message.attachmentName ?? "file"} from sender`}
+            title="Not downloaded yet — fetch from sender"
+            className="shrink-0 rounded px-1.5 py-0.5 font-medium text-accent transition-colors hover:bg-black/10 disabled:text-text-muted"
+          >
+            {requesting ? "Fetching…" : "Fetch"}
+          </button>
+        )
       )}
     </div>
   );
@@ -249,12 +278,24 @@ const MessageRow = memo(function MessageRow({
 }: MessageRowProps) {
   const [pickerPos, setPickerPos] = useState<{ left: number; top: number } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
   const deleted = message.deletedAt != null;
   const edited = message.editedAt != null && !deleted;
   // Sticker-style rendering: a message that's nothing but 1-3 animated emoji
   // (no other text, no attachment) drops the bubble entirely.
   const jumboIds =
     !deleted && !message.attachmentName ? jumboAnimatedEmojiIds(message.body) : null;
+
+  function copyBody() {
+    const text = humanizeAnimatedEmoji(humanizeMentions(message.body ?? ""));
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1_200);
+    });
+  }
 
   function openPicker(e: React.MouseEvent<HTMLButtonElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -383,6 +424,21 @@ const MessageRow = memo(function MessageRow({
                   >
                     <Reply size={14} />
                   </button>
+                  {message.body && (
+                    <button
+                      type="button"
+                      title={copied ? "Copied" : "Copy text"}
+                      aria-label="Copy text"
+                      onClick={copyBody}
+                      className="rounded p-1 hover:bg-bg-tertiary hover:text-text-primary transition-colors"
+                    >
+                      {copied ? (
+                        <Check size={14} className="text-success" />
+                      ) : (
+                        <Copy size={14} />
+                      )}
+                    </button>
+                  )}
                   {isOwn && message.contentType === "text" && (
                     <button
                       type="button"
@@ -465,7 +521,11 @@ const MessageRow = memo(function MessageRow({
                           selfId={selfId}
                         />
                       )}
-                      {message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />}
+                      {message.contentType === "audio" ? (
+                        <VoicePlayer message={message} isOwn={isOwn} />
+                      ) : (
+                        message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />
+                      )}
                     </>
                   )}
                 </div>
@@ -566,6 +626,8 @@ export function MessageList({
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
+  const [missedCount, setMissedCount] = useState(0);
   // Delegated on the container: every mouseover recomputes which message is
   // under the cursor, so a stale row self-corrects even if its own
   // mouseleave was dropped (Chromium misses it on fast moves/re-renders).
@@ -582,6 +644,7 @@ export function MessageList({
   const isStabilizingRef = useRef(false);
   const didInitialRender = useRef(false);
   const wasNearBottom = useRef(true);
+  const prevLengthRef = useRef(0);
 
   // Resolve the "New Messages" anchor once per room visit, then track it by
   // message id. Recomputing per render would let messages sent or received
@@ -627,21 +690,31 @@ export function MessageList({
       prevRoomIdRef.current = roomId;
       isStabilizingRef.current = true;
       didInitialRender.current = false;
+      prevLengthRef.current = 0;
+      wasNearBottom.current = true;
+      setMissedCount(0);
     }
   }, [roomId]);
 
+  // Keyed on the scroller existing: messages load after mount, so with `[]`
+  // deps this bound to nothing and wasNearBottom stayed permanently true.
+  const hasList = messages !== undefined && messages.length > 0;
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     const onScroll = () => {
-      wasNearBottom.current =
+      const nearBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight < 120;
+      wasNearBottom.current = nearBottom;
+      setAwayFromBottom(!nearBottom);
+      if (nearBottom) setMissedCount(0);
     };
     const onUserInteraction = () => {
       isStabilizingRef.current = false;
     };
 
+    onScroll();
     container.addEventListener("scroll", onScroll, { passive: true });
     container.addEventListener("wheel", onUserInteraction, { passive: true });
     container.addEventListener("touchmove", onUserInteraction, { passive: true });
@@ -650,13 +723,18 @@ export function MessageList({
       container.removeEventListener("wheel", onUserInteraction);
       container.removeEventListener("touchmove", onUserInteraction);
     };
-  }, []);
+  }, [hasList]);
 
   useEffect(() => {
     if (!messages || messages.length === 0) return;
 
     const container = containerRef.current;
     if (!container) return;
+
+    // Advanced here, not during render: a render-phase write lands before this
+    // body runs, making every comparison below read as "no change".
+    const prevLength = prevLengthRef.current;
+    prevLengthRef.current = messages.length;
 
     const scrollToTarget = () => {
       if (unreadBannerRef.current) {
@@ -698,8 +776,15 @@ export function MessageList({
       };
     } else if (wasNearBottom.current) {
       bottomRef.current?.scrollIntoView({ block: "end" });
+    } else if (messages.length > prevLength) {
+      setMissedCount((n) => n + (messages.length - prevLength));
     }
   }, [messages, roomId]);
+
+  const jumpToLatest = useCallback(() => {
+    setMissedCount(0);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
 
   const selfId = self?.identityId;
   const selfName = self?.displayName;
@@ -796,13 +881,32 @@ export function MessageList({
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="flex-1 overflow-y-auto px-4 py-4"
-      role="log"
-      onMouseOver={handleMouseOver}
-      onMouseLeave={() => setHoveredId(null)}
-    >
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <AnimatePresence>
+        {awayFromBottom && (
+          <motion.button
+            type="button"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.15 }}
+            onClick={jumpToLatest}
+            className="absolute bottom-4 right-6 z-20 flex items-center gap-1.5 rounded-full border border-border/60 bg-bg-elevated/95 px-3 py-1.5 text-xs font-medium text-text-primary shadow-lg backdrop-blur-sm transition-colors hover:border-accent/60"
+          >
+            <ArrowDown size={14} className="text-accent" aria-hidden="true" />
+            {missedCount > 0
+              ? `${missedCount} new message${missedCount === 1 ? "" : "s"}`
+              : "Jump to latest"}
+          </motion.button>
+        )}
+      </AnimatePresence>
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-y-auto px-4 py-4"
+        role="log"
+        onMouseOver={handleMouseOver}
+        onMouseLeave={() => setHoveredId(null)}
+      >
       <ul>
         {messages.map((message, i) => {
           const prev = messages[i - 1];
@@ -852,8 +956,9 @@ export function MessageList({
             </Fragment>
           );
         })}
-      </ul>
-      <div ref={bottomRef} />
+        </ul>
+        <div ref={bottomRef} />
+      </div>
     </div>
   );
 }

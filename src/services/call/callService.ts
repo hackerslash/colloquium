@@ -520,7 +520,9 @@ export async function startCall(self: Identity, roomId: string, remoteId: string
     withVideo,
   });
   store._setLocalStream(localStream);
-  store._setMediaFlags(true, withVideo && localStream.getVideoTracks().length > 0);
+  const micOn = initialMicOn();
+  store._setMediaFlags(micOn, withVideo && localStream.getVideoTracks().length > 0);
+  setMic(micOn);
 
   const invite: CallInviteMessage = {
     type: "call_invite",
@@ -609,7 +611,9 @@ export async function acceptCall(self: Identity) {
   attachLocalTracks();
 
   store._setLocalStream(localStream);
-  store._setMediaFlags(true, localStream.getVideoTracks().length > 0);
+  const micOn = initialMicOn();
+  store._setMediaFlags(micOn, localStream.getVideoTracks().length > 0);
+  setMic(micOn);
   store._setStatus("connecting");
 
   sendToRemote(active.remoteId, {
@@ -824,6 +828,10 @@ export async function stopScreenShare(source: ScreenStopSource = "user") {
 export function toggleMic() {
   if (!ctx?.localStream) return;
   setMic(!useCallStore.getState().micOn);
+}
+
+function initialMicOn(): boolean {
+  return !useSettingsStore.getState().pushToTalk;
 }
 
 export function setMic(enabled: boolean) {

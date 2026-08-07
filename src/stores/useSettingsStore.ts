@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import * as settingsRepo from "../services/db/settingsRepo";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
@@ -53,6 +54,12 @@ type SettingsState = {
   videoInputDeviceId: string | null;
   /** Selected audio output device (speaker/headphones). null = browser default. */
   audioOutputDeviceId: string | null;
+  /** Epoch ms until which notifications and chimes are paused, or null. */
+  snoozeUntil: number | null;
+  snoozeMinutes: number | null;
+  zoom: number;
+  /** Newest first; holds plain glyphs and `:fx:id:` tokens alike. */
+  recentEmoji: string[];
   loaded: boolean;
 
   loadSettings: () => Promise<void>;
@@ -68,7 +75,59 @@ type SettingsState = {
   setAudioInputDeviceId: (deviceId: string | null) => Promise<void>;
   setVideoInputDeviceId: (deviceId: string | null) => Promise<void>;
   setAudioOutputDeviceId: (deviceId: string | null) => Promise<void>;
+  /** Pass null to lift the pause. */
+  setSnooze: (minutes: number | null) => Promise<void>;
+  setZoom: (zoom: number) => Promise<void>;
+  noteEmojiUsed: (emoji: string) => void;
 };
+
+export const ZOOM_MIN = 0.8;
+export const ZOOM_MAX = 1.5;
+export const ZOOM_STEP = 0.1;
+const MAX_RECENT_EMOJI = 16;
+
+/** Zooms the webview rather than the CSS root, so getBoundingClientRect and
+ * window.innerWidth stay in the same coordinate space — popover placement math
+ * reads both. */
+function applyZoom(zoom: number) {
+  // Never throws: loadSettings calls this before committing state, so a failure
+  // here must not abort the rest of the boot.
+  try {
+    void getCurrentWebview()
+      .setZoom(zoom)
+      .catch((err) => console.warn("failed to apply zoom", err));
+  } catch (err) {
+    console.warn("failed to apply zoom", err);
+  }
+}
+
+function clampZoom(zoom: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoom * 10) / 10));
+}
+
+export function notificationsSnoozed(): boolean {
+  const until = useSettingsStore.getState().snoozeUntil;
+  return until !== null && Date.now() < until;
+}
+
+let snoozeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function armSnoozeExpiry(until: number | null) {
+  if (snoozeTimer) clearTimeout(snoozeTimer);
+  snoozeTimer = null;
+  if (until === null) return;
+  const remaining = until - Date.now();
+  if (remaining <= 0) {
+    useSettingsStore.setState({ snoozeUntil: null, snoozeMinutes: null });
+    return;
+  }
+  snoozeTimer = setTimeout(() => {
+    snoozeTimer = null;
+    useSettingsStore.setState({ snoozeUntil: null, snoozeMinutes: null });
+    void settingsRepo.set("snoozeUntil", null).catch(() => {});
+    void settingsRepo.set("snoozeMinutes", null).catch(() => {});
+  }, remaining);
+}
 
 function systemPrefersDark(): boolean {
   return window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -132,6 +191,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   audioInputDeviceId: null,
   videoInputDeviceId: null,
   audioOutputDeviceId: null,
+  snoozeUntil: null,
+  snoozeMinutes: null,
+  zoom: 1,
+  recentEmoji: [],
   loaded: false,
 
   loadSettings: async () => {
@@ -148,9 +211,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const audioInputDeviceId = (all.audioInputDeviceId as string | null) ?? null;
     const videoInputDeviceId = (all.videoInputDeviceId as string | null) ?? null;
     const audioOutputDeviceId = (all.audioOutputDeviceId as string | null) ?? null;
+    const storedSnooze = (all.snoozeUntil as number | null) ?? null;
+    const snoozeUntil = storedSnooze !== null && storedSnooze > Date.now() ? storedSnooze : null;
+    const snoozeMinutes = snoozeUntil !== null ? ((all.snoozeMinutes as number | null) ?? null) : null;
+    const zoom = clampZoom((all.zoom as number) ?? 1);
+    const recentEmoji = Array.isArray(all.recentEmoji)
+      ? (all.recentEmoji as string[]).filter((e) => typeof e === "string").slice(0, MAX_RECENT_EMOJI)
+      : [];
     applyTheme(theme);
     applyAccent(accent);
+    applyZoom(zoom);
+    armSnoozeExpiry(snoozeUntil);
     set({
+      snoozeUntil,
+      snoozeMinutes,
+      zoom,
+      recentEmoji,
       theme,
       accent,
       pushToTalk,
@@ -335,6 +411,50 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ audioOutputDeviceId: previous });
       toast.error("Setting not saved", "Please try again.");
     }
+  },
+
+  setSnooze: async (minutes) => {
+    const previousUntil = get().snoozeUntil;
+    const previousMinutes = get().snoozeMinutes;
+    const until = minutes === null ? null : Date.now() + minutes * 60_000;
+    set({ snoozeUntil: until, snoozeMinutes: minutes });
+    armSnoozeExpiry(until);
+    try {
+      await settingsRepo.set("snoozeUntil", until);
+      await settingsRepo.set("snoozeMinutes", minutes);
+    } catch (err) {
+      console.error("Failed to save notification snooze:", err);
+      set({ snoozeUntil: previousUntil, snoozeMinutes: previousMinutes });
+      armSnoozeExpiry(previousUntil);
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setZoom: async (zoom) => {
+    const previous = get().zoom;
+    const next = clampZoom(zoom);
+    if (next === previous) return;
+    applyZoom(next);
+    set({ zoom: next });
+    try {
+      await settingsRepo.set("zoom", next);
+    } catch (err) {
+      console.error("Failed to save zoom setting:", err);
+      applyZoom(previous);
+      set({ zoom: previous });
+      toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  noteEmojiUsed: (emoji) => {
+    const next = [emoji, ...get().recentEmoji.filter((e) => e !== emoji)].slice(
+      0,
+      MAX_RECENT_EMOJI,
+    );
+    set({ recentEmoji: next });
+    void settingsRepo
+      .set("recentEmoji", next)
+      .catch((err) => console.error("failed to persist recent emoji", err));
   },
 }));
 

@@ -9,11 +9,13 @@ import type {
   RoomSyncRequestMessage,
   RoomSyncResponseMessage,
   FileChunkMessage,
+  FileRequestMessage,
 } from "../../types/wire";
 import * as identityService from "../identity/identity";
 import * as messageRepo from "../db/messageRepo";
 import * as reactionRepo from "../db/reactionRepo";
 import * as roomRepo from "../db/roomRepo";
+import * as roomMembersRepo from "../db/roomMembersRepo";
 import * as rosterRepo from "../db/rosterRepo";
 import { getPeerRegistry } from "../peer/registry";
 import { derivePeerId } from "../peer/derivePeerId";
@@ -27,6 +29,7 @@ import { tickLocal, tickReceive, type Hlc } from "../../lib/hlc";
 export const MAX_FILE_SIZE = 25 * 1024 * 1024;
 
 const CHUNK_SIZE = 16 * 1024;
+export const MAX_FILE_CHUNKS = Math.ceil((Math.ceil(MAX_FILE_SIZE / 3) * 4) / CHUNK_SIZE);
 /** Drop a partially-received file if no new chunk arrives within this window,
  * so an interrupted transfer doesn't pin its chunks in memory forever. */
 const FILE_ASSEMBLY_TTL_MS = 60_000;
@@ -75,6 +78,10 @@ export async function dmRoomId(a: string, b: string): Promise<string> {
 }
 
 function canonicalMessage(m: Omit<ChatMessageWire, "sig">): string {
+  // Voice fields are NOT part of the signed payload for backward compat:
+  // old peers verify the 15-element array; new peers must accept that same
+  // shape. Voice metadata is a UI hint (waveform/duration) whose spoofing
+  // is cosmetic — audio bytes are still bound via attachmentId.
   return JSON.stringify([
     m.id,
     m.roomId,
@@ -94,8 +101,23 @@ function canonicalMessage(m: Omit<ChatMessageWire, "sig">): string {
   ]);
 }
 
+const KNOWN_CONTENT_TYPES = new Set(["text", "image", "file", "audio", "system"]);
+
+function normalizeContentType(ct: string): Message["contentType"] {
+  return (KNOWN_CONTENT_TYPES.has(ct) ? ct : "file") as Message["contentType"];
+}
+
 function wireToMessage(w: ChatMessageWire, deliveryStatus: Message["deliveryStatus"]): Message {
-  return { ...w, deliveryStatus, readAt: null };
+  const dur = typeof w.voiceDurationMs === "number" && Number.isFinite(w.voiceDurationMs) && w.voiceDurationMs >= 0 && w.voiceDurationMs <= 600_000 ? w.voiceDurationMs : undefined;
+  const wf = Array.isArray(w.voiceWaveform) ? w.voiceWaveform.filter((v) => typeof v === "number" && v >= 0 && v <= 1).slice(0, 120) : undefined;
+  return {
+    ...w,
+    contentType: normalizeContentType(w.contentType),
+    voiceDurationMs: dur,
+    voiceWaveform: wf && wf.length > 0 ? wf : undefined,
+    deliveryStatus,
+    readAt: null,
+  };
 }
 
 function messageToWire(m: Message): ChatMessageWire {
@@ -111,6 +133,8 @@ function messageToWire(m: Message): ChatMessageWire {
     attachmentName: m.attachmentName,
     attachmentSize: m.attachmentSize,
     attachmentType: m.attachmentType,
+    voiceDurationMs: m.voiceDurationMs,
+    voiceWaveform: m.voiceWaveform,
     replyToId: m.replyToId,
     sentAt: m.sentAt,
     editedAt: m.editedAt,
@@ -130,15 +154,95 @@ function broadcastToRoomMembers(roomMemberIds: string[], data: unknown): number 
   return delivered;
 }
 
+async function sendFileChunks(
+  recipients: string[],
+  file: { id: string; name: string; type: string },
+  bytes: Uint8Array,
+  onProgress?: (sent: number, total: number) => void,
+): Promise<void> {
+  const base64Data = bytesToBase64(bytes);
+  // A 0-byte file still needs one empty terminal chunk, else the receiver never
+  // sees the transfer complete.
+  const totalChunks = Math.max(1, Math.ceil(base64Data.length / CHUNK_SIZE));
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunkMsg: FileChunkMessage = {
+      type: "file_chunk",
+      fileId: file.id,
+      fileName: file.name,
+      mimeType: file.type,
+      chunkIndex: i,
+      totalChunks,
+      data: base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE),
+    };
+    broadcastToRoomMembers(recipients, chunkMsg);
+
+    // Let the WebRTC buffers drain and keep the UI thread responsive.
+    if (i % 10 === 0) {
+      onProgress?.(i + 1, totalChunks);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  onProgress?.(totalChunks, totalChunks);
+}
+
+export function requestAttachment(message: Message): boolean {
+  if (!message.attachmentId) return false;
+  const payload: FileRequestMessage = {
+    type: "file_request",
+    roomId: message.roomId,
+    messageId: message.id,
+    fileId: message.attachmentId,
+  };
+  return getPeerRegistry().send(derivePeerId(message.authorId), payload);
+}
+
+/** Author-only, and only a blob a live message in that room references, so a
+ * file id can't pull arbitrary stored bytes out of us. */
+export async function handleFileRequest(
+  selfId: string,
+  senderId: string,
+  msg: FileRequestMessage,
+): Promise<void> {
+  const message = await messageRepo.getById(msg.messageId);
+  if (!message || message.roomId !== msg.roomId) return;
+  if (message.authorId !== selfId) return;
+  if (message.attachmentId !== msg.fileId || message.deletedAt) return;
+
+  if (msg.roomId.startsWith("dm_")) {
+    if (msg.roomId !== (await dmRoomId(selfId, senderId))) return;
+  } else if (!(await roomMembersRepo.listMembers(msg.roomId)).includes(senderId)) {
+    return;
+  }
+
+  const file = await fileRepo.getFile(msg.fileId);
+  if (!file) return;
+  await sendFileChunks(
+    [senderId],
+    { id: file.id, name: file.name, type: file.mimeType },
+    file.data,
+  );
+}
+
+export type Attachment = { id: string; name: string; size: number; type: string };
+
+export type VoiceMeta = { durationMs: number; waveform?: number[] };
+
+export type SendOptions = {
+  attachment?: Attachment;
+  fileBuffer?: Uint8Array;
+  replyToId?: string | null;
+  onProgress?: (sent: number, total: number) => void;
+  voice?: VoiceMeta;
+};
+
 export async function sendMessage(
   self: Identity,
   roomId: string,
   memberIds: string[],
   body: string,
   physicalNow: number,
-  attachment?: { id: string; name: string; size: number; type: string },
-  fileBuffer?: Uint8Array,
-  replyToId?: string | null,
+  { attachment, fileBuffer, replyToId, onProgress, voice }: SendOptions = {},
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));
@@ -146,18 +250,23 @@ export async function sendMessage(
 
   const message = await withSendLock(async () => {
     const authorSeq = await messageRepo.nextAuthorSeq(roomId, self.identityId);
+    let contentType: ChatMessageWire["contentType"] = "text";
+    if (voice) contentType = "audio";
+    else if (attachment) contentType = attachment.type.startsWith("image/") ? "image" : "file";
     const wireBase: Omit<ChatMessageWire, "sig"> = {
       id: crypto.randomUUID(),
       roomId,
       authorId: self.identityId,
       authorSeq,
       hlc,
-      contentType: attachment ? (attachment.type.startsWith("image/") ? "image" : "file") : "text",
+      contentType,
       body,
       attachmentId: attachment?.id ?? undefined,
       attachmentName: attachment?.name ?? undefined,
       attachmentSize: attachment?.size ?? undefined,
       attachmentType: attachment?.type ?? undefined,
+      voiceDurationMs: voice?.durationMs,
+      voiceWaveform: voice?.waveform,
       replyToId: replyToId ?? null,
       sentAt: physicalNow,
       editedAt: null,
@@ -182,30 +291,7 @@ export async function sendMessage(
 
   // If there's a file, chunk and send it BEFORE the message so it's ready when the message arrives
   if (attachment && fileBuffer) {
-    const base64Data = bytesToBase64(fileBuffer);
-    // max(1): a 0-byte file still needs one (empty) terminal chunk, otherwise
-    // the receiver never learns the transfer is complete and stores no blob.
-    const totalChunks = Math.max(1, Math.ceil(base64Data.length / CHUNK_SIZE));
-
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkData = base64Data.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      const chunkMsg: FileChunkMessage = {
-        type: "file_chunk",
-        fileId: attachment.id,
-        fileName: attachment.name,
-        mimeType: attachment.type,
-        chunkIndex: i,
-        totalChunks,
-        data: chunkData
-      };
-      broadcastToRoomMembers(recipients, chunkMsg);
-      
-      // Yield to the event loop every 10 chunks to allow WebRTC buffers to drain
-      // and prevent the UI thread from freezing.
-      if (i % 10 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-    }
+    await sendFileChunks(recipients, attachment, fileBuffer, onProgress);
   }
 
   const delivered = broadcastToRoomMembers(recipients, payload);
@@ -230,6 +316,8 @@ function tombstoned(m: Message, deletedAt: number, sig: string): Message {
     attachmentName: undefined,
     attachmentSize: undefined,
     attachmentType: undefined,
+    voiceDurationMs: undefined,
+    voiceWaveform: undefined,
     editedAt: null,
     deletedAt,
     sig,
@@ -581,9 +669,9 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
   const now = Date.now();
   sweepStalePartials(now);
 
-  // Reject oversize transfers up front (base64 length ≈ 4/3 × bytes), before
-  // buffering any chunks — a malicious/buggy sender can't exhaust memory.
-  if (msg.totalChunks * CHUNK_SIZE * 0.75 > MAX_FILE_SIZE) return;
+  // Reject oversize transfers up front, before buffering any chunks — a
+  // malicious/buggy sender can't exhaust memory.
+  if (msg.totalChunks > MAX_FILE_CHUNKS) return;
   // The cap above bounds the declared chunk count, but a single chunk can still
   // carry an arbitrarily large payload; bound each chunk to CHUNK_SIZE and
   // reject out-of-range indices (which would otherwise allocate a huge sparse
@@ -611,6 +699,14 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
   if (state.chunks[msg.chunkIndex] === undefined) {
     state.chunks[msg.chunkIndex] = msg.data;
     state.receivedCount++;
+
+    // Let the UI show real transfer progress. Only new chunks fire this, so a
+    // duplicate can't make the bar go backwards.
+    window.dispatchEvent(
+      new CustomEvent("colloquium_file_progress", {
+        detail: { fileId: msg.fileId, received: state.receivedCount, expected: state.expected },
+      }),
+    );
 
     if (state.receivedCount === state.expected) {
       const fullBase64 = state.chunks.join("");

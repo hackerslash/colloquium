@@ -46,6 +46,15 @@ export async function renameGroupRoom(
   await announceRoom(self, roomId);
 }
 
+export async function setRoomTopic(
+  self: Identity,
+  roomId: string,
+  topic: string | null,
+): Promise<void> {
+  await roomRepo.updateRoomTopic(roomId, topic);
+  await announceRoom(self, roomId);
+}
+
 export async function addMembersToGroupRoom(
   self: Identity,
   roomId: string,
@@ -133,6 +142,9 @@ export async function reannounceAllGroupRooms(self: Identity): Promise<void> {
 }
 
 export async function handleRoomAnnounce(self: Identity, msg: RoomAnnounceMessage): Promise<void> {
+  // DM room ids are publicly derivable, so a contact could otherwise stamp a
+  // name and their own membership onto our private room's row.
+  if (!msg.room.id.startsWith("grp_")) return;
   // Only materialize rooms we're actually listed in (active or tombstoned —
   // a tombstone for us must be recorded so the room stays hidden).
   const selfEntry = msg.members.find((m) => m.id === self.identityId);

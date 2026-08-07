@@ -17,6 +17,7 @@ import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
+import { useSettingsStore } from "../../stores/useSettingsStore";
 import * as roomMembersRepo from "../../services/db/roomMembersRepo";
 import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
@@ -85,6 +86,9 @@ export function Sidebar({
   const speakingIds = useRoomCallStore((s) => s.speakingIds);
   const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
   const micOn = useRoomCallStore((s) => s.micOn);
+  const snoozeUntil = useSettingsStore((s) => s.snoozeUntil);
+  const snoozed = snoozeUntil !== null && Date.now() < snoozeUntil;
+  const setSnooze = useSettingsStore((s) => s.setSnooze);
   const camOn = useRoomCallStore((s) => s.camOn);
 
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -430,6 +434,25 @@ export function Sidebar({
           </li>
         )}
       </ul>
+
+      {snoozed && (
+        <button
+          type="button"
+          onClick={() => void setSnooze(null)}
+          title="Resume notifications"
+          className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-left transition-colors hover:border-accent/60"
+        >
+          <BellOff size={14} className="shrink-0 text-accent" aria-hidden="true" />
+          <span className="min-w-0 flex-1 text-[12px] leading-tight text-text-secondary">
+            Paused until{" "}
+            {new Date(snoozeUntil!).toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
+          <span className="shrink-0 text-[11px] font-medium text-accent">Resume</span>
+        </button>
+      )}
 
       {/* User footer bar */}
       <div className="m-4 mt-2 flex shrink-0 items-center gap-3 rounded-2xl border border-border bg-bg-secondary p-3 transition-colors hover:bg-bg-tertiary">

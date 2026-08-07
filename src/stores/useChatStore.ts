@@ -3,6 +3,7 @@ import type { DeliveryStatus, Message, Reaction } from "../types/domain";
 import * as messageRepo from "../services/db/messageRepo";
 import * as reactionRepo from "../services/db/reactionRepo";
 import * as fileRepo from "../services/db/fileRepo";
+import * as draftRepo from "../services/db/draftRepo";
 import * as chatService from "../services/room/chatService";
 import { useIdentityStore } from "./useIdentityStore";
 import { useRoomStore } from "./useRoomStore";
@@ -21,14 +22,22 @@ type ChatState = {
   /** The draft stashed when an edit began, restored on cancel/commit so an
    * in-progress message survives the edit detour. */
   stashedDraftByRoom: Record<string, string>;
+  uploadByRoom: Record<string, { name: string; pct: number }>;
 
   loadMessages: (roomId: string) => Promise<void>;
+  loadDrafts: () => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
+  sendVoiceMessage: (
+    roomId: string,
+    memberIds: string[],
+    voice: { blob: Blob; durationMs: number; waveform: number[]; mimeType: string },
+  ) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
   setReplyingTo: (roomId: string, message: Message | null) => void;
   /** Enters edit mode for a message: stashes the current draft and seeds the
    * composer with the message body. */
   beginEdit: (roomId: string, message: Message) => void;
+  beginEditLast: (roomId: string) => void;
   /** Leaves edit mode, restoring the stashed draft. */
   cancelEdit: (roomId: string) => void;
   /** Edits one of the local user's messages: re-signs, persists, broadcasts. */
@@ -79,6 +88,36 @@ function mergeById(existing: Message[], fresh: Message[]): Message[] {
   return [...byId.values()].sort(byHlc);
 }
 
+// The pagehide flush is async IPC and a hard quit can outrun it, so this
+// interval is what actually bounds how much of a draft can be lost.
+const DRAFT_FLUSH_MS = 600;
+const draftFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const pendingDrafts = new Map<string, string>();
+
+function flushDraft(roomId: string) {
+  const body = pendingDrafts.get(roomId);
+  if (body === undefined) return;
+  pendingDrafts.delete(roomId);
+  draftFlushTimers.delete(roomId);
+  void draftRepo
+    .saveDraft(roomId, body, Date.now())
+    .catch((err) => console.error("failed to persist draft", roomId, err));
+}
+
+export function flushPendingDrafts() {
+  for (const roomId of [...pendingDrafts.keys()]) flushDraft(roomId);
+}
+
+function scheduleDraftFlush(roomId: string, body: string) {
+  pendingDrafts.set(roomId, body);
+  const existing = draftFlushTimers.get(roomId);
+  if (existing) clearTimeout(existing);
+  draftFlushTimers.set(
+    roomId,
+    setTimeout(() => flushDraft(roomId), DRAFT_FLUSH_MS),
+  );
+}
+
 function groupByMessage(reactions: Reaction[]): Record<string, Reaction[]> {
   const byMessage: Record<string, Reaction[]> = {};
   for (const r of reactions) (byMessage[r.messageId] ??= []).push(r);
@@ -92,6 +131,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   replyingToByRoom: {},
   editingByRoom: {},
   stashedDraftByRoom: {},
+  uploadByRoom: {},
 
   loadMessages: async (roomId) => {
     const [messages, reactions] = await Promise.all([
@@ -116,7 +156,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const trimmed = body.trim();
     if (!trimmed && !file) return;
 
-    let attachment: { id: string; name: string; size: number; type: string } | undefined;
+    let attachment: chatService.Attachment | undefined;
     let fileBuffer: Uint8Array | undefined;
     if (file) {
       const id = crypto.randomUUID();
@@ -132,16 +172,29 @@ export const useChatStore = create<ChatState>((set, get) => ({
       attachment = { id, name: file.name, size: file.size, type: file.type };
     }
 
-    const message = await chatService.sendMessage(
-      self,
-      roomId,
-      memberIds,
-      trimmed,
-      Date.now(),
-      attachment,
-      fileBuffer,
-      get().replyingToByRoom[roomId]?.id ?? null
-    );
+    const setUpload = (upload: { name: string; pct: number } | null) =>
+      set((state) => {
+        const next = { ...state.uploadByRoom };
+        if (upload) next[roomId] = upload;
+        else delete next[roomId];
+        return { uploadByRoom: next };
+      });
+
+    let message: Message;
+    try {
+      message = await chatService.sendMessage(self, roomId, memberIds, trimmed, Date.now(), {
+        attachment,
+        fileBuffer,
+        replyToId: get().replyingToByRoom[roomId]?.id ?? null,
+        onProgress: attachment
+          ? (sent, total) =>
+              setUpload({ name: attachment.name, pct: Math.round((sent / total) * 100) })
+          : undefined,
+      });
+    } finally {
+      if (attachment) setUpload(null);
+    }
+    scheduleDraftFlush(roomId, "");
     set((state) => ({
       messagesByRoom: {
         ...state.messagesByRoom,
@@ -153,8 +206,67 @@ export const useChatStore = create<ChatState>((set, get) => ({
     void useRoomStore.getState().loadRooms();
   },
 
-  setDraft: (roomId, draft) =>
-    set((state) => ({ draftByRoom: { ...state.draftByRoom, [roomId]: draft } })),
+  sendVoiceMessage: async (roomId, memberIds, voice) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) throw new Error("no local identity");
+    if (voice.blob.size > 25 * 1024 * 1024) throw new Error("Voice message too large");
+    const id = crypto.randomUUID();
+    const ext = voice.mimeType.includes("mp4") ? "m4a" : voice.mimeType.includes("ogg") ? "ogg" : "webm";
+    const name = `voice-${Date.now()}.${ext}`;
+    const buffer = await voice.blob.arrayBuffer();
+    const fileBuffer = new Uint8Array(buffer);
+    await fileRepo.insertFile({
+      id,
+      name,
+      size: voice.blob.size,
+      mimeType: voice.mimeType,
+      data: fileBuffer,
+    });
+    const attachment: chatService.Attachment = { id, name, size: voice.blob.size, type: voice.mimeType };
+
+    const setUpload = (upload: { name: string; pct: number } | null) =>
+      set((state) => {
+        const next = { ...state.uploadByRoom };
+        if (upload) next[roomId] = upload;
+        else delete next[roomId];
+        return { uploadByRoom: next };
+      });
+
+    let message: Message;
+    try {
+      message = await chatService.sendMessage(self, roomId, memberIds, "", Date.now(), {
+        attachment,
+        fileBuffer,
+        replyToId: get().replyingToByRoom[roomId]?.id ?? null,
+        voice: { durationMs: voice.durationMs, waveform: voice.waveform },
+        onProgress: (sent, total) => setUpload({ name, pct: Math.round((sent / total) * 100) }),
+      });
+    } catch (err) {
+      await fileRepo.deleteFile(id).catch(() => {});
+      throw err;
+    } finally {
+      setUpload(null);
+    }
+    set((state) => ({
+      messagesByRoom: {
+        ...state.messagesByRoom,
+        [roomId]: insertOrdered(state.messagesByRoom[roomId] ?? [], message),
+      },
+      replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
+    }));
+    void useRoomStore.getState().loadRooms();
+  },
+
+  loadDrafts: async () => {
+    const stored = await draftRepo.listDrafts();
+    // Anything typed while this was in flight outranks what was on disk.
+    set((state) => ({ draftByRoom: { ...stored, ...state.draftByRoom } }));
+  },
+
+  setDraft: (roomId, draft) => {
+    scheduleDraftFlush(roomId, draft);
+    set((state) => ({ draftByRoom: { ...state.draftByRoom, [roomId]: draft } }));
+  },
 
   setReplyingTo: (roomId, message) =>
     set((state) => ({
@@ -163,34 +275,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
       editingByRoom: message ? { ...state.editingByRoom, [roomId]: null } : state.editingByRoom,
     })),
 
-  beginEdit: (roomId, message) =>
+  beginEdit: (roomId, message) => {
+    // Readable @Name in the composer; re-encoded to tokens on save.
+    const seeded = message.body ? humanizeMentions(message.body) : "";
+    scheduleDraftFlush(roomId, seeded);
     set((state) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: message },
       replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
       stashedDraftByRoom: { ...state.stashedDraftByRoom, [roomId]: state.draftByRoom[roomId] ?? "" },
-      draftByRoom: {
-        ...state.draftByRoom,
-        // Show readable @Name in the composer; re-encoded to tokens on save.
-        [roomId]: message.body ? humanizeMentions(message.body) : "",
-      },
-    })),
+      draftByRoom: { ...state.draftByRoom, [roomId]: seeded },
+    }));
+  },
 
-  cancelEdit: (roomId) =>
+  beginEditLast: (roomId) => {
+    const selfId = useIdentityStore.getState().self?.identityId;
+    const loaded = get().messagesByRoom[roomId];
+    if (!selfId || !loaded) return;
+    for (let i = loaded.length - 1; i >= 0; i--) {
+      const m = loaded[i];
+      if (m.authorId === selfId && m.contentType === "text" && !m.deletedAt) {
+        get().beginEdit(roomId, m);
+        return;
+      }
+    }
+  },
+
+  cancelEdit: (roomId) => {
+    scheduleDraftFlush(roomId, get().stashedDraftByRoom[roomId] ?? "");
     set((state) => ({
       editingByRoom: { ...state.editingByRoom, [roomId]: null },
       draftByRoom: { ...state.draftByRoom, [roomId]: state.stashedDraftByRoom[roomId] ?? "" },
-    })),
+    }));
+  },
 
   editMessage: async (roomId, memberIds, messageId, body) => {
     const self = useIdentityStore.getState().self;
     if (!self) return;
     const updated = await chatService.sendEdit(self, roomId, memberIds, messageId, body.trim(), Date.now());
     if (updated) get().applyMessageUpdate(updated);
-    // Leave edit mode and restore the pre-edit draft.
-    set((state) => ({
-      editingByRoom: { ...state.editingByRoom, [roomId]: null },
-      draftByRoom: { ...state.draftByRoom, [roomId]: state.stashedDraftByRoom[roomId] ?? "" },
-    }));
+    get().cancelEdit(roomId);
   },
 
   deleteMessage: async (roomId, memberIds, messageId) => {

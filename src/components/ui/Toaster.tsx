@@ -31,11 +31,13 @@ const DEFAULT_DURATION = 4_000;
 function ToastCard({ toast }: { toast: Toast }) {
   const dismiss = useToastStore((s) => s.dismiss);
   const Icon = ICON[toast.variant];
+  const busy = toast.progress !== undefined;
 
   useEffect(() => {
+    if (busy) return; // in-flight work owns its toast until it settles
     const timer = setTimeout(() => dismiss(toast.id), DEFAULT_DURATION);
     return () => clearTimeout(timer);
-  }, [toast.id, dismiss]);
+  }, [toast.id, busy, dismiss]);
 
   return (
     <motion.div
@@ -51,6 +53,29 @@ function ToastCard({ toast }: { toast: Toast }) {
         <p className="text-sm font-medium text-text-primary">{toast.title}</p>
         {toast.description && (
           <p className="mt-0.5 break-words text-xs text-text-secondary">{toast.description}</p>
+        )}
+        {busy && (
+          <div className="mt-2 flex items-center gap-2">
+            <div
+              className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-tertiary"
+              role="progressbar"
+              aria-label={toast.title}
+              {...(toast.progress != null
+                ? { "aria-valuenow": toast.progress, "aria-valuemin": 0, "aria-valuemax": 100 }
+                : {})}
+            >
+              <div
+                className={cx(
+                  "h-full rounded-full bg-accent",
+                  toast.progress == null ? "w-2/5 animate-indeterminate" : "transition-[width] duration-150",
+                )}
+                style={toast.progress != null ? { width: `${toast.progress}%` } : undefined}
+              />
+            </div>
+            {toast.progress != null && (
+              <span className="shrink-0 text-xs tabular-nums text-text-muted">{toast.progress}%</span>
+            )}
+          </div>
         )}
       </div>
       <button

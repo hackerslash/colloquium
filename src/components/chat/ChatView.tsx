@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Phone, Video } from "lucide-react";
+import { Bell, BellOff, Download, Phone, Video } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useChatStore } from "../../stores/useChatStore";
@@ -19,6 +19,8 @@ import type { Presence } from "../../types/domain";
 import { toast } from "../../stores/useToastStore";
 import { formatLastSeen } from "../../lib/time";
 import { encodeMentions } from "../../lib/mentions";
+import { exportRoom } from "../../lib/exportTranscript";
+import * as messageRepo from "../../services/db/messageRepo";
 
 const PRESENCE_LABEL: Record<Presence, string> = {
   online: "Online",
@@ -39,6 +41,7 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
 
   const loadMessages = useChatStore((s) => s.loadMessages);
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const sendVoiceMessage = useChatStore((s) => s.sendVoiceMessage);
   const editMessage = useChatStore((s) => s.editMessage);
   const cancelEdit = useChatStore((s) => s.cancelEdit);
   const setDraft = useChatStore((s) => s.setDraft);
@@ -79,6 +82,8 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   const replyingTo = useChatStore((s) => (roomId ? s.replyingToByRoom[roomId] : null)) ?? null;
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const editing = useChatStore((s) => (roomId ? s.editingByRoom[roomId] : null)) ?? null;
+  const beginEditLast = useChatStore((s) => s.beginEditLast);
+  const upload = useChatStore((s) => (roomId ? s.uploadByRoom[roomId] : undefined)) ?? null;
 
   // Re-render once a minute while offline so a "5m ago" label keeps advancing.
   const [, setTick] = useState(0);
@@ -103,6 +108,21 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
       console.error("Failed to send message:", err);
       toast.error("Message not sent", "Please try again.");
     });
+  }
+
+  async function handleExport() {
+    if (!roomId || !contact) return;
+    try {
+      await exportRoom(
+        `Conversation with ${contact.displayName}`,
+        messageRepo.listByRoom,
+        roomId,
+        (id) => (id === self?.identityId ? (self?.displayName ?? "You") : contact.displayName),
+      );
+    } catch (err) {
+      console.error("Failed to export conversation:", err);
+      toast.error("Export failed", "Couldn't read the conversation.");
+    }
   }
 
   if (!contact) {
@@ -132,6 +152,12 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
             active={muted}
             disabled={!roomId}
             onClick={() => roomId && toggleMute(roomId)}
+          />
+          <IconButton
+            icon={Download}
+            label="Export conversation"
+            disabled={!roomId}
+            onClick={() => void handleExport()}
           />
           <IconButton
             icon={Phone}
@@ -173,6 +199,8 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
         onCancelReply={() => roomId && setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => roomId && cancelEdit(roomId)}
+        onEditLast={() => roomId && beginEditLast(roomId)}
+        upload={upload}
         onChange={(v) => {
           if (!roomId) return;
           setDraft(roomId, v);
@@ -180,6 +208,14 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
           else stopTyping(roomId, [contactId]);
         }}
         onSend={handleSend}
+        onSendVoice={(cap) => {
+          if (!roomId) return;
+          stopTyping(roomId, [contactId]);
+          return sendVoiceMessage(roomId, [contactId], cap).catch((err) => {
+            console.error("Failed to send voice message:", err);
+            toast.error("Voice not sent", "Please try again.");
+          });
+        }}
       />
     </DropZone>
   );

@@ -13,6 +13,7 @@ import { Avatar } from "../ui/Avatar";
 import { IconButton } from "../ui/IconButton";
 import { AddMembersModal } from "./AddMembersModal";
 import { toast } from "../../stores/useToastStore";
+import { cx } from "../../lib/cx";
 
 type RoomMembersModalProps = {
   open: boolean;
@@ -36,6 +37,9 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState("");
   const [renaming, setRenaming] = useState(false);
+  const [isEditingTopic, setIsEditingTopic] = useState(false);
+  const [newTopic, setNewTopic] = useState("");
+  const [savingTopic, setSavingTopic] = useState(false);
 
   const fetchMembers = () => {
     void roomMembersRepo.listMembersFull(roomId).then((all) => {
@@ -46,6 +50,7 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
   useEffect(() => {
     if (!open) {
       setIsEditingName(false);
+      setIsEditingTopic(false);
       return;
     }
     fetchMembers();
@@ -54,6 +59,10 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
   useEffect(() => {
     if (room?.name) setNewName(room.name);
   }, [room?.name]);
+
+  useEffect(() => {
+    setNewTopic(room?.topic ?? "");
+  }, [room?.topic]);
 
   async function handleLeave() {
     if (!self || leaving) return;
@@ -85,6 +94,26 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
       toast.error("Failed to rename space", "Please try again.");
     } finally {
       setRenaming(false);
+    }
+  }
+
+  async function handleTopic() {
+    const trimmed = newTopic.trim();
+    const next = trimmed.length > 0 ? trimmed : null;
+    if (!self || !room || savingTopic || next === (room.topic ?? null)) {
+      setIsEditingTopic(false);
+      return;
+    }
+    setSavingTopic(true);
+    try {
+      await roomService.setRoomTopic(self, roomId, next);
+      await loadRooms();
+      setIsEditingTopic(false);
+    } catch (err) {
+      console.error("Failed to set topic:", err);
+      toast.error("Topic not saved", "Please try again.");
+    } finally {
+      setSavingTopic(false);
     }
   }
 
@@ -163,6 +192,65 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
                 label="Rename space"
                 size="sm"
                 onClick={() => setIsEditingName(true)}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="mb-4 rounded-xl border border-border bg-bg-secondary p-3">
+          <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+            Topic
+          </div>
+          {isEditingTopic ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleTopic();
+              }}
+              className="flex items-center gap-2"
+            >
+              <input
+                autoFocus
+                value={newTopic}
+                onChange={(e) => setNewTopic(e.target.value)}
+                maxLength={140}
+                disabled={savingTopic}
+                placeholder="What's this space for?"
+                className="flex-1 rounded-md border border-border-strong bg-bg-tertiary px-2.5 py-1 text-sm text-text-primary outline-none focus:border-accent"
+              />
+              <IconButton
+                icon={Check}
+                label="Save topic"
+                size="sm"
+                variant="accent"
+                onClick={() => void handleTopic()}
+                disabled={savingTopic}
+              />
+              <IconButton
+                icon={X}
+                label="Cancel topic edit"
+                size="sm"
+                onClick={() => {
+                  setNewTopic(room?.topic ?? "");
+                  setIsEditingTopic(false);
+                }}
+              />
+            </form>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className={cx(
+                  "min-w-0 flex-1 text-sm",
+                  room?.topic ? "text-text-primary" : "italic text-text-muted",
+                )}
+              >
+                {room?.topic || "No topic yet"}
+              </span>
+              <IconButton
+                icon={Edit2}
+                label="Edit topic"
+                size="sm"
+                onClick={() => setIsEditingTopic(true)}
               />
             </div>
           )}

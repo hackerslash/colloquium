@@ -83,6 +83,12 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Saving attachments and transcripts: `dialog.save` picks the path and
+        // adds it to the fs scope, then `fs.writeFile` writes there. The fs
+        // scope stays empty in capabilities on purpose — only paths the user
+        // actively picked in a native dialog are ever writable.
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         // Migrations run in our own keyed pool inside `db::init` (below), not
         // via the plugin — see setup. The plugin is registered bare so its
         // execute/select commands resolve against the injected SQLCipher pool.

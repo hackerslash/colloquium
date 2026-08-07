@@ -56,7 +56,7 @@ export type ChatMessageWire = {
   authorId: string;
   authorSeq: number;
   hlc: string;
-  contentType: "text" | "image" | "file" | "system";
+  contentType: "text" | "image" | "file" | "audio" | "system";
   body: string | null;
   replyToId: string | null;
   sentAt: number;
@@ -67,6 +67,8 @@ export type ChatMessageWire = {
   attachmentName?: string;
   attachmentSize?: number;
   attachmentType?: string;
+  voiceDurationMs?: number;
+  voiceWaveform?: number[];
 };
 
 export type ChatMessageMessage = {
@@ -554,6 +556,14 @@ export type FileChunkMessage = {
   data: string;
 };
 
+/** Re-request for an attachment whose chunks we never received. */
+export type FileRequestMessage = {
+  type: "file_request";
+  roomId: string;
+  messageId: string;
+  fileId: string;
+};
+
 /** Sent to a trusted peer on connect and after a local avatar change, so they
  * can tell whether the copy they hold is current without transferring bytes. */
 export type ProfileAnnounceMessage = {
@@ -577,6 +587,7 @@ export type ColloquiumMessage =
   | AvatarRequestMessage
   | AvatarDataMessage
   | FileChunkMessage
+  | FileRequestMessage
   | InviteConsumeMessage
   | InviteAckMessage
   | RosterSyncMessage

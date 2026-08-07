@@ -1,16 +1,32 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { User, Palette, Bell, Mic, AppWindow, type LucideIcon } from "lucide-react";
-import { useSettingsStore, type ThemePref, ACCENT_PRESETS } from "../../stores/useSettingsStore";
+import { User, Palette, Bell, Mic, AppWindow, Minus, Plus, type LucideIcon } from "lucide-react";
+import {
+  useSettingsStore,
+  type ThemePref,
+  ACCENT_PRESETS,
+  ZOOM_MIN,
+  ZOOM_MAX,
+  ZOOM_STEP,
+} from "../../stores/useSettingsStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useAvatarStore } from "../../stores/useAvatarStore";
 import { Modal } from "../ui/Modal";
 import { Switch } from "../ui/Switch";
 import { Button } from "../ui/Button";
 import { Avatar } from "../ui/Avatar";
+import { IconButton } from "../ui/IconButton";
 import { cx } from "../../lib/cx";
+import { isMac } from "../../lib/platform";
 import { toast } from "../../stores/useToastStore";
 import * as avatarService from "../../services/avatar/avatarService";
 import { primeDevicePermission } from "../../services/call/devicePermissions";
+
+const SNOOZE_OPTIONS: { label: string; minutes: number | null }[] = [
+  { label: "Off", minutes: null },
+  { label: "30m", minutes: 30 },
+  { label: "1h", minutes: 60 },
+  { label: "8h", minutes: 480 },
+];
 
 const THEMES: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -327,6 +343,11 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setNoiseSuppression = useSettingsStore((s) => s.setNoiseSuppression);
   const echoCancellation = useSettingsStore((s) => s.echoCancellation);
   const setEchoCancellation = useSettingsStore((s) => s.setEchoCancellation);
+  const snoozeUntil = useSettingsStore((s) => s.snoozeUntil);
+  const snoozeMinutes = useSettingsStore((s) => s.snoozeMinutes);
+  const setSnooze = useSettingsStore((s) => s.setSnooze);
+  const zoom = useSettingsStore((s) => s.zoom);
+  const setZoom = useSettingsStore((s) => s.setZoom);
 
   const [tab, setTab] = useState<SettingsTab>("profile");
   const active = TABS.find((t) => t.id === tab)!;
@@ -421,6 +442,40 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   ))}
                 </div>
               </div>
+
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-text-secondary">Interface scale</p>
+                  <p className="text-xs text-text-secondary/70">
+                    {isMac() ? "⌘+ / ⌘− / ⌘0" : "Ctrl +/−/0"} anywhere in
+                    the app
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <IconButton
+                    icon={Minus}
+                    label="Decrease interface scale"
+                    size="sm"
+                    disabled={zoom <= ZOOM_MIN}
+                    onClick={() => void setZoom(zoom - ZOOM_STEP)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void setZoom(1)}
+                    title="Reset to 100%"
+                    className="w-14 rounded-md py-1 text-center text-sm tabular-nums text-text-primary transition-colors hover:bg-bg-secondary"
+                  >
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <IconButton
+                    icon={Plus}
+                    label="Increase interface scale"
+                    size="sm"
+                    disabled={zoom >= ZOOM_MAX}
+                    onClick={() => void setZoom(zoom + ZOOM_STEP)}
+                  />
+                </div>
+              </div>
             </div>
           )}
 
@@ -459,6 +514,31 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   />
                 }
               />
+              <div className="border-t border-border/60 pt-4">
+                <p className="text-sm text-text-primary">Pause notifications</p>
+                <p className="mb-2 text-xs text-text-secondary">
+                  {snoozeUntil !== null && Date.now() < snoozeUntil
+                    ? `Paused until ${new Date(snoozeUntil).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}. Mentions stay silent too.`
+                    : "Silences notifications and chimes for a while. Unread counts still accrue."}
+                </p>
+                <div className="flex gap-1.5" role="group" aria-label="Pause notifications">
+                  {SNOOZE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.label}
+                      type="button"
+                      onClick={() => void setSnooze(opt.minutes)}
+                      className={cx(
+                        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                        opt.minutes === snoozeMinutes
+                          ? "border-accent/60 bg-accent/15 text-accent"
+                          : "border-border bg-bg-tertiary text-text-secondary hover:border-border-strong",
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -488,7 +568,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               />
               <SettingRow
                 title="Push-to-talk"
-                description={`Hold ${navigator.platform.includes("Mac") ? "⌘⇧Space" : "Ctrl+Shift+Space"} to unmute while in a call`}
+                description={`Hold ${isMac() ? "⌘⇧Space" : "Ctrl+Shift+Space"} to unmute while in a call`}
                 control={
                   <Switch checked={pushToTalk} onChange={setPushToTalk} aria-label="Push-to-talk" />
                 }

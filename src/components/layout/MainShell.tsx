@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useRoomStore } from "../../stores/useRoomStore";
+import { flushPendingDrafts, useChatStore } from "../../stores/useChatStore";
 import { initNetworkBridge } from "../../services/bridge/networkBridge";
 import { Sidebar, type Selection } from "./Sidebar";
 import { HomeView } from "../invite/HomeView";
@@ -14,6 +15,7 @@ import { RoomCallWindow } from "../call/RoomCallWindow";
 import { WatchPartyWindow } from "../watchparty/WatchPartyWindow";
 import { SettingsModal } from "../settings/SettingsModal";
 import { SearchModal } from "../search/SearchModal";
+import { ShortcutsModal } from "../ui/ShortcutsModal";
 import { useGlobalShortcuts } from "../../hooks/useGlobalShortcuts";
 
 let bridgeStarted = false;
@@ -25,6 +27,7 @@ function selectionKey(s: Selection): string {
 export function MainShell() {
   const self = useIdentityStore((s) => s.self);
   const loadRoster = useRosterStore((s) => s.loadRoster);
+  const loadDrafts = useChatStore((s) => s.loadDrafts);
   const loadRooms = useRoomStore((s) => s.loadRooms);
   const loadUnread = useRoomStore((s) => s.loadUnread);
   const loadMuted = useRoomStore((s) => s.loadMuted);
@@ -36,11 +39,13 @@ export function MainShell() {
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [jumpTarget, setJumpTarget] = useState<{ key: string; messageId: string } | null>(null);
 
   useGlobalShortcuts({
     onOpenSettings: () => setSettingsOpen(true),
     onOpenSearch: () => setSearchOpen(true),
+    onOpenShortcuts: () => setShortcutsOpen((v) => !v),
   });
 
   function selectionForRoom(roomId: string): Selection | null {
@@ -55,16 +60,22 @@ export function MainShell() {
 
   useEffect(() => {
     void loadRoster();
+    void loadDrafts();
     // Mute state must load before unread so the first badge computation
     // already excludes muted rooms from the dock count.
     void loadRooms().then(() => loadMuted().then(() => loadUnread()));
-  }, [loadRoster, loadRooms, loadMuted, loadUnread]);
+  }, [loadRoster, loadDrafts, loadRooms, loadMuted, loadUnread]);
 
   useEffect(() => {
     if (!self || bridgeStarted) return;
     bridgeStarted = true;
     initNetworkBridge(self);
   }, [self]);
+
+  useEffect(() => {
+    window.addEventListener("pagehide", flushPendingDrafts);
+    return () => window.removeEventListener("pagehide", flushPendingDrafts);
+  }, []);
 
   useEffect(() => {
     function onFocus() {
@@ -130,9 +141,10 @@ export function MainShell() {
           const sel = selectionForRoom(roomId);
           if (!sel) return;
           setSelection(sel);
-          setJumpTarget({ key: selectionKey(sel), messageId });
+          setJumpTarget(messageId ? { key: selectionKey(sel), messageId } : null);
         }}
       />
+      <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CallOverlay />
       <RoomCallWindow />
       <WatchPartyWindow />

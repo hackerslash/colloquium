@@ -43,10 +43,18 @@ function highlight(snippet: string): React.ReactNode[] {
   return parts;
 }
 
+const MAX_JUMP_MATCHES = 5;
+
+/** One flat list so ↑/↓ and Enter cross the name/message boundary. */
+type Item =
+  | { kind: "jump"; key: string; roomId: string; name: string; dm: boolean }
+  | { kind: "message"; key: string; result: SearchResult };
+
 type SearchModalProps = {
   open: boolean;
   onClose: () => void;
-  onPick: (roomId: string, messageId: string) => void;
+  /** `messageId` is null for a conversation jump — open it, don't scroll. */
+  onPick: (roomId: string, messageId: string | null) => void;
 };
 
 export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
@@ -128,27 +136,60 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
     };
   }, [open, query, scopeRoom, activeRoomId]);
 
-  function pick(r: SearchResult) {
-    onPick(r.message.roomId, r.message.id);
+  const trimmed = query.trim();
+
+  const jumps = useMemo<Item[]>(() => {
+    const needle = trimmed.toLowerCase();
+    if (needle.length < MIN_CHARS) return [];
+    const out: Item[] = [];
+    for (const c of Object.values(contactsById)) {
+      if (c.revoked || !c.displayName.toLowerCase().includes(needle)) continue;
+      const roomId = dmRoomIdByContact[c.identityId];
+      if (roomId) {
+        out.push({ kind: "jump", key: `dm:${c.identityId}`, roomId, name: c.displayName, dm: true });
+      }
+    }
+    for (const room of Object.values(roomsById)) {
+      if (room.type !== "group") continue;
+      const name = room.name ?? "Room";
+      if (!name.toLowerCase().includes(needle)) continue;
+      out.push({ kind: "jump", key: `group:${room.id}`, roomId: room.id, name, dm: false });
+    }
+    return out.slice(0, MAX_JUMP_MATCHES);
+  }, [trimmed, contactsById, dmRoomIdByContact, roomsById]);
+
+  const items = useMemo<Item[]>(
+    () => [
+      ...jumps,
+      ...results.map((result): Item => ({ kind: "message", key: result.message.id, result })),
+    ],
+    [jumps, results],
+  );
+
+  // The list shrinks as the query narrows; a stale index would break Enter.
+  const activeIndex = items.length === 0 ? 0 : Math.min(selected, items.length - 1);
+
+  function pick(item: Item) {
+    if (item.kind === "jump") onPick(item.roomId, null);
+    else onPick(item.result.message.roomId, item.result.message.id);
     onClose();
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (results.length === 0) return;
+    if (items.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelected((i) => Math.min(i + 1, results.length - 1));
+      setSelected(Math.min(activeIndex + 1, items.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setSelected((i) => Math.max(i - 1, 0));
+      setSelected(Math.max(activeIndex - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const r = results[selected];
-      if (r) pick(r);
+      const item = items[activeIndex];
+      if (item) pick(item);
     }
   }
 
-  const trimmed = query.trim();
   const activeRoomName = activeRoomId ? roomLabel(activeRoomId).name : null;
 
   return (
@@ -185,27 +226,60 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
 
         <div className="max-h-[50vh] min-h-[8rem] overflow-y-auto">
           {trimmed.length < MIN_CHARS ? (
-            <EmptyState icon={Search} title="Type to search" description="Find any message across your rooms." />
-          ) : loading ? (
-            <EmptyState icon={Search} title="Searching…" />
-          ) : results.length === 0 ? (
-            <EmptyState icon={Search} title="No results" description={`No messages match “${trimmed}”.`} />
+            <EmptyState
+              icon={Search}
+              title="Type to search"
+              description="Jump to a person or room, or find any message."
+            />
+          ) : items.length === 0 ? (
+            loading ? (
+              <EmptyState icon={Search} title="Searching…" />
+            ) : (
+              <EmptyState icon={Search} title="No results" description={`Nothing matches “${trimmed}”.`} />
+            )
           ) : (
             <ul className="flex flex-col gap-1">
-              {results.map((r, i) => {
+              {items.map((item, i) => {
+                const active = i === activeIndex;
+                const rowClass = cx(
+                  "flex w-full rounded-lg px-3 py-2 text-left transition-colors",
+                  active ? "bg-accent/10" : "hover:bg-bg-tertiary/60",
+                );
+                if (item.kind === "jump") {
+                  return (
+                    <li key={item.key}>
+                      <button
+                        type="button"
+                        onClick={() => pick(item)}
+                        onMouseEnter={() => setSelected(i)}
+                        className={cx(rowClass, "items-center gap-2")}
+                      >
+                        {item.dm ? (
+                          <User size={14} className="shrink-0 text-text-muted" />
+                        ) : (
+                          <Hash size={14} className="shrink-0 text-text-muted" />
+                        )}
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">
+                          {item.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-text-muted">
+                          {item.dm ? "Open conversation" : "Open room"}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                }
+                const r = item.result;
                 const { name, dm } = roomLabel(r.message.roomId);
                 return (
-                  <li key={r.message.id}>
+                  <li key={item.key}>
                     <button
                       type="button"
-                      onClick={() => pick(r)}
+                      onClick={() => pick(item)}
                       onMouseEnter={() => setSelected(i)}
-                      className={cx(
-                        "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 text-left transition-colors",
-                        i === selected ? "bg-accent/10" : "hover:bg-bg-tertiary/60",
-                      )}
+                      className={cx(rowClass, "flex-col gap-0.5")}
                     >
-                      <div className="flex items-center gap-1.5 text-xs text-text-muted">
+                      <div className="flex w-full items-center gap-1.5 text-xs text-text-muted">
                         {dm ? (
                           <User size={12} className="shrink-0" />
                         ) : (
@@ -216,7 +290,7 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
                         <span>{authorName(r.message.authorId)}</span>
                         <span className="ml-auto shrink-0">{timeLabel(r.message.sentAt)}</span>
                       </div>
-                      <p className="truncate text-sm text-text-primary">{highlight(r.snippet)}</p>
+                      <p className="w-full truncate text-sm text-text-primary">{highlight(r.snippet)}</p>
                     </button>
                   </li>
                 );

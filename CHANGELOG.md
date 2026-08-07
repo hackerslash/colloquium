@@ -7,6 +7,64 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## Unreleased
+
+### Added
+
+- **Rooms have topics.** The column was always there and always gossiped with
+  every announce; it just had nowhere to be typed. Set one from the space
+  details, and it sits beside the room name in the header.
+- **Export a conversation** to a Markdown file, grouped by day. Deleted messages
+  are kept as a placeholder rather than dropped, so the record doesn't imply a
+  conversation without gaps.
+- **↑ in an empty composer edits your last message**, the way every other chat
+  app does it.
+- **Copy a message's text** from its hover toolbar — copying what the bubble
+  reads as, so mentions and animated emoji don't paste as raw tokens.
+- **A jump-to-latest pill** when you've scrolled away from the newest message,
+  counting what arrived while you were reading back.
+- **Attachment progress.** A 25 MB file takes real seconds to send and the
+  composer used to simply look stuck.
+- **Recently-used emoji** at the top of the picker.
+- **Pause notifications** for 30 minutes, an hour, or eight. The sidebar says so
+  while it's on, and that banner is also how you turn it back off.
+- **Interface scale**, with ⌘+ / ⌘− / ⌘0.
+- **⌘/ lists the keyboard shortcuts.**
+
+- **Attachments catch up.** A file only ever streamed to whoever was online when
+  it was sent, so anyone offline received the message with nothing behind it —
+  permanently. A missing attachment now offers to fetch itself from the sender,
+  and arrives in place. Only the author serves the bytes, only for a file one of
+  their live messages actually references, and only to someone already entitled
+  to that room.
+- **Drafts survive quitting.** Half-written messages lived only in memory, so
+  closing the window discarded them without a word. They are now kept per room
+  and restored on the next launch.
+- **⌘K jumps to people and rooms**, not just messages. Matching conversations
+  appear above the message hits and open on Enter.
+
+### Fixed
+
+- **Messages could be lost for good.** The room-sync `have` vector reported the
+  highest sequence number held per author, which hides a gap — and a peer told
+  we already held a message never resent it. Anything in the hole was gone. The
+  vector now reports the highest *contiguous* sequence. This is not an exotic
+  case: a live send lands the moment its author reconnects, which easily beats
+  the sync response carrying the middle.
+- **Large attachments never arrived.** The receiving side rejected any file in
+  roughly the top 4 KB of the 25 MB range the composer accepts. The message
+  showed up, the file silently did not.
+- **Push-to-talk left the microphone open.** With push-to-talk on, a call
+  transmitted from the moment it connected until the shortcut was pressed for
+  the first time — the exact opposite of what the setting means. Calls now open
+  muted.
+- Rooms no longer show phantom unread after reconnecting. A backfill routinely
+  carries messages older than your read cursor, and each one was counted.
+- A contact can no longer write a name, topic, or their own membership onto one
+  of your direct-message rooms. Those room ids are derived from their two
+  members, so they are guessable by design; group announcements are now confined
+  to the group namespace.
+
 ## 0.6.0
 
 ### Added

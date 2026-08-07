@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Hash, Phone, Clapperboard } from "lucide-react";
+import { Bell, BellOff, Download, Hash, Phone, Clapperboard } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
 import { useRoomCallStore } from "../../stores/useRoomCallStore";
@@ -19,6 +19,8 @@ import { EmptyState } from "../ui/EmptyState";
 import { RoomMembersModal } from "./RoomMembersModal";
 import { toast } from "../../stores/useToastStore";
 import { encodeMentions } from "../../lib/mentions";
+import { exportRoom } from "../../lib/exportTranscript";
+import * as messageRepo from "../../services/db/messageRepo";
 
 type GroupRoomViewProps = {
   roomId: string;
@@ -36,6 +38,7 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
 
   const loadMessages = useChatStore((s) => s.loadMessages);
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const sendVoiceMessage = useChatStore((s) => s.sendVoiceMessage);
   const editMessage = useChatStore((s) => s.editMessage);
   const cancelEdit = useChatStore((s) => s.cancelEdit);
   const setDraft = useChatStore((s) => s.setDraft);
@@ -44,6 +47,8 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
   const replyingTo = useChatStore((s) => s.replyingToByRoom[roomId]) ?? null;
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const editing = useChatStore((s) => s.editingByRoom[roomId]) ?? null;
+  const beginEditLast = useChatStore((s) => s.beginEditLast);
+  const upload = useChatStore((s) => s.uploadByRoom[roomId]) ?? null;
   const contactsById = useRosterStore((s) => s.contactsById);
 
   const callRoomId = useRoomCallStore((s) => s.roomId);
@@ -111,6 +116,23 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
     });
   }
 
+  async function handleExport() {
+    try {
+      await exportRoom(
+        room?.name ?? "Room",
+        messageRepo.listByRoom,
+        roomId,
+        (id) =>
+          id === self?.identityId
+            ? (self?.displayName ?? "You")
+            : (contactsById[id]?.displayName ?? "Unknown"),
+      );
+    } catch (err) {
+      console.error("Failed to export conversation:", err);
+      toast.error("Export failed", "Couldn't read the conversation.");
+    }
+  }
+
   if (!room) {
     return <EmptyState icon={Hash} title="Room not found" />;
   }
@@ -127,6 +149,14 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
           <h1 className="text-sm font-semibold">{room.name ?? "Room"}</h1>
           <Badge>{memberIds.length} members</Badge>
         </button>
+        {room.topic && (
+          <>
+            <span className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+            <span className="min-w-0 max-w-[40%] truncate text-xs text-text-secondary" title={room.topic}>
+              {room.topic}
+            </span>
+          </>
+        )}
 
         {inThisCall && (
           <span className="flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">
@@ -158,6 +188,11 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
               {wpAnnounced ? "Join watch party" : "Watch party"}
             </Button>
           )}
+          <IconButton
+            icon={Download}
+            label="Export conversation"
+            onClick={() => void handleExport()}
+          />
           <IconButton
             icon={muted ? BellOff : Bell}
             label={muted ? "Unmute notifications" : "Mute notifications"}
@@ -208,12 +243,21 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
         onCancelReply={() => setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => cancelEdit(roomId)}
+        onEditLast={() => beginEditLast(roomId)}
+        upload={upload}
         onChange={(v) => {
           setDraft(roomId, v);
           if (v) notifyTyping(roomId, memberIds);
           else stopTyping(roomId, memberIds);
         }}
         onSend={handleSend}
+        onSendVoice={(cap) => {
+          stopTyping(roomId, memberIds);
+          return sendVoiceMessage(roomId, memberIds, cap).catch((err) => {
+            console.error("Failed to send voice message:", err);
+            toast.error("Voice not sent", "Please try again.");
+          });
+        }}
       />
 
       <RoomMembersModal

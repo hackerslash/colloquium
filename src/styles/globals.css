@@ -140,6 +140,26 @@ textarea,
   }
 }
 
+/* Indeterminate progress bar (toasts): work is running but has no percentage. */
+@keyframes indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+.animate-indeterminate {
+  animation: indeterminate 1.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
 /* Slim range track for controls that sit on video, where the surrounding
    surface is the film rather than a themed panel. The caller sets `--fill` to
    the filled fraction. */

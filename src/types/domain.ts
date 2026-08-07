@@ -51,12 +51,16 @@ export type Message = {
   authorId: string;
   authorSeq: number;
   hlc: string;
-  contentType: "text" | "image" | "file" | "system";
+  contentType: "text" | "image" | "file" | "audio" | "system";
   body: string | null;
   attachmentId?: string;
   attachmentName?: string;
   attachmentSize?: number;
   attachmentType?: string;
+  /** Voice-memo duration in milliseconds — set when contentType === "audio". */
+  voiceDurationMs?: number;
+  /** Normalized waveform peaks 0..1 for the voice bubble. ~40 floats. */
+  voiceWaveform?: number[];
   replyToId: string | null;
   sentAt: number;
   editedAt: number | null;
