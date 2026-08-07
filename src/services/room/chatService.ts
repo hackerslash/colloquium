@@ -700,6 +700,14 @@ export async function handleFileChunk(msg: FileChunkMessage): Promise<void> {
     state.chunks[msg.chunkIndex] = msg.data;
     state.receivedCount++;
 
+    // Let the UI show real transfer progress. Only new chunks fire this, so a
+    // duplicate can't make the bar go backwards.
+    window.dispatchEvent(
+      new CustomEvent("colloquium_file_progress", {
+        detail: { fileId: msg.fileId, received: state.receivedCount, expected: state.expected },
+      }),
+    );
+
     if (state.receivedCount === state.expected) {
       const fullBase64 = state.chunks.join("");
       const bytes = base64ToBytes(fullBase64);

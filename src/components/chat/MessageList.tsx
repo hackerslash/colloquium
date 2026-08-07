@@ -23,8 +23,8 @@ import {
 } from "../../lib/animatedEmoji";
 import { cx } from "../../lib/cx";
 import { saveToDisk } from "../../lib/saveFile";
+import { fetchAttachment } from "../../lib/fetchAttachment";
 import * as fileRepo from "../../services/db/fileRepo";
-import * as chatService from "../../services/room/chatService";
 import { toast } from "../../stores/useToastStore";
 
 const GROUP_GAP_MS = 5 * 60_000;
@@ -66,8 +66,6 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   const [available, setAvailable] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const requestTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => () => clearTimeout(requestTimer.current), []);
 
   useEffect(() => {
     if (!message.attachmentId) return;
@@ -114,13 +112,8 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   }, [message.attachmentId, message.attachmentType, message.contentType, isImage]);
 
   function fetchFromSender() {
-    if (!chatService.requestAttachment(message)) {
-      toast.info("Sender is offline", "The file will be available when they're back online.");
-      return;
-    }
     setRequesting(true);
-    clearTimeout(requestTimer.current);
-    requestTimer.current = setTimeout(() => setRequesting(false), 30_000);
+    void fetchAttachment(message).finally(() => setRequesting(false));
   }
 
   async function downloadFile() {

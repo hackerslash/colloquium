@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Download, Pause, Play } from "lucide-react";
 import type { Message } from "../../types/domain";
 import * as fileRepo from "../../services/db/fileRepo";
-import * as chatService from "../../services/room/chatService";
+import { fetchAttachment } from "../../lib/fetchAttachment";
 import { toast } from "../../stores/useToastStore";
 import { cx } from "../../lib/cx";
 import { saveToDisk } from "../../lib/saveFile";
@@ -15,7 +15,6 @@ function formatMs(ms: number): string {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
-export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boolean }) {
 /** Bars are sized in px, never `flex-1`: the message bubble is shrink-to-fit,
  * so percentage-width bars resolve to zero and the waveform disappears. */
 const BAR_W = 3;
@@ -37,18 +36,16 @@ function Bars({ waveform, className }: { waveform: number[]; className: string }
   );
 }
 
+export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
   const [requesting, setRequesting] = useState(false);
-  const requestTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [durationMs, setDurationMs] = useState<number>(message.voiceDurationMs ?? 0);
 
   const waveform = message.voiceWaveform ?? Array.from({ length: VOICE_WAVEFORM_BARS }, () => 0.4);
-
-  useEffect(() => () => clearTimeout(requestTimer.current), []);
 
   useEffect(() => {
     if (!message.attachmentId) return;
@@ -94,13 +91,8 @@ function Bars({ waveform, className }: { waveform: number[]; className: string }
   }, [message.attachmentId]);
 
   function fetchFromSender() {
-    if (!chatService.requestAttachment(message)) {
-      toast.info("Sender is offline", "Voice will be available when they're back online.");
-      return;
-    }
     setRequesting(true);
-    clearTimeout(requestTimer.current);
-    requestTimer.current = setTimeout(() => setRequesting(false), 30_000);
+    void fetchAttachment(message).finally(() => setRequesting(false));
   }
 
   async function downloadFile() {
