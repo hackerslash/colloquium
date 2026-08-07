@@ -12,6 +12,7 @@ import { FloatingCallWindow } from "./FloatingCallWindow";
 import { IconButton } from "../ui/IconButton";
 import type { ConnectionQuality } from "../../services/call/PeerConnectionWrapper";
 import { hasLiveVideo } from "../../lib/mediaTracks";
+import { tileGrid } from "./tileGrid";
 
 function useNameLookup() {
   const self = useIdentityStore((s) => s.self);
@@ -89,12 +90,7 @@ export function RoomCallWindow() {
     return hasLiveVideo(stream) && camOnByParticipant[id] !== false;
   }
 
-  const gridCols =
-    participants.length <= 1
-      ? "grid-cols-1"
-      : participants.length <= 4
-        ? "grid-cols-1 md:grid-cols-2"
-        : "grid-cols-2 md:grid-cols-3";
+  const { cols, rows } = tileGrid(participants.length);
 
   const roomTitle = room?.name ? `#${room.name}` : "Room Meeting";
   const statusText = `${participants.length} participant${participants.length === 1 ? "" : "s"}`;
@@ -226,7 +222,16 @@ export function RoomCallWindow() {
           </div>
         </div>
       ) : (
-        <div className={`grid flex-1 content-center gap-3 overflow-auto p-3 pb-20 ${gridCols}`}>
+        // Rows divide the window's height instead of inheriting it from tile
+        // width, so the grid can't grow past the bottom edge no matter how many
+        // people join. Tiles fill their cell and the video letterboxes inside.
+        <div
+          className="grid min-h-0 flex-1 gap-3 p-3 pb-20"
+          style={{
+            gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
+          }}
+        >
           {participants.map((id) => {
             const stream = mainStreamFor(id);
             return (
@@ -240,6 +245,7 @@ export function RoomCallWindow() {
                 quality={qualityFor(id)}
                 hasVideo={hasVideoFor(id, stream)}
                 speaking={speakingIds.has(id)}
+                fit="fill"
               />
             );
           })}
