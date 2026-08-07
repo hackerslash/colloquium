@@ -15,6 +15,27 @@ function formatMs(ms: number): string {
 }
 
 export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boolean }) {
+/** Bars are sized in px, never `flex-1`: the message bubble is shrink-to-fit,
+ * so percentage-width bars resolve to zero and the waveform disappears. */
+const BAR_W = 3;
+const BAR_GAP = 2;
+const BAR_MIN_H = 3;
+const BAR_MAX_H = 24;
+
+function Bars({ waveform, className }: { waveform: number[]; className: string }) {
+  return (
+    <div className="absolute inset-y-0 left-0 flex items-center" style={{ gap: `${BAR_GAP}px` }}>
+      {waveform.map((v, i) => (
+        <span
+          key={i}
+          className={cx("shrink-0 rounded-full", className)}
+          style={{ width: `${BAR_W}px`, height: `${BAR_MIN_H + v * (BAR_MAX_H - BAR_MIN_H)}px` }}
+        />
+      ))}
+    </div>
+  );
+}
+
   const [url, setUrl] = useState<string | null>(null);
   const [available, setAvailable] = useState(false);
   const [requesting, setRequesting] = useState(false);
@@ -106,16 +127,15 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
     }
   }
 
-  function seekTo(index: number) {
+  function seekToMs(ms: number) {
     const audio = audioRef.current;
     if (!audio || !durationMs) return;
-    const targetSec = ((index + 0.5) / waveform.length) * (durationMs / 1000);
-    audio.currentTime = targetSec;
-    setCurrentMs(targetSec * 1000);
+    audio.currentTime = ms / 1000;
+    setCurrentMs(ms);
   }
 
   const progress = durationMs ? Math.min(1, currentMs / durationMs) : 0;
-  const activeBars = Math.min(waveform.length, Math.round(progress * waveform.length));
+  const trackW = waveform.length * BAR_W + (waveform.length - 1) * BAR_GAP;
 
   if (!available) {
     return (
@@ -155,33 +175,44 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
         {isPlaying ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
       </button>
 
-      {/* Waveform */}
-      <div className="flex flex-1 items-center gap-[2px] overflow-hidden">
-        {waveform.map((v, i) => {
-          const isActive = i < activeBars;
-          const h = 8 + v * 16;
-          return (
-            <button
-              key={i}
-              type="button"
-              onClick={() => seekTo(i)}
-              aria-label={`Seek to ${Math.round((i / waveform.length) * 100)}%`}
-              className="flex flex-1 items-center justify-center py-1"
-            >
-              <span
-                className={cx(
-                  "w-full max-w-[3px] rounded-full transition-colors",
-                  isActive ? (isOwn ? "bg-white" : "bg-accent") : isOwn ? "bg-white/40" : "bg-accent/40",
-                )}
-                style={{ height: `${h}px` }}
-              />
-            </button>
-          );
-        })}
+      {/* Waveform: unplayed bars, a played layer clipped to the play head, and a
+          transparent range input on top for drag + keyboard seeking. */}
+      <div className="relative h-6 min-w-0 shrink overflow-hidden" style={{ width: `${trackW}px` }}>
+        <Bars waveform={waveform} className={isOwn ? "bg-white/40" : "bg-accent/30"} />
+        <div className="absolute inset-y-0 left-0 overflow-hidden" style={{ width: `${progress * 100}%` }}>
+          <div className="relative h-full" style={{ width: `${trackW}px` }}>
+            <Bars waveform={waveform} className={isOwn ? "bg-white" : "bg-accent"} />
+          </div>
+        </div>
+        {durationMs > 0 && (
+          <span
+            aria-hidden="true"
+            className={cx(
+              "pointer-events-none absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow",
+              isOwn ? "bg-white" : "bg-accent",
+            )}
+            style={{ left: `${progress * 100}%` }}
+          />
+        )}
+        <input
+          type="range"
+          min={0}
+          max={durationMs || 0}
+          step="any"
+          value={Math.min(currentMs, durationMs || 0)}
+          onChange={(e) => seekToMs(Number(e.target.value))}
+          disabled={!url || !durationMs}
+          aria-label="Seek voice message"
+          aria-valuetext={`${formatMs(currentMs)} of ${formatMs(durationMs)}`}
+          // Native appearance is kept deliberately: `appearance-none` without a
+          // styled ::-webkit-slider-thumb drops the thumb's hit area and breaks
+          // dragging. Opacity hides it; the bars above are the visible control.
+          className="absolute inset-0 m-0 h-full w-full cursor-pointer p-0 opacity-0 disabled:cursor-default"
+        />
       </div>
 
       <span className="shrink-0 text-xs tabular-nums text-text-muted">
-        {isPlaying ? formatMs(currentMs) : formatMs(durationMs || 0)}
+        {currentMs > 0 ? formatMs(currentMs) : formatMs(durationMs || 0)}
       </span>
 
       <button
