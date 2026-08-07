@@ -78,6 +78,10 @@ export async function dmRoomId(a: string, b: string): Promise<string> {
 }
 
 function canonicalMessage(m: Omit<ChatMessageWire, "sig">): string {
+  // Voice fields are NOT part of the signed payload for backward compat:
+  // old peers verify the 15-element array; new peers must accept that same
+  // shape. Voice metadata is a UI hint (waveform/duration) whose spoofing
+  // is cosmetic — audio bytes are still bound via attachmentId.
   return JSON.stringify([
     m.id,
     m.roomId,
@@ -97,8 +101,23 @@ function canonicalMessage(m: Omit<ChatMessageWire, "sig">): string {
   ]);
 }
 
+const KNOWN_CONTENT_TYPES = new Set(["text", "image", "file", "audio", "system"]);
+
+function normalizeContentType(ct: string): Message["contentType"] {
+  return (KNOWN_CONTENT_TYPES.has(ct) ? ct : "file") as Message["contentType"];
+}
+
 function wireToMessage(w: ChatMessageWire, deliveryStatus: Message["deliveryStatus"]): Message {
-  return { ...w, deliveryStatus, readAt: null };
+  const dur = typeof w.voiceDurationMs === "number" && Number.isFinite(w.voiceDurationMs) && w.voiceDurationMs >= 0 && w.voiceDurationMs <= 600_000 ? w.voiceDurationMs : undefined;
+  const wf = Array.isArray(w.voiceWaveform) ? w.voiceWaveform.filter((v) => typeof v === "number" && v >= 0 && v <= 1).slice(0, 120) : undefined;
+  return {
+    ...w,
+    contentType: normalizeContentType(w.contentType),
+    voiceDurationMs: dur,
+    voiceWaveform: wf && wf.length > 0 ? wf : undefined,
+    deliveryStatus,
+    readAt: null,
+  };
 }
 
 function messageToWire(m: Message): ChatMessageWire {
@@ -114,6 +133,8 @@ function messageToWire(m: Message): ChatMessageWire {
     attachmentName: m.attachmentName,
     attachmentSize: m.attachmentSize,
     attachmentType: m.attachmentType,
+    voiceDurationMs: m.voiceDurationMs,
+    voiceWaveform: m.voiceWaveform,
     replyToId: m.replyToId,
     sentAt: m.sentAt,
     editedAt: m.editedAt,
@@ -205,11 +226,14 @@ export async function handleFileRequest(
 
 export type Attachment = { id: string; name: string; size: number; type: string };
 
+export type VoiceMeta = { durationMs: number; waveform?: number[] };
+
 export type SendOptions = {
   attachment?: Attachment;
   fileBuffer?: Uint8Array;
   replyToId?: string | null;
   onProgress?: (sent: number, total: number) => void;
+  voice?: VoiceMeta;
 };
 
 export async function sendMessage(
@@ -218,7 +242,7 @@ export async function sendMessage(
   memberIds: string[],
   body: string,
   physicalNow: number,
-  { attachment, fileBuffer, replyToId, onProgress }: SendOptions = {},
+  { attachment, fileBuffer, replyToId, onProgress, voice }: SendOptions = {},
 ): Promise<Message> {
   await ensureClock();
   clock = tickLocal(clock, physicalNow, nodeShort(self.identityId));
@@ -226,18 +250,23 @@ export async function sendMessage(
 
   const message = await withSendLock(async () => {
     const authorSeq = await messageRepo.nextAuthorSeq(roomId, self.identityId);
+    let contentType: ChatMessageWire["contentType"] = "text";
+    if (voice) contentType = "audio";
+    else if (attachment) contentType = attachment.type.startsWith("image/") ? "image" : "file";
     const wireBase: Omit<ChatMessageWire, "sig"> = {
       id: crypto.randomUUID(),
       roomId,
       authorId: self.identityId,
       authorSeq,
       hlc,
-      contentType: attachment ? (attachment.type.startsWith("image/") ? "image" : "file") : "text",
+      contentType,
       body,
       attachmentId: attachment?.id ?? undefined,
       attachmentName: attachment?.name ?? undefined,
       attachmentSize: attachment?.size ?? undefined,
       attachmentType: attachment?.type ?? undefined,
+      voiceDurationMs: voice?.durationMs,
+      voiceWaveform: voice?.waveform,
       replyToId: replyToId ?? null,
       sentAt: physicalNow,
       editedAt: null,
@@ -287,6 +316,8 @@ function tombstoned(m: Message, deletedAt: number, sig: string): Message {
     attachmentName: undefined,
     attachmentSize: undefined,
     attachmentType: undefined,
+    voiceDurationMs: undefined,
+    voiceWaveform: undefined,
     editedAt: null,
     deletedAt,
     sig,

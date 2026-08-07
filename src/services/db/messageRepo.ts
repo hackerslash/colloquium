@@ -9,12 +9,14 @@ type MessageRow = {
   author_id: string;
   author_seq: number;
   hlc: string;
-  content_type: "text" | "image" | "file" | "system";
+  content_type: "text" | "image" | "file" | "audio" | "system";
   body: string | null;
   attachment_id: string | null;
   attachment_name: string | null;
   attachment_size: number | null;
   attachment_type: string | null;
+  voice_duration: number | null;
+  voice_waveform: string | null;
   reply_to_id: string | null;
   sent_at: number;
   edited_at: number | null;
@@ -25,6 +27,18 @@ type MessageRow = {
 };
 
 function fromRow(row: MessageRow): Message {
+  let voiceWaveform: number[] | undefined;
+  if (row.voice_waveform) {
+    try {
+      const parsed = JSON.parse(row.voice_waveform);
+      if (Array.isArray(parsed)) {
+        const nums = parsed.filter((v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1);
+        if (nums.length > 0 && nums.length <= 120) voiceWaveform = nums as number[];
+      }
+    } catch {
+      // ignore corrupt waveform
+    }
+  }
   return {
     id: row.id,
     roomId: row.room_id,
@@ -37,6 +51,8 @@ function fromRow(row: MessageRow): Message {
     attachmentName: row.attachment_name ?? undefined,
     attachmentSize: row.attachment_size ?? undefined,
     attachmentType: row.attachment_type ?? undefined,
+    voiceDurationMs: row.voice_duration ?? undefined,
+    voiceWaveform,
     replyToId: row.reply_to_id,
     sentAt: row.sent_at,
     editedAt: row.edited_at,
@@ -63,8 +79,8 @@ export async function insertIfAbsent(msg: Message): Promise<boolean> {
   const result = await db.execute(
     `INSERT INTO messages
        (id, room_id, author_id, author_seq, hlc, content_type, body, attachment_id, attachment_name, attachment_size, attachment_type,
-        reply_to_id, sent_at, edited_at, deleted_at, sig, delivery_status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        voice_duration, voice_waveform, reply_to_id, sent_at, edited_at, deleted_at, sig, delivery_status)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
      ON CONFLICT(room_id, author_id, author_seq) DO NOTHING`,
     [
       msg.id,
@@ -78,6 +94,8 @@ export async function insertIfAbsent(msg: Message): Promise<boolean> {
       msg.attachmentName ?? null,
       msg.attachmentSize ?? null,
       msg.attachmentType ?? null,
+      msg.voiceDurationMs ?? null,
+      msg.voiceWaveform ? JSON.stringify(msg.voiceWaveform) : null,
       msg.replyToId,
       msg.sentAt,
       msg.editedAt,
@@ -133,7 +151,8 @@ export async function applyDelete(
   const db = await getDb();
   const result = await db.execute(
     `UPDATE messages SET body = NULL, attachment_id = NULL, attachment_name = NULL,
-       attachment_size = NULL, attachment_type = NULL, edited_at = NULL,
+       attachment_size = NULL, attachment_type = NULL, voice_duration = NULL,
+       voice_waveform = NULL, edited_at = NULL,
        deleted_at = $1, sig = $2
      WHERE id = $3 AND deleted_at IS NULL`,
     [deletedAt, sig, id],

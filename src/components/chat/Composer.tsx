@@ -1,17 +1,19 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Bold, Code, Italic, Paperclip, Pencil, Quote, Reply, SendHorizontal, Smile, Strikethrough, Plus, X } from "lucide-react";
+import { Bold, Code, Italic, Mic, Pause, Play, Paperclip, Pencil, Quote, Reply, SendHorizontal, Smile, Strikethrough, Plus, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { IconButton } from "../ui/IconButton";
 import { MAX_FILE_SIZE } from "../../services/room/chatService";
 import { toast } from "../../stores/useToastStore";
 import { EmojiPicker } from "./EmojiPicker";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
+import { VoiceRecorder, getPreferredVoiceMimeType, MAX_VOICE_DURATION_MS, type VoiceCapture } from "../../services/room/voiceRecorder";
 
 type ComposerProps = {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
   onSend: (file?: File) => void | Promise<unknown>;
+  onSendVoice?: (capture: VoiceCapture) => void | Promise<unknown>;
   replyingTo?: { id: string; authorName: string; snippet: string } | null;
   onCancelReply?: () => void;
   /** When set, the composer is editing an existing message: shows an edit
@@ -38,6 +40,13 @@ function detectMentionQuery(text: string, caret: number): { start: number; query
   return { start: caret - query.length - 1, query };
 }
 
+function formatMs(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}:${String(r).padStart(2, "0")}`;
+}
+
 /** Lets a parent (the drag-and-drop zone around the whole chat window) hand
  * a dropped file to the composer as if it had been picked via the file input. */
 export type ComposerHandle = {
@@ -50,6 +59,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     placeholder,
     onChange,
     onSend,
+    onSendVoice,
     replyingTo,
     onCancelReply,
     editing,
@@ -67,6 +77,31 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const [sending, setSending] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<{ start: number; query: string } | null>(null);
   const [mentionIndex, setMentionIndex] = useState(0);
+
+  const recorderRef = useRef<VoiceRecorder | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingMs, setRecordingMs] = useState(0);
+  const [voicePreview, setVoicePreview] = useState<VoiceCapture | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const voiceSupported = getPreferredVoiceMimeType() !== null;
+  const canVoice = !!onSendVoice && !editing && !selectedFile && voiceSupported;
+
+  useEffect(() => {
+    return () => {
+      if (tickRef.current) clearInterval(tickRef.current);
+      recorderRef.current?.cancel();
+      previewAudioRef.current?.pause();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
 
   const mentionMatches =
     mentionQuery && mentionCandidates
@@ -198,6 +233,100 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     if (result) {
       setSending(true);
       void Promise.resolve(result).finally(() => setSending(false));
+    }
+  }
+
+  async function startVoice() {
+    if (isRecording || voicePreview) return;
+    const rec = new VoiceRecorder();
+    recorderRef.current = rec;
+    try {
+      await rec.start({
+        onAutoStop: () => {
+          void stopVoice();
+        },
+      });
+      setIsRecording(true);
+      setRecordingMs(0);
+      tickRef.current = setInterval(() => {
+        setRecordingMs(rec.durationMs);
+        if (rec.durationMs >= MAX_VOICE_DURATION_MS) {
+          void stopVoice();
+        }
+      }, 120);
+    } catch (err) {
+      recorderRef.current = null;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("NotAllowed") || msg.includes("Permission")) {
+        toast.error("Microphone blocked", "Allow mic access in System Settings and try again.");
+      } else if (msg.includes("not supported")) {
+        toast.error("Voice not supported", "This WebView cannot record audio.");
+      } else {
+        toast.error("Could not start recording", msg);
+      }
+    }
+  }
+
+  async function stopVoice() {
+    const rec = recorderRef.current;
+    if (!rec || rec !== recorderRef.current) return;
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = undefined;
+    setIsRecording(false);
+    try {
+      const cap = await rec.stop();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setVoicePreview(cap);
+      setRecordingMs(cap.durationMs);
+      setPreviewUrl(URL.createObjectURL(cap.blob));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("too short")) toast.error("Recording too short", "Hold to record at least 0.5s.");
+      else toast.error("Recording failed", msg);
+      setRecordingMs(0);
+    } finally {
+      if (recorderRef.current === rec) recorderRef.current = null;
+    }
+  }
+
+  function cancelVoice() {
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = undefined;
+    recorderRef.current?.cancel();
+    recorderRef.current = null;
+    setIsRecording(false);
+    setRecordingMs(0);
+    setVoicePreview(null);
+    setPreviewPlaying(false);
+    previewAudioRef.current?.pause();
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+  }
+
+  function togglePreviewPlay() {
+    const audio = previewAudioRef.current;
+    if (!audio) return;
+    if (previewPlaying) {
+      audio.pause();
+      setPreviewPlaying(false);
+    } else {
+      void audio.play().then(() => setPreviewPlaying(true)).catch(() => {});
+    }
+  }
+
+  async function sendVoice() {
+    if (!voicePreview || !onSendVoice || sending) return;
+    const cap = voicePreview;
+    setSending(true);
+    try {
+      await onSendVoice(cap);
+      cancelVoice();
+    } catch (err) {
+      toast.error("Failed to send voice message", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
     }
   }
 
@@ -382,6 +511,103 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
         )}
       </AnimatePresence>
 
+      {/* Voice Preview (after recording, before send) */}
+      <AnimatePresence>
+        {voicePreview && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            className="mb-2.5 flex items-center gap-3 rounded-xl bg-bg-elevated px-4 py-3 border border-border/60 shadow-md"
+          >
+            <button
+              type="button"
+              onClick={togglePreviewPlay}
+              aria-label={previewPlaying ? "Pause preview" : "Play preview"}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white hover:bg-accent/90 transition-colors"
+            >
+              {previewPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+            </button>
+            <div className="flex flex-1 items-center gap-[2px] h-6">
+              {voicePreview.waveform.map((v, i) => (
+                <span
+                  key={i}
+                  className="w-[3px] rounded-full bg-accent/70"
+                  style={{ height: `${8 + v * 16}px` }}
+                />
+              ))}
+            </div>
+            <span className="shrink-0 text-xs font-medium tabular-nums text-text-muted">
+              {formatMs(voicePreview.durationMs)}
+            </span>
+            <button
+              type="button"
+              onClick={cancelVoice}
+              aria-label="Delete voice message"
+              className="rounded-full bg-black/10 p-1.5 text-text-muted hover:bg-danger/20 hover:text-danger transition-colors"
+            >
+              <Trash2 size={16} />
+            </button>
+            <IconButton
+              icon={SendHorizontal}
+              label="Send voice message"
+              size="sm"
+              variant="accent"
+              tooltip={false}
+              onClick={sendVoice}
+              disabled={sending}
+            />
+            <audio
+              ref={previewAudioRef}
+              src={previewUrl ?? undefined}
+              onEnded={() => setPreviewPlaying(false)}
+              onPause={() => setPreviewPlaying(false)}
+              preload="metadata"
+              className="hidden"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Recording Indicator */}
+      <AnimatePresence>
+        {isRecording && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            className="mb-2.5 flex items-center gap-3 rounded-xl bg-danger/10 px-4 py-3 border border-danger/30 shadow-md"
+          >
+            <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-danger shadow-[0_0_8px_rgba(220,38,38,0.8)]" />
+            <span className="text-xs font-medium tabular-nums text-danger">
+              {formatMs(recordingMs)} / {formatMs(MAX_VOICE_DURATION_MS)}
+            </span>
+            <div className="flex flex-1 items-center justify-center gap-1">
+              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:0ms]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:150ms]" />
+              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:300ms]" />
+              <span className="ml-2 text-xs text-text-muted">Recording…</span>
+            </div>
+            <button
+              type="button"
+              onClick={cancelVoice}
+              aria-label="Cancel recording"
+              className="rounded-full bg-black/10 p-1.5 text-text-muted hover:bg-danger/20 hover:text-danger transition-colors"
+            >
+              <X size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={stopVoice}
+              aria-label="Stop recording"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white hover:bg-danger/90 transition-colors"
+            >
+              <Pause size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Discord Style Full Width Input Container */}
       <div className="relative flex w-full flex-col rounded-xl border border-border/50 bg-bg-tertiary/90 transition-colors focus-within:border-accent/60 focus-within:ring-1 focus-within:ring-accent/40 shadow-sm">
         {/* Input Row */}
@@ -398,7 +624,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
           />
 
           {/* Plus / Attach Button (hidden while editing — edits are text-only) */}
-          {!editing && (
+          {!editing && !isRecording && !voicePreview && (
             <button
               type="button"
               title="Attach file"
@@ -409,89 +635,110 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             </button>
           )}
 
-          {/* Text Area */}
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            rows={1}
-            placeholder={placeholder}
-            aria-label="Message"
-            className="max-h-44 min-h-[38px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-text-primary outline-none focus:outline-none focus:ring-0 focus:border-0 shadow-none placeholder:text-text-muted leading-relaxed select-text"
-          />
-
-          {/* Actions: Emoji Picker & Send */}
-          <div className="mb-1 flex items-center gap-1 shrink-0">
-            {/* Markdown Quick Toolbar */}
-            <div className="hidden sm:flex items-center gap-0.5 border-r border-border/40 pr-1.5 mr-0.5">
-              <button
-                type="button"
-                onClick={() => wrapFormatting("**")}
-                title="Bold (**text**)"
-                className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
-              >
-                <Bold size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => wrapFormatting("*")}
-                title="Italic (*text*)"
-                className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
-              >
-                <Italic size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => wrapFormatting("~~")}
-                title="Strikethrough (~~text~~)"
-                className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
-              >
-                <Strikethrough size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => wrapFormatting("`")}
-                title="Code (`code`)"
-                className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
-              >
-                <Code size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={() => wrapFormatting("> ", "")}
-                title="Quote (> text)"
-                className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
-              >
-                <Quote size={14} />
-              </button>
-            </div>
-
-            {/* Emoji Picker Toggle Button */}
-            <button
-              type="button"
-              title="Add emoji"
-              onClick={() => setShowEmojiPicker((v) => !v)}
-              className={`rounded-lg p-1.5 transition-colors ${
-                showEmojiPicker
-                  ? "bg-accent/20 text-accent"
-                  : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
-              }`}
-            >
-              <Smile size={18} />
-            </button>
-
-            {/* Send Button */}
-            <IconButton
-              icon={SendHorizontal}
-              label="Send message"
-              size="sm"
-              variant={value.trim() || selectedFile ? "accent" : "ghost"}
-              disabled={sending || (!value.trim() && !selectedFile)}
-              tooltip={false}
-              onClick={handleSend}
+          {/* Text Area (hidden while recording/previewing) */}
+          {!isRecording && !voicePreview ? (
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              rows={1}
+              placeholder={placeholder}
+              aria-label="Message"
+              className="max-h-44 min-h-[38px] flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-text-primary outline-none focus:outline-none focus:ring-0 focus:border-0 shadow-none placeholder:text-text-muted leading-relaxed select-text"
             />
+          ) : (
+            <div className="flex-1" aria-hidden />
+          )}
+
+          {/* Actions: Emoji Picker & Send / Voice */}
+          <div className="mb-1 flex items-center gap-1 shrink-0">
+            {!isRecording && !voicePreview ? (
+              <>
+                {/* Markdown Quick Toolbar */}
+                <div className="hidden sm:flex items-center gap-0.5 border-r border-border/40 pr-1.5 mr-0.5">
+                  <button
+                    type="button"
+                    onClick={() => wrapFormatting("**")}
+                    title="Bold (**text**)"
+                    className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <Bold size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => wrapFormatting("*")}
+                    title="Italic (*text*)"
+                    className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <Italic size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => wrapFormatting("~~")}
+                    title="Strikethrough (~~text~~)"
+                    className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <Strikethrough size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => wrapFormatting("`")}
+                    title="Code (`code`)"
+                    className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <Code size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => wrapFormatting("> ", "")}
+                    title="Quote (> text)"
+                    className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <Quote size={14} />
+                  </button>
+                </div>
+
+                {/* Emoji Picker Toggle Button */}
+                <button
+                  type="button"
+                  title="Add emoji"
+                  onClick={() => setShowEmojiPicker((v) => !v)}
+                  className={`rounded-lg p-1.5 transition-colors ${
+                    showEmojiPicker
+                      ? "bg-accent/20 text-accent"
+                      : "text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                  }`}
+                >
+                  <Smile size={18} />
+                </button>
+
+                {/* Mic Button — only when composer empty and voice available */}
+                {canVoice && !value.trim() && !selectedFile ? (
+                  <button
+                    type="button"
+                    title="Record voice message"
+                    aria-label="Record voice message"
+                    onClick={startVoice}
+                    className="rounded-full bg-white/5 p-1.5 text-text-muted hover:bg-accent hover:text-white transition-colors"
+                  >
+                    <Mic size={18} />
+                  </button>
+                ) : null}
+
+                {/* Send Button */}
+                <IconButton
+                  icon={SendHorizontal}
+                  label="Send message"
+                  size="sm"
+                  variant={value.trim() || selectedFile ? "accent" : "ghost"}
+                  disabled={sending || (!value.trim() && !selectedFile)}
+                  tooltip={false}
+                  onClick={handleSend}
+                />
+              </>
+            ) : null}
           </div>
         </div>
       </div>

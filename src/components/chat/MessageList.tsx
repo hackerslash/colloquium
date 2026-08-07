@@ -12,6 +12,7 @@ import { EmptyState } from "../ui/EmptyState";
 import { Skeleton } from "../ui/Skeleton";
 import { EmojiPicker } from "./EmojiPicker";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { VoicePlayer } from "./VoicePlayer";
 import { humanizeMentions } from "../../lib/mentions";
 import {
   ANIMATED_EMOJI,
@@ -523,7 +524,11 @@ const MessageRow = memo(function MessageRow({
                           selfId={selfId}
                         />
                       )}
-                      {message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />}
+                      {message.contentType === "audio" ? (
+                        <VoicePlayer message={message} isOwn={isOwn} />
+                      ) : (
+                        message.attachmentName && <MessageAttachment message={message} isOwn={isOwn} />
+                      )}
                     </>
                   )}
                 </div>

@@ -27,6 +27,11 @@ type ChatState = {
   loadMessages: (roomId: string) => Promise<void>;
   loadDrafts: () => Promise<void>;
   sendMessage: (roomId: string, memberIds: string[], body: string, file?: File) => Promise<void>;
+  sendVoiceMessage: (
+    roomId: string,
+    memberIds: string[],
+    voice: { blob: Blob; durationMs: number; waveform: number[]; mimeType: string },
+  ) => Promise<void>;
   setDraft: (roomId: string, draft: string) => void;
   setReplyingTo: (roomId: string, message: Message | null) => void;
   /** Enters edit mode for a message: stashes the current draft and seeds the
@@ -196,6 +201,57 @@ export const useChatStore = create<ChatState>((set, get) => ({
         [roomId]: insertOrdered(state.messagesByRoom[roomId] ?? [], message),
       },
       draftByRoom: { ...state.draftByRoom, [roomId]: "" },
+      replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
+    }));
+    void useRoomStore.getState().loadRooms();
+  },
+
+  sendVoiceMessage: async (roomId, memberIds, voice) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) throw new Error("no local identity");
+    if (voice.blob.size > 25 * 1024 * 1024) throw new Error("Voice message too large");
+    const id = crypto.randomUUID();
+    const ext = voice.mimeType.includes("mp4") ? "m4a" : voice.mimeType.includes("ogg") ? "ogg" : "webm";
+    const name = `voice-${Date.now()}.${ext}`;
+    const buffer = await voice.blob.arrayBuffer();
+    const fileBuffer = new Uint8Array(buffer);
+    await fileRepo.insertFile({
+      id,
+      name,
+      size: voice.blob.size,
+      mimeType: voice.mimeType,
+      data: fileBuffer,
+    });
+    const attachment: chatService.Attachment = { id, name, size: voice.blob.size, type: voice.mimeType };
+
+    const setUpload = (upload: { name: string; pct: number } | null) =>
+      set((state) => {
+        const next = { ...state.uploadByRoom };
+        if (upload) next[roomId] = upload;
+        else delete next[roomId];
+        return { uploadByRoom: next };
+      });
+
+    let message: Message;
+    try {
+      message = await chatService.sendMessage(self, roomId, memberIds, "", Date.now(), {
+        attachment,
+        fileBuffer,
+        replyToId: get().replyingToByRoom[roomId]?.id ?? null,
+        voice: { durationMs: voice.durationMs, waveform: voice.waveform },
+        onProgress: (sent, total) => setUpload({ name, pct: Math.round((sent / total) * 100) }),
+      });
+    } catch (err) {
+      await fileRepo.deleteFile(id).catch(() => {});
+      throw err;
+    } finally {
+      setUpload(null);
+    }
+    set((state) => ({
+      messagesByRoom: {
+        ...state.messagesByRoom,
+        [roomId]: insertOrdered(state.messagesByRoom[roomId] ?? [], message),
+      },
       replyingToByRoom: { ...state.replyingToByRoom, [roomId]: null },
     }));
     void useRoomStore.getState().loadRooms();

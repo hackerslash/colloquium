@@ -41,6 +41,7 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
 
   const loadMessages = useChatStore((s) => s.loadMessages);
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const sendVoiceMessage = useChatStore((s) => s.sendVoiceMessage);
   const editMessage = useChatStore((s) => s.editMessage);
   const cancelEdit = useChatStore((s) => s.cancelEdit);
   const setDraft = useChatStore((s) => s.setDraft);
@@ -207,6 +208,14 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
           else stopTyping(roomId, [contactId]);
         }}
         onSend={handleSend}
+        onSendVoice={(cap) => {
+          if (!roomId) return;
+          stopTyping(roomId, [contactId]);
+          return sendVoiceMessage(roomId, [contactId], cap).catch((err) => {
+            console.error("Failed to send voice message:", err);
+            toast.error("Voice not sent", "Please try again.");
+          });
+        }}
       />
     </DropZone>
   );

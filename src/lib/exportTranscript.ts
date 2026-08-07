@@ -51,6 +51,13 @@ export function buildTranscript(
       lines.push("*message deleted*", "");
       continue;
     }
+    if (m.contentType === "audio") {
+      const dur = m.voiceDurationMs ? ` ${Math.round(m.voiceDurationMs / 1000)}s` : "";
+      const label = m.attachmentName ? ` — ${m.attachmentName}` : "";
+      lines.push(`🎙️ Voice message${dur}${label}`, "");
+      if (m.body) lines.push(humanizeAnimatedEmoji(humanizeMentions(m.body)), "");
+      continue;
+    }
     if (m.body) lines.push(humanizeAnimatedEmoji(humanizeMentions(m.body)), "");
     if (m.attachmentName) lines.push(`📎 ${m.attachmentName}`, "");
   }

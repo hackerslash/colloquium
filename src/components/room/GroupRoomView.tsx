@@ -38,6 +38,7 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
 
   const loadMessages = useChatStore((s) => s.loadMessages);
   const sendMessage = useChatStore((s) => s.sendMessage);
+  const sendVoiceMessage = useChatStore((s) => s.sendVoiceMessage);
   const editMessage = useChatStore((s) => s.editMessage);
   const cancelEdit = useChatStore((s) => s.cancelEdit);
   const setDraft = useChatStore((s) => s.setDraft);
@@ -250,6 +251,13 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
           else stopTyping(roomId, memberIds);
         }}
         onSend={handleSend}
+        onSendVoice={(cap) => {
+          stopTyping(roomId, memberIds);
+          return sendVoiceMessage(roomId, memberIds, cap).catch((err) => {
+            console.error("Failed to send voice message:", err);
+            toast.error("Voice not sent", "Please try again.");
+          });
+        }}
       />
 
       <RoomMembersModal
