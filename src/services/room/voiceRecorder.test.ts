@@ -1,11 +1,8 @@
-/** Self-check for the pause-aware duration clock and the level meter — the two
- * bits of real logic in VoiceRecorder. Run: `npx tsx src/services/room/voiceRecorder.test.ts` */
+import { describe, expect, it, vi } from "vitest";
 import { VoiceRecorder } from "./voiceRecorder";
 
-function ok(cond: boolean, msg: string): void {
-  if (!cond) throw new Error(`FAIL: ${msg}`);
-}
-
+/** The clock and meter read private fields that `start()` can only populate via
+ * getUserMedia, so drive them directly. */
 type Inner = {
   bankedMs: number;
   runStartedAt: number;
@@ -14,8 +11,7 @@ type Inner = {
   levelBuf: Uint8Array | null;
 };
 
-/** Drives the private clock/meter fields directly: `start()` needs getUserMedia. */
-function harness(): { rec: VoiceRecorder; inner: Inner } {
+function recording(): { rec: VoiceRecorder; inner: Inner } {
   const rec = new VoiceRecorder();
   const inner = rec as unknown as Inner;
   inner.recorder = {
@@ -32,46 +28,70 @@ function harness(): { rec: VoiceRecorder; inner: Inner } {
   return { rec, inner };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+describe("recording clock", () => {
+  it("excludes paused time from the duration", () => {
+    vi.useFakeTimers();
+    try {
+      const { rec } = recording();
+      vi.advanceTimersByTime(1_000);
+      expect(rec.pause()).toBe(true);
+      expect(rec.isPaused).toBe(true);
+      expect(rec.durationMs).toBe(1_000);
 
-async function main() {
-  const { rec, inner } = harness();
+      vi.advanceTimersByTime(5_000);
+      expect(rec.durationMs).toBe(1_000);
 
-  // Paused time must not count toward the recording length.
-  await sleep(120);
-  ok(rec.pause(), "pause() succeeds while recording");
-  ok(rec.isPaused, "isPaused reflects the paused state");
-  const atPause = rec.durationMs;
-  ok(atPause >= 100, `banked ~120ms, got ${atPause}`);
+      expect(rec.resume()).toBe(true);
+      expect(rec.isPaused).toBe(false);
+      vi.advanceTimersByTime(2_000);
+      expect(rec.durationMs).toBe(3_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-  await sleep(150);
-  ok(rec.durationMs === atPause, "clock is frozen while paused");
-  ok(!rec.pause(), "pause() is a no-op when already paused");
+  it("ignores pause/resume calls that do not apply", () => {
+    const { rec } = recording();
+    expect(rec.resume()).toBe(false); // not paused yet
+    expect(rec.pause()).toBe(true);
+    expect(rec.pause()).toBe(false); // already paused
+  });
 
-  ok(rec.resume(), "resume() succeeds while paused");
-  ok(!rec.isPaused, "isPaused clears on resume");
-  await sleep(120);
-  const after = rec.durationMs;
-  ok(after > atPause + 90, `clock resumed, got ${after} vs ${atPause}`);
-  ok(after < atPause + 150, `the 150ms pause was excluded, got ${after}`);
+  it("does not bank time when the WebView refuses to pause", () => {
+    vi.useFakeTimers();
+    try {
+      const { rec, inner } = recording();
+      // Accepts the call but never leaves "recording", as some WebViews do.
+      inner.recorder = { state: "recording", pause() {}, resume() {} };
+      vi.advanceTimersByTime(1_000);
+      expect(rec.pause()).toBe(false);
+      expect(rec.isPaused).toBe(false);
+      vi.advanceTimersByTime(1_000);
+      expect(rec.durationMs).toBe(2_000); // still running, nothing double-counted
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
-  // A WebView that accepts pause() but keeps recording must not bank time.
-  inner.recorder = { state: "recording", pause() {}, resume() {} };
-  const before = rec.durationMs;
-  ok(!rec.pause(), "pause() reports failure when state never flips");
-  ok(rec.durationMs >= before, "a refused pause does not bank time");
+describe("input level", () => {
+  const withFrame = (frame: number[]) => {
+    const { rec, inner } = recording();
+    inner.levelBuf = new Uint8Array(frame.length);
+    inner.analyser = { getByteTimeDomainData: (b) => b.set(frame) };
+    return rec;
+  };
 
-  // level: peak distance from the 128 midpoint, normalised to 0..1.
-  ok(rec.level === 0, "no analyser reports a flat level");
-  inner.levelBuf = new Uint8Array(4);
-  inner.analyser = { getByteTimeDomainData: (b) => b.set([128, 192, 128, 64]) };
-  ok(rec.level === 0.5, `peak 64/128 from the midpoint = 0.5, got ${rec.level}`);
-  inner.analyser = { getByteTimeDomainData: (b) => b.set([128, 128, 128, 128]) };
-  ok(rec.level === 0, "silence reads 0");
-  inner.analyser = { getByteTimeDomainData: (b) => b.set([0, 255, 128, 128]) };
-  ok(rec.level === 1, "full scale clamps to 1");
+  it("reports 0 when no analyser could be created", () => {
+    expect(recording().rec.level).toBe(0);
+  });
 
-  console.log("voiceRecorder: all checks passed");
-}
+  it("measures peak distance from the 128 midpoint", () => {
+    expect(withFrame([128, 192, 128, 64]).level).toBe(0.5);
+  });
 
-void main();
+  it("reads silence as 0 and full scale as 1", () => {
+    expect(withFrame([128, 128, 128, 128]).level).toBe(0);
+    expect(withFrame([0, 255, 128, 128]).level).toBe(1);
+  });
+});
