@@ -2,7 +2,7 @@
 
 # Colloquium
 
-**A peer-to-peer desktop app for text chat, voice/video rooms, and watch parties — with no server in the middle.**
+**A Discord-style peer-to-peer desktop app for text chat, voice/video rooms, and watch parties — with no server in the middle.**
 
 [![CI](https://github.com/hackerslash/colloquium/actions/workflows/ci.yml/badge.svg)](https://github.com/hackerslash/colloquium/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/hackerslash/colloquium)](https://github.com/hackerslash/colloquium/releases/latest)
@@ -15,10 +15,11 @@
 
 ---
 
-Colloquium is a Discord-shaped chat app that runs without a backend you have to
-trust, pay for, or operate. Messages, calls, and files go directly between peers
-over WebRTC. Your history lives in an encrypted SQLite database on your own
-machine — there is no account, no server-side copy, and nothing to sign up for.
+Colloquium looks and works like Discord — spaces, rooms, calls, screen sharing —
+but there is no backend to trust, pay for, or operate. Messages, calls, and files
+go directly between peers over WebRTC, and your history lives in an encrypted
+SQLite database on your own machine. No account, no server-side copy, nothing to
+sign up for.
 
 ## Features
 
