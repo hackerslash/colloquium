@@ -97,15 +97,18 @@ export class VoiceRecorder {
   private stream: MediaStream | null = null;
   private recorder: MediaRecorder | null = null;
   private chunks: Blob[] = [];
-  private startedAt = 0;
-  private maxTimer: ReturnType<typeof setTimeout> | null = null;
-  private onAutoStop: (() => void) | null = null;
+  /** Duration banked before the current run; `runStartedAt` is 0 while paused,
+   * so paused time never counts toward the recording length. */
+  private bankedMs = 0;
+  private runStartedAt = 0;
+  private audioCtx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private levelBuf: Uint8Array<ArrayBuffer> | null = null;
 
   mimeType: string | null = null;
 
-  async start(opts?: { onAutoStop?: () => void }): Promise<void> {
+  async start(): Promise<void> {
     if (this.recorder) throw new Error("already recording");
-    this.onAutoStop = opts?.onAutoStop ?? null;
     const mime = getPreferredVoiceMimeType();
     if (!mime) throw new Error("Voice recording not supported in this WebView");
     this.mimeType = mime;
@@ -115,61 +118,118 @@ export class VoiceRecorder {
     });
 
     this.chunks = [];
-    this.startedAt = Date.now();
+    this.bankedMs = 0;
+    this.runStartedAt = Date.now();
 
     this.recorder = new MediaRecorder(this.stream, { mimeType: mime });
     this.recorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) this.chunks.push(e.data);
     };
-    this.recorder.start(100);
+    // No timeslice: chunks are only concatenated at the end, and stitching
+    // hundreds of fragments back together made playback stutter at the seams.
+    this.recorder.start();
 
-    this.maxTimer = setTimeout(() => this.onAutoStop?.(), MAX_VOICE_DURATION_MS);
+    // Best-effort input meter: without AudioContext recording still works,
+    // `level` just reads 0.
+    try {
+      const Ctx =
+        (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext })
+          .AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (Ctx) {
+        this.audioCtx = new Ctx();
+        this.analyser = this.audioCtx.createAnalyser();
+        this.analyser.fftSize = 1024;
+        this.levelBuf = new Uint8Array(this.analyser.fftSize);
+        this.audioCtx.createMediaStreamSource(this.stream).connect(this.analyser);
+      }
+    } catch {
+      this.analyser = null;
+    }
+  }
+
+  /** Peak amplitude of the last input frame, 0..1. */
+  get level(): number {
+    if (!this.analyser || !this.levelBuf) return 0;
+    this.analyser.getByteTimeDomainData(this.levelBuf);
+    let peak = 0;
+    for (const v of this.levelBuf) {
+      const d = Math.abs(v - 128) / 128;
+      if (d > peak) peak = d;
+    }
+    return Math.min(1, peak);
   }
 
   get durationMs(): number {
-    return this.startedAt ? Date.now() - this.startedAt : 0;
+    return this.bankedMs + (this.runStartedAt ? Date.now() - this.runStartedAt : 0);
   }
 
-  get isRecording(): boolean {
-    return !!this.recorder && this.recorder.state === "recording";
+  get isPaused(): boolean {
+    return !!this.recorder && this.recorder.state === "paused";
+  }
+
+  /** False when this WebView's MediaRecorder won't honour pause/resume. */
+  pause(): boolean {
+    if (!this.recorder || this.recorder.state !== "recording") return false;
+    try {
+      this.recorder.pause();
+    } catch {
+      return false;
+    }
+    // Cast because TS can't see that pause() mutates `state`; the check is real,
+    // a WebView can accept the call and stay recording.
+    if ((this.recorder.state as string) !== "paused") return false;
+    this.bankedMs += Date.now() - this.runStartedAt;
+    this.runStartedAt = 0;
+    return true;
+  }
+
+  resume(): boolean {
+    if (!this.recorder || this.recorder.state !== "paused") return false;
+    try {
+      this.recorder.resume();
+    } catch {
+      return false;
+    }
+    this.runStartedAt = Date.now();
+    return true;
   }
 
   async stop(): Promise<VoiceCapture> {
     const rec = this.recorder;
     const stream = this.stream;
     if (!rec) throw new Error("not recording");
-    if (this.maxTimer) {
-      clearTimeout(this.maxTimer);
-      this.maxTimer = null;
-    }
     const mime = this.mimeType ?? "audio/webm";
     const durationMs = this.durationMs;
     this.recorder = null;
     this.stream = null;
+    this.runStartedAt = 0;
+    this.closeMeter();
 
     const chunksRef = this.chunks;
     this.chunks = [];
 
+    // stop() fires the final `dataavailable` before `stop`, so only `stop` means
+    // the recording is complete. Resolving on a short timer instead handed back
+    // whatever had arrived — a truncated, glitchy clip.
     const blob: Blob = await new Promise((resolve, reject) => {
-      let resolved = false;
-      const finish = () => {
-        if (resolved) return;
-        resolved = true;
-        resolve(new Blob(chunksRef, { type: mime }));
-      };
+      const guard = setTimeout(() => reject(new Error("MediaRecorder never stopped")), 5000);
       rec.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.push(e.data);
       };
-      rec.onstop = finish;
+      rec.onstop = () => {
+        clearTimeout(guard);
+        resolve(new Blob(chunksRef, { type: mime }));
+      };
       rec.onerror = () => {
-        if (!resolved) reject(new Error("MediaRecorder error"));
+        clearTimeout(guard);
+        reject(new Error("MediaRecorder error"));
       };
       try {
         rec.stop();
       } catch (e) {
+        clearTimeout(guard);
         reject(e as Error);
       }
-      setTimeout(finish, 400);
     });
 
     stream?.getTracks().forEach((t) => t.stop());
@@ -181,10 +241,6 @@ export class VoiceRecorder {
   }
 
   cancel(): void {
-    if (this.maxTimer) {
-      clearTimeout(this.maxTimer);
-      this.maxTimer = null;
-    }
     try {
       if (this.recorder && this.recorder.state !== "inactive") this.recorder.stop();
     } catch {
@@ -194,5 +250,14 @@ export class VoiceRecorder {
     this.recorder = null;
     this.stream = null;
     this.chunks = [];
+    this.runStartedAt = 0;
+    this.closeMeter();
+  }
+
+  private closeMeter(): void {
+    this.analyser = null;
+    this.levelBuf = null;
+    void this.audioCtx?.close().catch(() => {});
+    this.audioCtx = null;
   }
 }

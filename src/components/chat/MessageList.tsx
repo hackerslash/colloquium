@@ -182,7 +182,15 @@ function MessageAttachment({ message, isOwn }: { message: Message; isOwn: boolea
   }
 
   return (
-    <div className={cx("mt-1 flex items-center gap-2 rounded px-2 py-1 text-xs", isOwn ? "bg-black/20" : "bg-black/10")}>
+    // The inset surface only separates this row from a caption above it; with no
+    // caption the bubble is the container and a second tinted box reads as a
+    // stray double border.
+    <div
+      className={cx(
+        "flex items-center gap-2 text-xs",
+        message.body && cx("mt-1 rounded px-2 py-1", isOwn ? "bg-black/20" : "bg-black/10"),
+      )}
+    >
       <Paperclip size={12} className="shrink-0" />
       <span className="min-w-0 flex-1 truncate">{message.attachmentName}</span>
       {available ? (

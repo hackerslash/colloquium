@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { Bold, Code, Italic, Mic, Pause, Play, Paperclip, Pencil, Quote, Reply, SendHorizontal, Smile, Strikethrough, Plus, Trash2, X } from "lucide-react";
+import { Bold, Code, Italic, Mic, Pause, Play, Paperclip, Pencil, Quote, Reply, SendHorizontal, Smile, Square, Strikethrough, Plus, Trash2, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { IconButton } from "../ui/IconButton";
 import { MAX_FILE_SIZE } from "../../services/room/chatService";
@@ -7,6 +7,7 @@ import { toast } from "../../stores/useToastStore";
 import { EmojiPicker } from "./EmojiPicker";
 import { MentionAutocomplete, type MentionCandidate } from "./MentionAutocomplete";
 import { VoiceRecorder, getPreferredVoiceMimeType, MAX_VOICE_DURATION_MS, type VoiceCapture } from "../../services/room/voiceRecorder";
+import { cx } from "../../lib/cx";
 
 type ComposerProps = {
   value: string;
@@ -47,6 +48,11 @@ function formatMs(ms: number): string {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+/** Live recording meter: one bar per sample, newest on the right. 100ms keeps
+ * ~5s of history on screen and reads as motion without a per-frame loop. */
+const LIVE_WAVE_BARS = 48;
+const LIVE_WAVE_MS = 100;
+
 /** Lets a parent (the drag-and-drop zone around the whole chat window) hand
  * a dropped file to the composer as if it had been picked via the file input. */
 export type ComposerHandle = {
@@ -81,9 +87,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
   const recorderRef = useRef<VoiceRecorder | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingMs, setRecordingMs] = useState(0);
+  const [recordPaused, setRecordPaused] = useState(false);
+  const [levels, setLevels] = useState<number[]>([]);
   const [voicePreview, setVoicePreview] = useState<VoiceCapture | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [previewMs, setPreviewMs] = useState(0);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const voiceSupported = getPreferredVoiceMimeType() !== null;
@@ -102,6 +111,8 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
       if (previewUrl) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  const previewProgress = voicePreview?.durationMs ? Math.min(1, previewMs / voicePreview.durationMs) : 0;
 
   const mentionMatches =
     mentionQuery && mentionCandidates
@@ -241,19 +252,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     const rec = new VoiceRecorder();
     recorderRef.current = rec;
     try {
-      await rec.start({
-        onAutoStop: () => {
-          void stopVoice();
-        },
-      });
+      await rec.start();
       setIsRecording(true);
+      setRecordPaused(false);
       setRecordingMs(0);
+      setLevels([]);
+      // Not rAF: that stops when the window is backgrounded, which would also
+      // stop the max-duration check.
       tickRef.current = setInterval(() => {
         setRecordingMs(rec.durationMs);
-        if (rec.durationMs >= MAX_VOICE_DURATION_MS) {
-          void stopVoice();
-        }
-      }, 120);
+        if (rec.isPaused) return;
+        setLevels((prev) => [...prev, rec.level].slice(-LIVE_WAVE_BARS));
+        if (rec.durationMs >= MAX_VOICE_DURATION_MS) void stopVoice();
+      }, LIVE_WAVE_MS);
     } catch (err) {
       recorderRef.current = null;
       const msg = err instanceof Error ? err.message : String(err);
@@ -269,23 +280,23 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 
   async function stopVoice() {
     const rec = recorderRef.current;
-    if (!rec || rec !== recorderRef.current) return;
+    if (!rec) return;
+    recorderRef.current = null; // claim it before awaiting, so a second call bails
     if (tickRef.current) clearInterval(tickRef.current);
     tickRef.current = undefined;
     setIsRecording(false);
+    setRecordPaused(false);
     try {
       const cap = await rec.stop();
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
       setVoicePreview(cap);
       setRecordingMs(cap.durationMs);
+      setPreviewMs(0);
       setPreviewUrl(URL.createObjectURL(cap.blob));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes("too short")) toast.error("Recording too short", "Hold to record at least 0.5s.");
       else toast.error("Recording failed", msg);
       setRecordingMs(0);
-    } finally {
-      if (recorderRef.current === rec) recorderRef.current = null;
     }
   }
 
@@ -295,26 +306,47 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
     recorderRef.current?.cancel();
     recorderRef.current = null;
     setIsRecording(false);
+    setRecordPaused(false);
     setRecordingMs(0);
+    setLevels([]);
     setVoicePreview(null);
     setPreviewPlaying(false);
+    setPreviewMs(0);
     previewAudioRef.current?.pause();
-    if (previewUrl) {
-      URL.revokeObjectURL(previewUrl);
-      setPreviewUrl(null);
+    setPreviewUrl(null); // the [previewUrl] effect revokes the old one
+  }
+
+  function toggleRecordPause() {
+    const rec = recorderRef.current;
+    if (!rec) return;
+    if (rec.isPaused) {
+      if (rec.resume()) setRecordPaused(false);
+    } else if (rec.pause()) {
+      setRecordPaused(true);
+    } else {
+      toast.error("Cannot pause", "This WebView does not support pausing a recording.");
     }
   }
 
   function togglePreviewPlay() {
     const audio = previewAudioRef.current;
     if (!audio) return;
-    if (previewPlaying) {
-      audio.pause();
-      setPreviewPlaying(false);
-    } else {
-      void audio.play().then(() => setPreviewPlaying(true)).catch(() => {});
-    }
+    if (previewPlaying) audio.pause();
+    else void audio.play().catch(() => {});
   }
+
+  // `timeupdate` fires ~4x/sec, too coarse for a play head that should glide.
+  useEffect(() => {
+    if (!previewPlaying) return;
+    let raf = 0;
+    const tick = () => {
+      const audio = previewAudioRef.current;
+      if (audio) setPreviewMs(audio.currentTime * 1000);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [previewPlaying]);
 
   async function sendVoice() {
     if (!voicePreview || !onSendVoice || sending) return;
@@ -528,17 +560,22 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             >
               {previewPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
             </button>
+            {/* Per-bar play head, not a clipped overlay: the track is flex-1,
+                so a percentage-width overlay has no width to clip. */}
             <div className="flex flex-1 items-center gap-[2px] h-6">
               {voicePreview.waveform.map((v, i) => (
                 <span
                   key={i}
-                  className="w-[3px] rounded-full bg-accent/70"
+                  className={cx(
+                    "w-[3px] rounded-full",
+                    i / voicePreview.waveform.length < previewProgress ? "bg-accent" : "bg-accent/30",
+                  )}
                   style={{ height: `${8 + v * 16}px` }}
                 />
               ))}
             </div>
             <span className="shrink-0 text-xs font-medium tabular-nums text-text-muted">
-              {formatMs(voicePreview.durationMs)}
+              {previewMs > 0 ? formatMs(previewMs) : formatMs(voicePreview.durationMs)}
             </span>
             <button
               type="button"
@@ -560,9 +597,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <audio
               ref={previewAudioRef}
               src={previewUrl ?? undefined}
-              onEnded={() => setPreviewPlaying(false)}
+              onEnded={() => {
+                setPreviewPlaying(false);
+                setPreviewMs(0);
+              }}
+              // `playing` not `play`, `auto` not `metadata` — see VoicePlayer.
+              onPlaying={() => setPreviewPlaying(true)}
               onPause={() => setPreviewPlaying(false)}
-              preload="metadata"
+              preload="auto"
               className="hidden"
             />
           </motion.div>
@@ -578,21 +620,32 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             exit={{ opacity: 0, y: 6 }}
             className="mb-2.5 flex items-center gap-3 rounded-xl bg-danger/10 px-4 py-3 border border-danger/30 shadow-md"
           >
-            <span className="h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-danger shadow-[0_0_8px_rgba(220,38,38,0.8)]" />
-            <span className="text-xs font-medium tabular-nums text-danger">
+            <button
+              type="button"
+              onClick={toggleRecordPause}
+              aria-label={recordPaused ? "Resume recording" : "Pause recording"}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-danger text-white transition-colors hover:bg-danger/90"
+            >
+              {recordPaused ? <Play size={16} className="ml-0.5" /> : <Pause size={16} />}
+            </button>
+            <span className="shrink-0 text-xs font-medium tabular-nums text-danger">
               {formatMs(recordingMs)} / {formatMs(MAX_VOICE_DURATION_MS)}
             </span>
-            <div className="flex flex-1 items-center justify-center gap-1">
-              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:0ms]" />
-              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:150ms]" />
-              <span className="h-1 w-1 animate-bounce rounded-full bg-danger [animation-delay:300ms]" />
-              <span className="ml-2 text-xs text-text-muted">Recording…</span>
+            {/* justify-end so new samples scroll in from the right. */}
+            <div className="flex h-6 flex-1 items-center justify-end gap-[2px] overflow-hidden">
+              {levels.map((v, i) => (
+                <span
+                  key={i}
+                  className={cx("w-[3px] shrink-0 rounded-full bg-danger", recordPaused && "opacity-40")}
+                  style={{ height: `${3 + v * 21}px` }}
+                />
+              ))}
             </div>
             <button
               type="button"
               onClick={cancelVoice}
               aria-label="Cancel recording"
-              className="rounded-full bg-black/10 p-1.5 text-text-muted hover:bg-danger/20 hover:text-danger transition-colors"
+              className="shrink-0 rounded-full bg-black/10 p-1.5 text-text-muted transition-colors hover:bg-danger/20 hover:text-danger"
             >
               <X size={16} />
             </button>
@@ -600,9 +653,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
               type="button"
               onClick={stopVoice}
               aria-label="Stop recording"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white hover:bg-danger/90 transition-colors"
+              title="Stop and review"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white transition-colors hover:bg-accent/90"
             >
-              <Pause size={16} />
+              <Square size={14} fill="currentColor" />
             </button>
           </motion.div>
         )}

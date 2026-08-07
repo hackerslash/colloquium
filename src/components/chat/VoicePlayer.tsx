@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Download, Pause, Play } from "lucide-react";
 import type { Message } from "../../types/domain";
 import * as fileRepo from "../../services/db/fileRepo";
@@ -21,8 +21,12 @@ const BAR_W = 3;
 const BAR_GAP = 2;
 const BAR_MIN_H = 3;
 const BAR_MAX_H = 24;
+const DOT_SIZE = 10;
 
-function Bars({ waveform, className }: { waveform: number[]; className: string }) {
+/** Stable identity so `Bars` can memo out of the per-frame play-head renders. */
+const FLAT_WAVEFORM = Array.from({ length: VOICE_WAVEFORM_BARS }, () => 0.4);
+
+const Bars = memo(function Bars({ waveform, className }: { waveform: number[]; className: string }) {
   return (
     <div className="absolute inset-y-0 left-0 flex items-center" style={{ gap: `${BAR_GAP}px` }}>
       {waveform.map((v, i) => (
@@ -34,44 +38,40 @@ function Bars({ waveform, className }: { waveform: number[]; className: string }
       ))}
     </div>
   );
-}
+});
 
 export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
-  const [available, setAvailable] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [durationMs, setDurationMs] = useState<number>(message.voiceDurationMs ?? 0);
 
-  const waveform = message.voiceWaveform ?? Array.from({ length: VOICE_WAVEFORM_BARS }, () => 0.4);
+  const waveform = message.voiceWaveform ?? FLAT_WAVEFORM;
 
   useEffect(() => {
     if (!message.attachmentId) return;
     let cancelled = false;
     let objectUrl: string | null = null;
 
+    // One round-trip, not two: gating on `fileExists` first left the play button
+    // disabled across two IPC hops, which reads as "play does nothing".
     function check() {
-      const id = message.attachmentId!;
-      fileRepo.fileExists(id).then((exists) => {
+      fileRepo.getFile(message.attachmentId!).then((file) => {
         if (cancelled) return;
-        setAvailable(exists);
-        if (!exists) {
-          if (objectUrl) {
-            URL.revokeObjectURL(objectUrl);
-            objectUrl = null;
-          }
+        setLoaded(true);
+        if (objectUrl) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = null;
+        }
+        if (!file) {
           setUrl(null);
           return;
         }
-        fileRepo.getFile(id).then((file) => {
-          if (cancelled || !file) return;
-          const blob = new Blob([file.data], { type: file.mimeType });
-          if (objectUrl) URL.revokeObjectURL(objectUrl);
-          objectUrl = URL.createObjectURL(blob);
-          setUrl(objectUrl);
-        });
+        objectUrl = URL.createObjectURL(new Blob([file.data], { type: file.mimeType }));
+        setUrl(objectUrl);
       });
     }
     check();
@@ -89,6 +89,19 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [message.attachmentId]);
+
+  // `timeupdate` only fires ~4x/sec, so a play head driven by it visibly steps.
+  useEffect(() => {
+    if (!isPlaying) return;
+    let raf = 0;
+    const tick = () => {
+      const audio = audioRef.current;
+      if (audio) setCurrentMs(audio.currentTime * 1000);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying]);
 
   function fetchFromSender() {
     setRequesting(true);
@@ -118,22 +131,34 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
   function seekToMs(ms: number) {
     const audio = audioRef.current;
     if (!audio || !durationMs) return;
-    audio.currentTime = ms / 1000;
-    setCurrentMs(ms);
+    // voiceDurationMs is the recorder's wall clock and can overshoot the decoded
+    // length; seeking past the end plays nothing.
+    const maxS = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : durationMs / 1000;
+    const s = Math.min(ms / 1000, maxS);
+    audio.currentTime = s;
+    setCurrentMs(s * 1000);
   }
 
   const progress = durationMs ? Math.min(1, currentMs / durationMs) : 0;
   const trackW = waveform.length * BAR_W + (waveform.length - 1) * BAR_GAP;
 
-  if (!available) {
+  if (!url) {
     return (
-      <div className={cx("mt-1 flex items-center gap-2 rounded px-3 py-2 text-xs", isOwn ? "bg-black/20" : "bg-black/10")}>
-        <span className="flex-1 truncate text-text-muted">Voice message — not downloaded</span>
+      <div
+        className={cx(
+          "flex items-center gap-2 text-xs",
+          message.body && cx("mt-1 rounded px-3 py-2", isOwn ? "bg-black/20" : "bg-black/10"),
+        )}
+      >
+        <span className={cx("flex-1 truncate", isOwn ? "text-white/80" : "text-text-secondary")}>
+          {loaded ? "Voice message — not downloaded" : "Voice message"}
+        </span>
         {!isOwn && (
           <button
             type="button"
             onClick={fetchFromSender}
-            disabled={requesting}
+            // Before the lookup resolves, a fetch could re-request a file we hold.
+            disabled={requesting || !loaded}
             className="shrink-0 rounded px-2 py-1 font-medium text-accent hover:bg-black/10 disabled:text-text-muted"
           >
             {requesting ? "Fetching…" : "Fetch"}
@@ -146,8 +171,9 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
   return (
     <div
       className={cx(
-        "mt-1 flex items-center gap-3 rounded-lg px-3 py-2",
-        isOwn ? "bg-black/20" : "bg-black/10",
+        "flex items-center gap-3",
+        // See MessageAttachment: only inset when there's a caption to separate from.
+        message.body && cx("mt-1 rounded-lg px-3 py-2", isOwn ? "bg-black/20" : "bg-black/10"),
       )}
     >
       <button
@@ -176,10 +202,16 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
           <span
             aria-hidden="true"
             className={cx(
-              "pointer-events-none absolute top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full shadow",
+              "pointer-events-none absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full shadow",
               isOwn ? "bg-white" : "bg-accent",
             )}
-            style={{ left: `${progress * 100}%` }}
+            // Travel is inset by half the dot so the track's overflow-hidden
+            // (which clips bars in a squeezed bubble) can't shave it at 0%/100%.
+            style={{
+              width: `${DOT_SIZE}px`,
+              height: `${DOT_SIZE}px`,
+              left: `calc(${DOT_SIZE / 2}px + ${progress} * (100% - ${DOT_SIZE}px))`,
+            }}
           />
         )}
         <input
@@ -199,7 +231,7 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
         />
       </div>
 
-      <span className="shrink-0 text-xs tabular-nums text-text-muted">
+      <span className={cx("shrink-0 text-xs tabular-nums", isOwn ? "text-white/80" : "text-text-secondary")}>
         {currentMs > 0 ? formatMs(currentMs) : formatMs(durationMs || 0)}
       </span>
 
@@ -213,25 +245,26 @@ export function VoicePlayer({ message, isOwn }: { message: Message; isOwn: boole
         <Download size={14} />
       </button>
 
-      {url && (
-        <audio
-          ref={audioRef}
-          src={url}
-          preload="metadata"
-          onLoadedMetadata={(e) => {
-            const d = e.currentTarget.duration;
-            if (Number.isFinite(d) && d > 0) setDurationMs(Math.round(d * 1000));
-          }}
-          onTimeUpdate={(e) => setCurrentMs(Math.round(e.currentTarget.currentTime * 1000))}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => {
-            setIsPlaying(false);
-            setCurrentMs(0);
-          }}
-          className="hidden"
-        />
-      )}
+      <audio
+        ref={audioRef}
+        src={url}
+        // `auto` not `metadata`: the blob is already in memory, and deferring the
+        // buffer until play() is what made playback start late.
+        preload="auto"
+        onLoadedMetadata={(e) => {
+          const d = e.currentTarget.duration;
+          if (Number.isFinite(d) && d > 0) setDurationMs(Math.round(d * 1000));
+        }}
+        // `playing` not `play`: `play` fires on the request, so the pause icon
+        // showed while the element was still stalled and silent.
+        onPlaying={() => setIsPlaying(true)}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => {
+          setIsPlaying(false);
+          setCurrentMs(0);
+        }}
+        className="hidden"
+      />
     </div>
   );
 }
