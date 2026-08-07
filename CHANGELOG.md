@@ -7,10 +7,22 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
-## Unreleased
+## v0.7.0
 
 ### Added
 
+- **Voice messages.** Hold the mic to record, and the composer hands back a
+  playable preview before anything is sent — pause mid-recording and resume, or
+  throw it away. What you see while recording is the actual input level, so a
+  dead microphone looks dead instead of looking like a recording. Each sent
+  message carries its own waveform, so the shape is there before the audio is,
+  and a clip you never received can be fetched from its sender like any other
+  attachment.
+- **Downloads and exports go through the system save dialog**, defaulting to your
+  Downloads folder, so a file lands where you chose rather than wherever the
+  WebView felt like putting it.
+- **Receiving an attachment shows real progress.** Sending already did; the other
+  side just sat on an inert placeholder until the file appeared.
 - **Rooms have topics.** The column was always there and always gossiped with
   every announce; it just had nowhere to be typed. Set one from the space
   details, and it sits beside the room name in the header.
@@ -45,6 +57,21 @@ GitHub Release notes.
 
 ### Fixed
 
+- **Voice messages recorded in fragments and played back stuttering.** The
+  recorder cut every clip into hundreds of pieces that were only ever stitched
+  back together at the end, and playback glitched at each seam. Worse, it
+  finished on a 400 ms timer holding whatever had arrived by then, so a clip
+  whose last flush ran late was silently truncated.
+- **Voice playback started late and claimed to be playing when it wasn't.** The
+  audio wasn't buffered until you pressed play, and the button flipped to Pause
+  on the *request* rather than on sound, so a stalled clip looked like it was
+  playing in silence. The play head also only moved four times a second, and the
+  play button stayed dead through two database round-trips.
+- Attachment and voice rows no longer draw a second bordered box inside a message
+  bubble that was already one, and a voice message's duration is now legible
+  against your own bubble instead of grey-on-accent.
+- **Camera tiles stay inside the call window**, and a short last row is centred
+  rather than left-hung.
 - **Messages could be lost for good.** The room-sync `have` vector reported the
   highest sequence number held per author, which hides a gap — and a peer told
   we already held a message never resent it. Anything in the hole was gone. The
