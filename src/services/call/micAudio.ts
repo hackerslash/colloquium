@@ -20,6 +20,7 @@ export function buildMicConstraints(): MediaTrackConstraints {
     echoCancellation,
     autoGainControl: echoCancellation,
     noiseSuppression,
+    ...(noiseSuppression ? ({ voiceIsolation: true } as MediaTrackConstraints) : {}),
     ...(audioInputDeviceId ? { deviceId: { exact: audioInputDeviceId } } : {}),
   };
 }
