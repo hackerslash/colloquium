@@ -8,7 +8,10 @@ type PeerRegistryEvents = {
   "broker-down": [];
   "peer-connected": [peerId: string];
   "peer-disconnected": [peerId: string];
-  "dial-failed": [peerId: string];
+  /** `unavailable` = broker had no registration (genuinely offline).
+   * `unreachable` = registered, but the WebRTC connection couldn't open
+   * (NAT/firewall/VPN, no relay) — a different, reportable condition. */
+  "dial-failed": [peerId: string, reason: "unavailable" | "unreachable"];
   message: [peerId: string, data: unknown];
   error: [error: unknown];
 };
@@ -25,8 +28,19 @@ const DIAL_BACKOFF_MAX_MS = 60_000;
 const PING_INTERVAL_MS = 4_000;
 const LIVENESS_TIMEOUT_MS = 10_000;
 
+const UNAVAILABLE_TTL_MS = 15_000;
+
 function jittered(ms: number): number {
   return ms * (0.8 + 0.4 * Math.random());
+}
+
+/** A `peer-unavailable` error embeds the dialed id in its message; find which
+ * currently-dialing peer it names. Exported for test. */
+export function matchDialingPeer(message: string, candidates: Iterable<string>): string | null {
+  for (const id of candidates) {
+    if (id && message.includes(id)) return id;
+  }
+  return null;
 }
 
 /**
@@ -56,6 +70,9 @@ export class PeerRegistry {
   private lastSeenAt = new Map<string, number>();
   private lastPingAt = new Map<string, number>();
   private dialBackoff = new Map<string, { failures: number; nextAttemptAt: number }>();
+  /** peerId → when the broker last said it was unavailable. A dial failure
+   * within UNAVAILABLE_TTL_MS of this is "offline"; otherwise "unreachable". */
+  private unavailableSeen = new Map<string, number>();
   private brokerAttempts = 0;
   private brokerReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -109,6 +126,13 @@ export class PeerRegistry {
     });
 
     peer.on("error", (err: { type?: string } & Error) => {
+      if (err.type === "peer-unavailable") {
+        // A dialed id isn't registered (not fatal). Record it so the pending
+        // dial's failure is classified as "offline" rather than "unreachable".
+        const pid = matchDialingPeer(err.message ?? "", this.dialing.keys());
+        if (pid) this.unavailableSeen.set(pid, Date.now());
+        return;
+      }
       if (err.type === "unavailable-id") {
         // Our canonical id is held by a ghost of a previous session (unclean
         // exit — the broker frees it after its heartbeat timeout) or by
@@ -185,6 +209,7 @@ export class PeerRegistry {
     }
     this.lastSeenAt.set(conn.peer, Date.now());
     this.dialBackoff.delete(conn.peer);
+    this.unavailableSeen.delete(conn.peer);
     if (!this.up.has(conn.peer)) {
       this.up.add(conn.peer);
       this.emit("peer-connected", conn.peer);
@@ -295,7 +320,13 @@ export class PeerRegistry {
     const attempt = this.awaitOpen(conn)
       .catch((err) => {
         this.recordDialFailure(peerId);
-        this.emit("dial-failed", peerId);
+        const seenAt = this.unavailableSeen.get(peerId);
+        const reason =
+          seenAt !== undefined && Date.now() - seenAt < UNAVAILABLE_TTL_MS
+            ? "unavailable"
+            : "unreachable";
+        this.unavailableSeen.delete(peerId);
+        this.emit("dial-failed", peerId, reason);
         throw err;
       })
       .finally(() => {
@@ -348,6 +379,7 @@ export class PeerRegistry {
     this.lastSeenAt.clear();
     this.lastPingAt.clear();
     this.dialBackoff.clear();
+    this.unavailableSeen.clear();
     this.peer?.destroy();
     this.peer = null;
   }

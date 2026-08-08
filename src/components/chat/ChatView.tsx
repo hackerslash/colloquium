@@ -26,6 +26,7 @@ const PRESENCE_LABEL: Record<Presence, string> = {
   online: "Online",
   connecting: "Connecting…",
   offline: "Offline",
+  unreachable: "Can't connect",
 };
 
 type ChatViewProps = {
@@ -132,7 +133,12 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   }
 
   const callDisabled = !roomId || callInProgress || presence !== "online";
-  const callHint = presence !== "online" ? `${contact.displayName} is offline` : undefined;
+  const callHint =
+    presence === "unreachable"
+      ? `Can't reach ${contact.displayName} — check your network or VPN`
+      : presence !== "online"
+        ? `${contact.displayName} is offline`
+        : undefined;
 
   const statusLabel =
     offline && contact.lastSeenAt

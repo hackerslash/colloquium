@@ -23,6 +23,7 @@ import { useRoomCallStore } from "../../stores/useRoomCallStore";
 import { useSettingsStore } from "../../stores/useSettingsStore";
 import { notifyIfUnfocused } from "../notify";
 import { playMessageSound } from "../sound";
+import { toast } from "../../stores/useToastStore";
 import { humanizeMentions, mentionsIdentity } from "../../lib/mentions";
 import { humanizeAnimatedEmoji } from "../../lib/animatedEmoji";
 
@@ -110,9 +111,14 @@ export function initNetworkBridge(self: Identity): () => void {
       .catch((err) => console.error("failed to record peer seen", peerId, err));
   }
 
+  // Toast unreachable contacts once, not every 2s retry tick. Cleared on
+  // connect / genuine-offline so a later relapse warns again.
+  const unreachableWarned = new Set<string>();
+
   registry.on("peer-connected", (peerId) => {
     const contact = findContactByPeerId(peerId);
     if (contact) {
+      unreachableWarned.delete(contact.identityId);
       setPresence(contact.identityId, "online");
       recordSeen(contact.identityId, peerId);
       void syncDmWith(getSelf(), contact.identityId, peerId).catch((err) =>
@@ -132,15 +138,31 @@ export function initNetworkBridge(self: Identity): () => void {
   registry.on("peer-disconnected", (peerId) => {
     const contact = findContactByPeerId(peerId);
     if (contact) {
+      unreachableWarned.delete(contact.identityId);
       setPresence(contact.identityId, "offline");
       // Record the session end too, so "last seen" reflects when they dropped.
       recordSeen(contact.identityId, peerId);
     }
   });
 
-  registry.on("dial-failed", (peerId) => {
+  registry.on("dial-failed", (peerId, reason) => {
     const contact = findContactByPeerId(peerId);
-    if (contact) setPresence(contact.identityId, "offline");
+    if (!contact) return;
+    if (reason === "unreachable") {
+      // Online on the broker but the P2P connection won't establish — a network
+      // path problem, not them being offline. Say so, once.
+      setPresence(contact.identityId, "unreachable");
+      if (!unreachableWarned.has(contact.identityId)) {
+        unreachableWarned.add(contact.identityId);
+        toast.warning(
+          `Can't connect to ${contact.displayName}`,
+          "They appear online, but a direct connection couldn't be made. If you're on a VPN or strict network, try turning it off.",
+        );
+      }
+    } else {
+      unreachableWarned.delete(contact.identityId);
+      setPresence(contact.identityId, "offline");
+    }
   });
 
   registry.on("broker-down", () => {
@@ -518,12 +540,10 @@ export function initNetworkBridge(self: Identity): () => void {
         continue;
       }
 
-      // Both sides dial; the registry resolves glare deterministically. A
-      // peer in dial backoff just shows offline until its next attempt.
-      if (!registry.canDial(peerId)) {
-        setPresence(contact.identityId, "offline");
-        continue;
-      }
+      // Both sides dial; the registry resolves glare deterministically. A peer
+      // in dial backoff keeps whatever the last attempt settled (offline vs
+      // unreachable) rather than flip-flopping to a plain "offline" each tick.
+      if (!registry.canDial(peerId)) continue;
 
       setPresence(contact.identityId, "connecting");
       registry.connect(peerId).catch(() => {

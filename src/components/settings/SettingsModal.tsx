@@ -1,5 +1,18 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { User, Palette, Bell, Mic, AppWindow, Minus, Plus, type LucideIcon } from "lucide-react";
+import {
+  User,
+  Palette,
+  Bell,
+  Mic,
+  AppWindow,
+  Minus,
+  Plus,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  Loader2,
+  type LucideIcon,
+} from "lucide-react";
 import {
   useSettingsStore,
   type ThemePref,
@@ -20,6 +33,7 @@ import { isMac } from "../../lib/platform";
 import { toast } from "../../stores/useToastStore";
 import * as avatarService from "../../services/avatar/avatarService";
 import { primeDevicePermission } from "../../services/call/devicePermissions";
+import { checkIceConnectivity, type IceCheckResult } from "../../services/peer/iceCheck";
 
 const SNOOZE_OPTIONS: { label: string; minutes: number | null }[] = [
   { label: "Off", minutes: null },
@@ -169,6 +183,125 @@ function DevicesSection() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+type StatusTone = "ok" | "warn" | "bad";
+
+function StatusRow({
+  tone,
+  title,
+  detail,
+}: {
+  tone: StatusTone;
+  title: string;
+  detail: string;
+}) {
+  const Icon = tone === "ok" ? CheckCircle2 : tone === "warn" ? AlertTriangle : XCircle;
+  const color =
+    tone === "ok" ? "text-success" : tone === "warn" ? "text-warning" : "text-danger";
+  return (
+    <div className="flex items-start gap-2.5">
+      <Icon size={16} className={cx("mt-0.5 shrink-0", color)} aria-hidden="true" />
+      <div>
+        <p className="text-sm text-text-primary">{title}</p>
+        <p className="text-xs text-text-secondary">{detail}</p>
+      </div>
+    </div>
+  );
+}
+
+function ConnectionSection() {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<IceCheckResult | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setResult(null);
+    try {
+      setResult(await checkIceConnectivity());
+    } catch (err) {
+      setResult({
+        host: false,
+        srflx: false,
+        relay: false,
+        candidateCount: 0,
+        turnConfigured: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-border/60 pt-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-text-primary">Connection test</p>
+          <p className="text-xs text-text-secondary">
+            Checks whether Colloquium can reach the internet and relay through
+            strict firewalls
+          </p>
+        </div>
+        <Button size="sm" variant="secondary" disabled={running} onClick={() => void run()}>
+          {running ? (
+            <span className="flex items-center gap-1.5">
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+              Testing…
+            </span>
+          ) : (
+            "Test connection"
+          )}
+        </Button>
+      </div>
+
+      {result && (
+        <div className="mt-3 space-y-2.5">
+          {result.error ? (
+            <StatusRow tone="bad" title="Test failed" detail={result.error} />
+          ) : (
+            <>
+              <StatusRow
+                tone={result.host ? "ok" : "bad"}
+                title="Local networking"
+                detail={
+                  result.host
+                    ? "WebRTC is available on this device."
+                    : "No local candidates — WebRTC may be blocked."
+                }
+              />
+              <StatusRow
+                tone={result.srflx ? "ok" : "warn"}
+                title="Internet reachability (STUN)"
+                detail={
+                  result.srflx
+                    ? "Reached a STUN server through your network."
+                    : "No reflexive candidate — you may be fully offline or behind a blocking proxy."
+                }
+              />
+              {result.turnConfigured ? (
+                <StatusRow
+                  tone={result.relay ? "ok" : "bad"}
+                  title="Relay (TURN)"
+                  detail={
+                    result.relay
+                      ? "Relay works — peers behind strict firewalls can still connect."
+                      : "A relay is configured but couldn't be reached. Check its credentials/URL."
+                  }
+                />
+              ) : (
+                <StatusRow
+                  tone="warn"
+                  title="Relay (TURN)"
+                  detail="No relay configured. Most peers still connect directly, but those behind symmetric NAT or strict firewalls may not."
+                />
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -586,6 +719,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
                 }
               />
+              <ConnectionSection />
             </div>
           )}
         </div>

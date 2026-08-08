@@ -1,23 +1,10 @@
-// STUN alone (PeerJS's cloud broker default) leaves peers behind symmetric
-// NAT/strict firewalls unable to connect at all. Open Relay Project's free
-// TURN tier is a hosted third-party service — still no backend of our own to
-// run — that closes that gap. Swap for a dedicated account if usage grows
-// past their free tier.
+// STUN gets peers on friendly NATs connected; peers behind symmetric NAT or a
+// strict firewall need a TURN relay, which is currently NOT configured.
+//
+// TODO(turn): add turn:/turns: entries with valid credentials (Metered, coturn,
+// Twilio, …). The old Open Relay free tier that lived here was discontinued and
+// is dead. Two providers is safer than one — a single free relay going dark is
+// how connectivity broke silently before.
 export const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
 ];

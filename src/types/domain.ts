@@ -22,7 +22,9 @@ export type RosterContact = {
   revokedBy: string | null;
 };
 
-export type Presence = "online" | "offline" | "connecting";
+// "unreachable" = registered on the broker (so, online) but no direct
+// connection could open — a NAT/firewall/VPN issue, not the contact being away.
+export type Presence = "online" | "offline" | "connecting" | "unreachable";
 
 export type Room = {
   id: string;

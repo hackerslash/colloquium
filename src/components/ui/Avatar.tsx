@@ -33,6 +33,7 @@ const PRESENCE_DOT: Record<Presence, string> = {
   online: "bg-success",
   connecting: "bg-warning",
   offline: "bg-text-muted",
+  unreachable: "bg-danger",
 };
 
 function initials(name: string): string {
