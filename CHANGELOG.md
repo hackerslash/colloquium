@@ -7,6 +7,19 @@ Section headers must match the release tag (`vX.Y.Z`) or bare version
 (`X.Y.Z`) so the release workflow can pull the matching section into the
 GitHub Release notes.
 
+## v0.7.1
+
+### Fixed
+
+- **The app crashed on launch for anyone with existing message history.** A
+  v0.7.0 database migration that repairs the message search index used
+  `DELETE FROM messages_fts`, which on a full-text index built over the
+  messages table fails once an earlier migration has renumbered rows —
+  SQLite reports the database as malformed and the app aborts before its
+  window appears. The migration now rebuilds the index outright, which
+  recovers cleanly regardless of prior state. Installs bricked by v0.7.0
+  recover automatically on the next launch, with no data loss.
+
 ## v0.7.0
 
 ### Added

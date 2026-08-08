@@ -1,6 +1,6 @@
 [package]
 name = "colloquium"
-version = "0.7.0"
+version = "0.7.1"
 description = "Colloquium — peer-to-peer chat and voice/video"
 authors = ["Colloquium"]
 edition = "2021"
