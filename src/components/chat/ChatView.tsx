@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, BellOff, Download, Phone, Video } from "lucide-react";
+import { Bell, BellOff, Download, Phone, ShieldCheck, ShieldQuestion, Video } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { useChatStore } from "../../stores/useChatStore";
@@ -9,6 +9,7 @@ import { dmRoomId } from "../../services/room/chatService";
 import { MessageList } from "./MessageList";
 import { Composer, type ComposerHandle } from "./Composer";
 import { DropZone } from "./DropZone";
+import { VerifyContactModal } from "../contact/VerifyContactModal";
 import { TypingIndicator } from "./TypingIndicator";
 import { notifyTyping, stopTyping } from "../../services/room/typingService";
 import { Avatar } from "../ui/Avatar";
@@ -52,6 +53,7 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
   const callInProgress = useCallStore((s) => s.activeCall !== null);
 
   const [roomId, setRoomId] = useState<string | null>(null);
+  const [verifyOpen, setVerifyOpen] = useState(false);
   const muted = useRoomStore((s) => (roomId ? !!s.mutedByRoom[roomId] : false));
   const composerRef = useRef<ComposerHandle>(null);
 
@@ -153,6 +155,12 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
         <span className="text-xs text-text-secondary">{statusLabel}</span>
         <div className="ml-auto flex gap-1">
           <IconButton
+            icon={contact.verifiedAt ? ShieldCheck : ShieldQuestion}
+            label={contact.verifiedAt ? "Verified — view safety number" : "Verify safety number"}
+            active={!!contact.verifiedAt}
+            onClick={() => setVerifyOpen(true)}
+          />
+          <IconButton
             icon={muted ? BellOff : Bell}
             label={muted ? "Unmute notifications" : "Mute notifications"}
             active={muted}
@@ -222,6 +230,11 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
             toast.error("Voice not sent", "Please try again.");
           });
         }}
+      />
+      <VerifyContactModal
+        open={verifyOpen}
+        onClose={() => setVerifyOpen(false)}
+        contactId={contactId}
       />
     </DropZone>
   );

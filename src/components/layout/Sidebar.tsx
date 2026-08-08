@@ -9,6 +9,7 @@ import {
   MicOff,
   Plus,
   Settings,
+  ShieldCheck,
   Video,
   Volume2,
   X,
@@ -383,6 +384,13 @@ export function Sidebar({
                 >
                   {contact.displayName}
                 </span>
+                {contact.verifiedAt && (
+                  <ShieldCheck
+                    size={12}
+                    className="shrink-0 text-success"
+                    aria-label="Safety number verified"
+                  />
+                )}
                 {muted && (
                   <BellOff size={12} className="shrink-0 text-text-muted" aria-label="Muted" />
                 )}

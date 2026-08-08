@@ -20,6 +20,10 @@ export type RosterContact = {
   revoked: boolean;
   revokedAt: number | null;
   revokedBy: string | null;
+  /** When the user compared safety numbers with this contact out of band.
+   * Local-only and deliberately absent from RosterEntryWire — a peer
+   * gossiping "verified" at you is the attack this exists to stop. */
+  verifiedAt: number | null;
 };
 
 // "unreachable" = registered on the broker (so, online) but no direct
@@ -45,6 +49,13 @@ export type Reaction = {
   authorId: string;
   emoji: string;
   reactedAt: number;
+};
+
+export type Pin = {
+  messageId: string;
+  roomId: string;
+  authorId: string;
+  pinnedAt: number;
 };
 
 export type Message = {

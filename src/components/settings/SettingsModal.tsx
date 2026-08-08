@@ -466,6 +466,8 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
   const setPushToTalk = useSettingsStore((s) => s.setPushToTalk);
   const closeToTray = useSettingsStore((s) => s.closeToTray);
   const setCloseToTray = useSettingsStore((s) => s.setCloseToTray);
+  const startAtLogin = useSettingsStore((s) => s.startAtLogin);
+  const setStartAtLogin = useSettingsStore((s) => s.setStartAtLogin);
   const desktopNotifications = useSettingsStore((s) => s.desktopNotifications);
   const setDesktopNotifications = useSettingsStore((s) => s.setDesktopNotifications);
   const notificationSounds = useSettingsStore((s) => s.notificationSounds);
@@ -717,6 +719,17 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                 description="Keep Colloquium running when the window is closed"
                 control={
                   <Switch checked={closeToTray} onChange={setCloseToTray} aria-label="Close to tray" />
+                }
+              />
+              <SettingRow
+                title="Start at login"
+                description="Launch straight to the tray so your rooms stay reachable"
+                control={
+                  <Switch
+                    checked={startAtLogin}
+                    onChange={setStartAtLogin}
+                    aria-label="Start at login"
+                  />
                 }
               />
               <ConnectionSection />

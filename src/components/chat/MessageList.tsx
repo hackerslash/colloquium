@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, ArrowDown, Check, CheckCheck, Clock, Copy, Download, MessageSquare, Paperclip, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowDown, Check, CheckCheck, ChevronDown, Clock, Copy, Download, MessageSquare, Paperclip, Pencil, Pin as PinIcon, PinOff, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import type { DeliveryStatus, Message, Reaction } from "../../types/domain";
 import { useChatStore } from "../../stores/useChatStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
@@ -244,6 +244,8 @@ type MessageRowProps = {
   animateIn: boolean;
   selfId: string | undefined;
   reactions: Reaction[] | undefined;
+  /** Whether anyone in the room has pinned this message. */
+  pinned: boolean;
   /** The message this one replies to, if it's loaded in this room. */
   replyToMessage: Message | undefined;
   nameOf: (id: string) => string;
@@ -251,6 +253,7 @@ type MessageRowProps = {
   /** Whether this row is the single currently-hovered message. */
   hovered: boolean;
   onToggleReaction: (messageId: string, emoji: string) => void;
+  onTogglePin: (messageId: string) => void;
   onReply: (message: Message) => void;
   onEdit: (message: Message) => void;
   onDelete: (messageId: string) => void;
@@ -266,11 +269,13 @@ const MessageRow = memo(function MessageRow({
   animateIn,
   selfId,
   reactions,
+  pinned,
   replyToMessage,
   nameOf,
   highlighted,
   hovered,
   onToggleReaction,
+  onTogglePin,
   onReply,
   onEdit,
   onDelete,
@@ -414,6 +419,18 @@ const MessageRow = memo(function MessageRow({
                     className="rounded p-1 hover:bg-bg-tertiary hover:text-text-primary transition-colors"
                   >
                     <SmilePlus size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    title={pinned ? "Unpin message" : "Pin message"}
+                    aria-label={pinned ? "Unpin message" : "Pin message"}
+                    onClick={() => onTogglePin(message.id)}
+                    className={cx(
+                      "rounded p-1 transition-colors hover:bg-bg-tertiary hover:text-text-primary",
+                      pinned && "text-accent",
+                    )}
+                  >
+                    <PinIcon size={14} />
                   </button>
                   <button
                     type="button"
@@ -621,6 +638,9 @@ export function MessageList({
   const sessionState = useRoomStore((s) => (roomId ? s.roomSessionState[roomId] : undefined));
   const reactionsByMessage = useChatStore((s) => (roomId ? s.reactionsByRoom[roomId] : undefined));
   const toggleReaction = useChatStore((s) => s.toggleReaction);
+  const pins = useChatStore((s) => (roomId ? s.pinsByRoom[roomId] : undefined));
+  const togglePin = useChatStore((s) => s.togglePin);
+  const [pinsOpen, setPinsOpen] = useState(false);
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const beginEdit = useChatStore((s) => s.beginEdit);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
@@ -802,12 +822,39 @@ export function MessageList({
     return map;
   }, [messages]);
 
+  // Pins are per-author, so the room's set is the union — dedupe by messageId.
+  // `minePinned` is the subset the local user can actually unpin.
+  const { pinnedIds, minePinned } = useMemo(() => {
+    const all = new Set<string>();
+    const mine = new Set<string>();
+    for (const p of pins ?? []) {
+      all.add(p.messageId);
+      if (p.authorId === selfId) mine.add(p.messageId);
+    }
+    return { pinnedIds: all, minePinned: mine };
+  }, [pins, selfId]);
+
+  // Pinned rows in chronological order. A pin for a message not loaded in this
+  // room simply doesn't render — nothing to show yet.
+  const pinnedMessages = useMemo(
+    () => (messages ?? []).filter((m) => pinnedIds.has(m.id) && !m.deletedAt),
+    [messages, pinnedIds],
+  );
+
   const handleToggleReaction = useCallback(
     (messageId: string, emoji: string) => {
       if (!roomId) return;
       void toggleReaction(roomId, memberIds ?? [], messageId, emoji);
     },
     [roomId, memberIds, toggleReaction],
+  );
+
+  const handleTogglePin = useCallback(
+    (messageId: string) => {
+      if (!roomId) return;
+      void togglePin(roomId, memberIds ?? [], messageId);
+    },
+    [roomId, memberIds, togglePin],
   );
 
   const handleReply = useCallback(
@@ -882,6 +929,53 @@ export function MessageList({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {pinnedMessages.length > 0 && (
+        <div className="shrink-0 border-b border-border bg-bg-secondary/60">
+          <button
+            type="button"
+            onClick={() => setPinsOpen((o) => !o)}
+            aria-expanded={pinsOpen}
+            className="flex w-full items-center gap-2 px-4 py-1.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+          >
+            <PinIcon size={12} className="text-accent" aria-hidden="true" />
+            {pinnedMessages.length} pinned message{pinnedMessages.length === 1 ? "" : "s"}
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={cx("ml-auto transition-transform", pinsOpen && "rotate-180")}
+            />
+          </button>
+          {pinsOpen && (
+            <ul className="max-h-48 overflow-y-auto border-t border-border/60">
+              {pinnedMessages.map((m) => (
+                <li key={m.id} className="flex items-center gap-2 pr-2 hover:bg-bg-tertiary">
+                  <button
+                    type="button"
+                    onClick={() => handleQuoteClick(m.id)}
+                    className="min-w-0 flex-1 truncate px-4 py-1.5 text-left text-xs"
+                  >
+                    <span className="font-medium text-text-primary">{nameOf(m.authorId)}</span>{" "}
+                    <span className="text-text-secondary">
+                      {m.body ? humanizeMentions(m.body) : m.attachmentName ?? "Attachment"}
+                    </span>
+                  </button>
+                  {minePinned.has(m.id) && (
+                    <button
+                      type="button"
+                      title="Unpin"
+                      aria-label="Unpin"
+                      onClick={() => handleTogglePin(m.id)}
+                      className="rounded p-1 text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                    >
+                      <PinOff size={12} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <AnimatePresence>
         {awayFromBottom && (
           <motion.button
@@ -941,6 +1035,7 @@ export function MessageList({
                 animateIn={didInitialRender.current}
                 selfId={selfId}
                 reactions={reactionsByMessage?.[message.id]}
+                pinned={pinnedIds.has(message.id)}
                 replyToMessage={
                   message.replyToId ? messageById.get(message.replyToId) : undefined
                 }
@@ -948,6 +1043,7 @@ export function MessageList({
                 highlighted={highlightId === message.id}
                 hovered={hoveredId === message.id}
                 onToggleReaction={handleToggleReaction}
+                onTogglePin={handleTogglePin}
                 onReply={handleReply}
                 onEdit={handleEdit}
                 onDelete={handleDelete}

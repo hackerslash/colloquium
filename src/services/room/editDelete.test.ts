@@ -12,6 +12,7 @@ vi.mock("../db/messageRepo", () => ({
 vi.mock("../db/rosterRepo", () => ({ getContact: vi.fn() }));
 vi.mock("../db/fileRepo", () => ({ deleteFile: vi.fn() }));
 vi.mock("../db/reactionRepo", () => ({}));
+vi.mock("../db/pinRepo", () => ({}));
 vi.mock("../db/roomRepo", () => ({}));
 vi.mock("../identity/identity", () => ({ verify: vi.fn(), sign: vi.fn() }));
 vi.mock("../peer/registry", () => ({

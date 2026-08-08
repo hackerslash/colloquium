@@ -8,6 +8,7 @@ import { WelcomeScreen } from "./components/onboarding/WelcomeScreen";
 import { MainShell } from "./components/layout/MainShell";
 import { Toaster } from "./components/ui/Toaster";
 import { startCallToastBridge } from "./services/call/callToastBridge";
+import { shouldStartHidden } from "./services/window";
 
 function App() {
   const bootStatus = useIdentityStore((s) => s.bootStatus);
@@ -21,9 +22,16 @@ function App() {
     // is correct, then reveal the window (it starts hidden to avoid a flash).
     void loadSettings();
     void loadIdentity().finally(() => {
-      void getCurrentWindow()
-        .show()
-        .catch(() => {});
+      // Launched at login? Stay in the tray — the network bridge still starts,
+      // so the app syncs without ever putting a window in the user's face.
+      void shouldStartHidden()
+        .catch(() => false)
+        .then((hidden) => {
+          if (hidden) return;
+          return getCurrentWindow()
+            .show()
+            .catch(() => {});
+        });
     });
     return stopBridge;
   }, [loadIdentity, loadSettings]);

@@ -1,9 +1,10 @@
-import type { Identity, Message, Reaction } from "../../types/domain";
+import type { Identity, Message, Pin, Reaction } from "../../types/domain";
 import type {
   ChatMessageMessage,
   ChatMessageWire,
   MsgDeleteMessage,
   MsgEditMessage,
+  PinMessage,
   ReactionMessage,
   ReadReceiptMessage,
   RoomSyncRequestMessage,
@@ -14,6 +15,7 @@ import type {
 import * as identityService from "../identity/identity";
 import * as messageRepo from "../db/messageRepo";
 import * as reactionRepo from "../db/reactionRepo";
+import * as pinRepo from "../db/pinRepo";
 import * as roomRepo from "../db/roomRepo";
 import * as roomMembersRepo from "../db/roomMembersRepo";
 import * as rosterRepo from "../db/rosterRepo";
@@ -646,6 +648,51 @@ export async function handleReaction(
   return reaction;
 }
 
+/** Persists a local pin toggle and broadcasts it to connected room members.
+ * Offline members converge via room sync on reconnect. */
+export async function sendPin(
+  self: Identity,
+  roomId: string,
+  memberIds: string[],
+  messageId: string,
+  op: "add" | "remove",
+  physicalNow: number,
+): Promise<Pin> {
+  const pin: Pin = { messageId, roomId, authorId: self.identityId, pinnedAt: physicalNow };
+  if (op === "add") await pinRepo.add(pin);
+  else await pinRepo.remove(messageId, self.identityId);
+
+  const payload: PinMessage = { type: "pin", roomId, messageId, op, pinnedAt: physicalNow };
+  broadcastToRoomMembers(memberIds.filter((id) => id !== self.identityId), payload);
+  return pin;
+}
+
+/** Applies a live pin toggle, attributed to the authenticated sender. Same DM
+ * guard as messages: a trusted contact can't inject pins into our DM with a
+ * third party. */
+export async function handlePin(
+  selfId: string,
+  senderId: string,
+  msg: PinMessage,
+): Promise<Pin | null> {
+  if (!msg.messageId) return null;
+  if (msg.roomId.startsWith("dm_")) {
+    const expected = await dmRoomId(selfId, senderId);
+    if (msg.roomId !== expected) return null;
+  }
+  const pin: Pin = {
+    messageId: msg.messageId,
+    roomId: msg.roomId,
+    authorId: senderId,
+    pinnedAt: msg.pinnedAt,
+  };
+  // A remove only ever clears the sender's own row, so it can't unpin someone
+  // else's pin — that's the cost of the per-author model.
+  if (msg.op === "add") await pinRepo.add(pin);
+  else await pinRepo.remove(msg.messageId, senderId);
+  return pin;
+}
+
 // In-memory store for incoming file chunks
 const incomingFiles = new Map<string, {
   chunks: string[];
@@ -771,6 +818,8 @@ export async function handleRoomSyncRequest(
   // Reactions always ride along as our full current set — an empty set still
   // needs to be sent so a reaction we removed while they were offline clears.
   const ownReactions = await reactionRepo.listByAuthor(msg.roomId, selfId);
+  // Pins ride along the same way and for the same reason as reactions.
+  const ownPins = await pinRepo.listByAuthor(msg.roomId, selfId);
   const response: RoomSyncResponseMessage = {
     type: "room_sync_response",
     roomId: msg.roomId,
@@ -780,6 +829,7 @@ export async function handleRoomSyncRequest(
       emoji: r.emoji,
       reactedAt: r.reactedAt,
     })),
+    pins: ownPins.map((p) => ({ messageId: p.messageId, pinnedAt: p.pinnedAt })),
   };
   getPeerRegistry().send(fromPeerId, response);
   return flipped + readFlipped > 0;
@@ -800,25 +850,34 @@ export async function handleRoomSyncResponse(
     else if (r.status === "updated") updated.push(r.message);
   }
 
-  // The reaction set is attributed to the responder — same DM guard as
-  // messages so a contact can't plant reactions in our DM with someone else.
-  if (msg.reactions) {
-    let allowed = true;
-    if (msg.roomId.startsWith("dm_")) {
-      allowed = msg.roomId === (await dmRoomId(self.identityId, senderId));
-    }
-    if (allowed) {
-      const sane = msg.reactions
-        .filter((r) => r.emoji && r.emoji.length <= MAX_REACTION_EMOJI_LEN)
-        .map((r) => ({
-          messageId: r.messageId,
-          roomId: msg.roomId,
-          authorId: senderId,
-          emoji: r.emoji,
-          reactedAt: r.reactedAt,
-        }));
-      await reactionRepo.replaceForAuthor(msg.roomId, senderId, sane);
-    }
+  // The reaction and pin sets are attributed to the responder — same DM guard
+  // as messages so a contact can't plant either in our DM with someone else.
+  let allowed = true;
+  if ((msg.reactions || msg.pins) && msg.roomId.startsWith("dm_")) {
+    allowed = msg.roomId === (await dmRoomId(self.identityId, senderId));
+  }
+  if (msg.reactions && allowed) {
+    const sane = msg.reactions
+      .filter((r) => r.emoji && r.emoji.length <= MAX_REACTION_EMOJI_LEN)
+      .map((r) => ({
+        messageId: r.messageId,
+        roomId: msg.roomId,
+        authorId: senderId,
+        emoji: r.emoji,
+        reactedAt: r.reactedAt,
+      }));
+    await reactionRepo.replaceForAuthor(msg.roomId, senderId, sane);
+  }
+  if (msg.pins && allowed) {
+    const sane = msg.pins
+      .filter((p) => p.messageId)
+      .map((p) => ({
+        messageId: p.messageId,
+        roomId: msg.roomId,
+        authorId: senderId,
+        pinnedAt: p.pinnedAt,
+      }));
+    await pinRepo.replaceForAuthor(msg.roomId, senderId, sane);
   }
   return { created, updated };
 }

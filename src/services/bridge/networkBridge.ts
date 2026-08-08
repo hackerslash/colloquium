@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import type { Identity, Message, Presence } from "../../types/domain";
 import type { ColloquiumMessage, MsgAckMessage } from "../../types/wire";
 import { initPeerRegistry, getOutbox } from "../peer/registry";
@@ -27,7 +28,8 @@ import { toast } from "../../stores/useToastStore";
 import { humanizeMentions, mentionsIdentity } from "../../lib/mentions";
 import { humanizeAnimatedEmoji } from "../../lib/animatedEmoji";
 
-const DISCOVERY_INTERVAL_MS = 2_000;
+// Discovery/heartbeat cadence is owned by the Rust `net-tick` emitter
+// (NET_TICK_MS in lib.rs), not a webview timer — see the listen() call below.
 const REANNOUNCE_INTERVAL_MS = 5 * 60_000;
 
 /** Notification body for an incoming message. Attachment-only messages have a
@@ -323,6 +325,12 @@ export function initNetworkBridge(self: Identity): () => void {
         if (reaction) useChatStore.getState().ingestReaction(reaction, msg.op);
         break;
       }
+      case "pin": {
+        if (!sender) break;
+        const pin = await chatService.handlePin(self.identityId, sender.identityId, msg);
+        if (pin) useChatStore.getState().ingestPin(pin, msg.op);
+        break;
+      }
       case "msg_edit": {
         if (!sender) break;
         const updated = await chatService.handleEdit(self, sender.identityId, msg);
@@ -384,6 +392,7 @@ export function initNetworkBridge(self: Identity): () => void {
         // Edits/tombstones that arrived for messages we already held.
         for (const m of updated) useChatStore.getState().applyMessageUpdate(m);
         await useChatStore.getState().refreshReactions(msg.roomId);
+        await useChatStore.getState().refreshPins(msg.roomId);
         const backfilledRooms = new Set<string>();
         for (const m of created) {
           // Ack the author directly (best effort) — the relaying peer isn't
@@ -552,7 +561,16 @@ export function initNetworkBridge(self: Identity): () => void {
     }
   }
 
-  const intervalId = setInterval(discover, DISCOVERY_INTERVAL_MS);
+  // Driven from Rust: a hidden window throttles setInterval well past the 10s
+  // liveness timeout, which would reap live peers while the app runs in the
+  // tray. Fire once immediately so discovery doesn't wait for the first tick.
+  void discover();
+  let unlistenTick: (() => void) | null = null;
+  let tickDisposed = false;
+  void listen("net-tick", () => void discover()).then((un) => {
+    if (tickDisposed) un();
+    else unlistenTick = un;
+  });
 
   // Slow gossip: LWW-merged re-announces converge member sets that diverged
   // while someone was offline past the Outbox TTL.
@@ -561,7 +579,8 @@ export function initNetworkBridge(self: Identity): () => void {
   }, REANNOUNCE_INTERVAL_MS);
 
   return () => {
-    clearInterval(intervalId);
+    tickDisposed = true;
+    unlistenTick?.();
     clearInterval(reannounceId);
     window.removeEventListener("pagehide", onPageHide);
     registry.stop();

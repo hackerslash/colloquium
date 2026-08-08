@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import type { DeliveryStatus, Message, Reaction } from "../types/domain";
+import type { DeliveryStatus, Message, Pin, Reaction } from "../types/domain";
 import * as messageRepo from "../services/db/messageRepo";
 import * as reactionRepo from "../services/db/reactionRepo";
+import * as pinRepo from "../services/db/pinRepo";
 import * as fileRepo from "../services/db/fileRepo";
 import * as draftRepo from "../services/db/draftRepo";
 import * as chatService from "../services/room/chatService";
@@ -14,6 +15,10 @@ type ChatState = {
   draftByRoom: Record<string, string>;
   /** roomId -> messageId -> reactions on that message (reacted_at order). */
   reactionsByRoom: Record<string, Record<string, Reaction[]>>;
+  /** roomId -> every member's pins in that room, pinned_at order. The union
+   * across authors is the room's pin list; a message pinned by two people
+   * appears twice, so readers dedupe by messageId. */
+  pinsByRoom: Record<string, Pin[]>;
   /** The message the composer is replying to, per room (like drafts). */
   replyingToByRoom: Record<string, Message | null>;
   /** The message currently being edited, per room. Mutually exclusive with
@@ -59,6 +64,15 @@ type ChatState = {
   /** Reloads a room's reactions from the DB (after a sync backfill replaced
    * an author's set wholesale). */
   refreshReactions: (roomId: string) => Promise<void>;
+  /** Pins/unpins a message for the local user and broadcasts the toggle. A
+   * room's pin list is the union of members' own sets, so this only ever
+   * removes the local user's own pin. */
+  togglePin: (roomId: string, memberIds: string[], messageId: string) => Promise<void>;
+  /** Bridge-called: a peer's pin toggle arrived and is already persisted. */
+  ingestPin: (pin: Pin, op: "add" | "remove") => void;
+  /** Reloads a room's pins from the DB (after a sync backfill replaced an
+   * author's set wholesale). */
+  refreshPins: (roomId: string) => Promise<void>;
   /** Bridge-called: a message arrived/backfilled from the network and was
    * already persisted; reflect it in the in-memory list if the room is loaded. */
   ingestMessage: (message: Message) => void;
@@ -128,15 +142,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   messagesByRoom: {},
   draftByRoom: {},
   reactionsByRoom: {},
+  pinsByRoom: {},
   replyingToByRoom: {},
   editingByRoom: {},
   stashedDraftByRoom: {},
   uploadByRoom: {},
 
   loadMessages: async (roomId) => {
-    const [messages, reactions] = await Promise.all([
+    const [messages, reactions, pins] = await Promise.all([
       messageRepo.listByRoom(roomId),
       reactionRepo.listByRoom(roomId),
+      pinRepo.listByRoom(roomId),
     ]);
     set((state) => {
       const existing = state.messagesByRoom[roomId];
@@ -146,6 +162,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return {
         messagesByRoom: { ...state.messagesByRoom, [roomId]: next },
         reactionsByRoom: { ...state.reactionsByRoom, [roomId]: groupByMessage(reactions) },
+        pinsByRoom: { ...state.pinsByRoom, [roomId]: pins },
       };
     });
   },
@@ -375,6 +392,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       reactionsByRoom: { ...state.reactionsByRoom, [roomId]: groupByMessage(reactions) },
     }));
+  },
+
+  togglePin: async (roomId, memberIds, messageId) => {
+    const self = useIdentityStore.getState().self;
+    if (!self) return;
+    const existing = get().pinsByRoom[roomId] ?? [];
+    const op = existing.some((p) => p.messageId === messageId && p.authorId === self.identityId)
+      ? "remove"
+      : "add";
+    const pin = await chatService.sendPin(self, roomId, memberIds, messageId, op, Date.now());
+    get().ingestPin(pin, op);
+  },
+
+  ingestPin: (pin, op) => {
+    set((state) => {
+      const list = state.pinsByRoom[pin.roomId] ?? [];
+      const without = list.filter(
+        (p) => !(p.authorId === pin.authorId && p.messageId === pin.messageId),
+      );
+      return {
+        pinsByRoom: {
+          ...state.pinsByRoom,
+          [pin.roomId]: op === "add" ? [...without, pin] : without,
+        },
+      };
+    });
+  },
+
+  refreshPins: async (roomId) => {
+    const pins = await pinRepo.listByRoom(roomId);
+    set((state) => ({ pinsByRoom: { ...state.pinsByRoom, [roomId]: pins } }));
   },
 
   ingestMessage: (message) => {
