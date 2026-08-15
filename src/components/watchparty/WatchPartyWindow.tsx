@@ -3,9 +3,12 @@ import { createPortal } from "react-dom";
 import {
   AudioLines,
   Crown,
+  Disc3,
   Film,
   LogOut,
   Maximize,
+  Mic,
+  MicOff,
   Minimize,
   Pause,
   Play,
@@ -13,6 +16,8 @@ import {
   RotateCw,
   Subtitles,
   Users,
+  Video,
+  VideoOff,
   Volume2,
   VolumeX,
   X,
@@ -34,6 +39,9 @@ import {
 } from "./PlayerChrome";
 import { PresenceRail } from "./PresenceRail";
 import { Scrubber } from "./Scrubber";
+import { VideoTile } from "../call/VideoTile";
+import { tileColumn, tileGrid, tileTracks } from "../call/tileGrid";
+import { hasLiveVideo } from "../../lib/mediaTracks";
 import { enterFullscreen, exitFullscreen } from "../../lib/fullscreen";
 import { formatClock } from "../../lib/time";
 import { cx } from "../../lib/cx";
@@ -288,6 +296,240 @@ function PartyPresence() {
   );
 }
 
+/** Decorative spectrogram. `active` gates both "should move" and the film's own
+ * play state — when it is false the bars sit low and still. Durations/delays are
+ * derived from the index so they stagger without a random source. */
+function Equalizer({
+  active,
+  count,
+  className,
+  barClassName,
+}: {
+  active: boolean;
+  count: number;
+  className?: string;
+  barClassName?: string;
+}) {
+  return (
+    <div className={cx("flex items-end justify-center gap-[3px]", className)} aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) =>
+        active ? (
+          <span
+            key={i}
+            className={cx("eq-bar h-full rounded-full bg-accent", barClassName)}
+            style={
+              {
+                "--eq-dur": `${0.6 + ((i * 37) % 70) / 100}s`,
+                "--eq-delay": `${((i * 53) % 60) / 100}s`,
+              } as React.CSSProperties
+            }
+          />
+        ) : (
+          <span
+            key={i}
+            className={cx("h-full origin-bottom rounded-full bg-accent/70", barClassName)}
+            style={{ transform: "scaleY(0.3)" }}
+          />
+        ),
+      )}
+    </div>
+  );
+}
+
+/** The audio-mode record: a spinning disc that freezes when the film is paused,
+ * standing in for the picture we're no longer showing. */
+/** A spinning record that freezes when the film is paused. */
+function Disc({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 120 120"
+      className="h-28 w-28 shrink-0 drop-shadow-[0_0_45px_rgba(0,0,0,0.5)]"
+      role="img"
+      aria-label="Record"
+    >
+      <g className={cx("gramo-record", !spinning && "[animation-play-state:paused]")}>
+        <circle cx="60" cy="60" r="58" fill="#141414" stroke="rgba(255,255,255,0.08)" />
+        <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="60" cy="60" r="36" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="60" cy="60" r="26" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <line x1="60" y1="60" x2="60" y2="6" stroke="rgba(255,255,255,0.10)" strokeWidth="1.5" />
+        <circle cx="60" cy="60" r="16" fill="var(--color-accent)" />
+        <circle cx="60" cy="60" r="3" fill="#000" />
+      </g>
+    </svg>
+  );
+}
+
+/** The faces when nobody has joined the call yet: big highlighted avatars, each
+ * with its own spectrogram, so the room still reads as a shared listening space
+ * before any camera is live. */
+function IdleFaces({ paused }: { paused: boolean }) {
+  const members = useWatchPartyStore((s) => s.members);
+  const controllerId = useWatchPartyStore((s) => s.controllerId);
+  const self = useIdentityStore((s) => s.self);
+  const contactsById = useRosterStore((s) => s.contactsById);
+
+  return (
+    <div className="relative flex max-w-4xl flex-wrap items-start justify-center gap-x-8 gap-y-8">
+      {members.map((m) => {
+        const name =
+          m.id === self?.identityId
+            ? (self?.displayName ?? "You")
+            : (contactsById[m.id]?.displayName ?? "Guest");
+        const isController = m.id === controllerId;
+        return (
+          <div key={m.id} className="flex w-24 flex-col items-center gap-2.5">
+            <div className="relative">
+              <span className="relative inline-flex rounded-full p-1 ring-2 ring-white/15">
+                <Avatar id={m.id} name={name} size="xl" />
+              </span>
+              {isController && (
+                <span
+                  className="absolute -top-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-ink ring-4 ring-black"
+                  aria-label="Controlling playback"
+                >
+                  <Crown size={13} aria-hidden="true" />
+                </span>
+              )}
+            </div>
+            <Equalizer active={!paused} count={5} className="h-4 w-12 opacity-80" barClassName="w-1" />
+            <span className="w-full truncate text-sm font-medium text-white">{name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Audio mode. Covers the picture — the `<video>` keeps playing underneath, so
+ * the sound and the sync loop never stop. It's a normal call grid dressed in
+ * audio chrome: a spinning record, a spectrogram, and the room's own cameras
+ * front and centre. Falls back to highlighted faces before anyone joins. */
+function AudioStage({ paused }: { paused: boolean }) {
+  const roomId = useWatchPartyStore((s) => s.roomId);
+  const streamUrl = useWatchPartyStore((s) => s.streamUrl);
+  const self = useIdentityStore((s) => s.self);
+  const contactsById = useRosterStore((s) => s.contactsById);
+
+  const callRoomId = useRoomCallStore((s) => s.roomId);
+  const participants = useRoomCallStore((s) => s.participants);
+  const streams = useRoomCallStore((s) => s.streamsByParticipant);
+  const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
+  const qualityByParticipant = useRoomCallStore((s) => s.qualityByParticipant);
+  const localStream = useRoomCallStore((s) => s.localStream);
+  const micOn = useRoomCallStore((s) => s.micOn);
+  const camOn = useRoomCallStore((s) => s.camOn);
+  const speakingIds = useRoomCallStore((s) => s.speakingIds);
+  useRoomCallStore((s) => s.mediaVersion);
+
+  const inCall = callRoomId === roomId;
+  let host = "";
+  try {
+    host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
+  } catch {
+    host = "";
+  }
+
+  const nameOf = (id: string) =>
+    id === self?.identityId ? (self?.displayName ?? "You") : (contactsById[id]?.displayName ?? "Guest");
+  const { cols, rows } = tileGrid(participants.length);
+
+  return (
+    <div
+      className="absolute inset-0 flex flex-col items-center gap-6 overflow-y-auto px-4 pt-20 pb-32"
+      style={{ background: "radial-gradient(120% 90% at 50% 25%, #17070d 0%, #000 62%, #08040c 100%)" }}
+    >
+      <span
+        className="pointer-events-none absolute top-1/4 left-1/2 h-[40rem] w-[40rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/20 blur-[120px]"
+        aria-hidden="true"
+      />
+
+      {/* Audio chrome: the record and the caption. */}
+      <div className="relative flex shrink-0 flex-col items-center gap-3">
+        <Disc spinning={!paused} />
+        <div className="flex flex-col items-center gap-0.5">
+          <p className="font-display text-xl leading-none text-white">Listening together</p>
+          {host && <p className="text-[11px] tracking-wide text-white/45">{host}</p>}
+        </div>
+      </div>
+
+      {/* Mic / camera / leave — the rail is hidden in audio mode, so its
+          controls move here. */}
+      <div className="relative shrink-0">
+        {inCall ? (
+          <div className="flex items-center gap-1 rounded-full bg-black/55 p-1 ring-1 ring-white/10 backdrop-blur-md">
+            <ChromeButton
+              icon={micOn ? Mic : MicOff}
+              label={micOn ? "Mute" : "Unmute"}
+              onClick={() => useRoomCallStore.getState().toggleMic()}
+              className={cx(!micOn && "text-danger hover:text-danger")}
+            />
+            <ChromeButton
+              icon={camOn ? Video : VideoOff}
+              label={camOn ? "Turn camera off" : "Turn camera on"}
+              onClick={() => void useRoomCallStore.getState().toggleCam()}
+            />
+            <ChromeButton
+              icon={LogOut}
+              label="Leave call"
+              onClick={() => useRoomCallStore.getState().leave()}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => roomId && void useRoomCallStore.getState().join(roomId)}
+            className="flex items-center gap-2 rounded-full bg-black/55 px-4 py-2.5 text-sm font-medium text-white/90 ring-1 ring-white/10 backdrop-blur-md transition-colors hover:bg-black/70 hover:text-white"
+          >
+            <Video size={15} aria-hidden="true" className="shrink-0 text-accent" />
+            Join with camera &amp; mic
+          </button>
+        )}
+      </div>
+
+      {/* The room's cameras, large — a normal call grid. Rows divide the
+          available height so the grid never spills past the transport bar. */}
+      {inCall && participants.length > 0 ? (
+        <div
+          className="relative grid min-h-0 w-full max-w-6xl flex-1 gap-3"
+          style={tileTracks(cols, rows)}
+        >
+          {participants.map((id, i) => {
+            const stream = id === self?.identityId ? localStream : (streams[id] ?? null);
+            const hasVideo =
+              id === self?.identityId
+                ? camOn
+                : hasLiveVideo(stream) && camOnByParticipant[id] !== false;
+            return (
+              <div
+                key={id}
+                className="min-h-0 min-w-0"
+                style={{ gridColumn: tileColumn(i, participants.length, cols) }}
+              >
+                <VideoTile
+                  stream={stream}
+                  muted={id === self?.identityId}
+                  mirror={id === self?.identityId}
+                  label={nameOf(id)}
+                  participantId={id}
+                  quality={id === self?.identityId ? undefined : qualityByParticipant[id]}
+                  hasVideo={hasVideo}
+                  speaking={speakingIds.has(id)}
+                  fit="fill"
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="relative flex flex-1 items-center">
+          <IdleFaces paused={paused} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WatchPartyWindow() {
   const active = useWatchPartyStore((s) => s.active);
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -338,6 +580,7 @@ export function WatchPartyWindow() {
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [railShown, setRailShown] = useState(true);
+  const [audioMode, setAudioMode] = useState(false);
 
   const controller = selfIsController();
 
@@ -459,7 +702,8 @@ export function WatchPartyWindow() {
 
   // Chrome stays up while paused, while there is nothing to watch, and while the
   // pointer or focus is inside it — hiding a menu mid-interaction is hostile.
-  const chromeShown = !idle || paused || !streamUrl || holdChrome || sourceOpen;
+  // Audio mode has no picture to get out of the way of, so the controls stay.
+  const chromeShown = !idle || paused || !streamUrl || holdChrome || sourceOpen || audioMode;
   const transportOff = !controller || !streamUrl;
 
   const audio = tracks.filter((t) => t.type === "audio");
@@ -519,7 +763,9 @@ export function WatchPartyWindow() {
     >
       <Stage videoRef={videoRef} onStageClick={onStageClick} />
 
-      <PresenceRail roomId={roomId} visible={railShown} />
+      {audioMode && streamUrl && <AudioStage paused={paused} />}
+
+      <PresenceRail roomId={roomId} visible={railShown && !audioMode} />
 
       <div
         onPointerEnter={() => setHoldChrome(true)}
@@ -539,7 +785,7 @@ export function WatchPartyWindow() {
             <div className="flex min-w-0 items-center gap-3 overflow-hidden">
               <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-                Watch party
+                {audioMode ? "Listen party" : "Watch party"}
               </span>
               <ChromeChip>
                 {members.length === 1 ? "Just you" : `${members.length} watching`}
@@ -743,12 +989,22 @@ export function WatchPartyWindow() {
                 onSelect={(v) => setRate(Number(v))}
               />
 
-              <ChromeButton
-                icon={Users}
-                label={railShown ? "Hide cameras" : "Show cameras"}
-                onClick={() => setRailShown((p) => !p)}
-                className={cx(railShown && "bg-white/15 text-white")}
-              />
+              {streamUrl && (
+                <ChromeButton
+                  icon={Disc3}
+                  label={audioMode ? "Back to video" : "Audio mode"}
+                  onClick={() => setAudioMode((a) => !a)}
+                  className={cx(audioMode && "bg-white/15 text-white")}
+                />
+              )}
+              {!audioMode && (
+                <ChromeButton
+                  icon={Users}
+                  label={railShown ? "Hide cameras" : "Show cameras"}
+                  onClick={() => setRailShown((p) => !p)}
+                  className={cx(railShown && "bg-white/15 text-white")}
+                />
+              )}
               <ChromeButton
                 icon={fullscreen ? Minimize : Maximize}
                 label={fullscreen ? "Exit full screen" : "Full screen"}

@@ -160,6 +160,41 @@ textarea,
   }
 }
 
+/* Watch-party audio mode: the gramophone's record spins, sound waves pulse from
+   its horn, and equalizer bars stand in for a spectrogram — all decorative,
+   with no live frequency data behind them. */
+@keyframes disc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.gramo-record {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: disc-spin 6s linear infinite;
+}
+@keyframes eq {
+  from {
+    transform: scaleY(0.25);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq var(--eq-dur, 0.9s) ease-in-out var(--eq-delay, 0s) infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gramo-record {
+    animation: none;
+  }
+  .eq-bar {
+    animation: none;
+    transform: scaleY(0.6);
+  }
+}
+
 /* Slim range track for controls that sit on video, where the surrounding
    surface is the film rather than a themed panel. The caller sets `--fill` to
    the filled fraction. */
