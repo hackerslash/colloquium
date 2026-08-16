@@ -910,46 +910,94 @@ export function WatchPartyWindow() {
           {...(isMaximized ? {} : headerProps)}
           onDoubleClick={toggleMaximize}
           className={cx(
-            "flex h-8 shrink-0 items-center justify-between border-b border-white/10 bg-black px-2 select-none z-30",
+            "flex shrink-0 flex-col gap-2 bg-black px-3 py-2 border-b border-white/10 select-none z-30",
             !isMaximized && "cursor-grab active:cursor-grabbing",
           )}
         >
-          <div className="flex items-center gap-1.5 min-w-0">
-            {!isMaximized && <Move size={12} className="shrink-0 text-white/30" aria-hidden="true" />}
-            <span className="truncate text-xs font-semibold text-white">
-              {audioMode ? "Listen party" : "Watch party"}
-            </span>
-            <span className="hidden sm:inline text-[11px] text-white/50 truncate">
-              · {members.length === 1 ? "Just you" : `${members.length} watching`}
-              {controller ? " · You control" : ` · ${controllerName} controls`}
-            </span>
+          <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+              {!isMaximized && <Move size={12} className="shrink-0 text-white/30" aria-hidden="true" />}
+              <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
+                {audioMode ? "Listen party" : "Watch party"}
+              </span>
+              <ChromeChip>{members.length === 1 ? "Just you" : `${members.length} watching`}</ChromeChip>
+              <PartyPresence />
+              <ChromeChip tone={controller ? "accent" : "neutral"}>
+                {controller ? "You control playback" : `${controllerName} is controlling`}
+              </ChromeChip>
+            </div>
+            <div className="ml-auto flex shrink-0 items-center gap-1.5" data-nodrag>
+              {controller && members.length > 1 && (
+                <PlayerMenu
+                  icon={Crown}
+                  label="Give control to"
+                  heading="Give control to"
+                  side="bottom"
+                  items={members
+                    .filter((m) => m.id !== self?.identityId)
+                    .map((m) => ({
+                      value: m.id,
+                      label: contactsById[m.id]?.displayName ?? "Guest",
+                      hint: m.ready ? undefined : "still buffering",
+                    }))}
+                  onSelect={handControlTo}
+                />
+              )}
+              {controller && streamUrl && (
+                <ChromeButton
+                  icon={Film}
+                  label="Play something else"
+                  onClick={() => setSourceOpen((o) => !o)}
+                  className={cx(sourceOpen && "bg-white/20 text-white")}
+                />
+              )}
+              {isOwner ? (
+                <ChromeTextButton icon={X} tone="danger" onClick={end}>
+                  End party
+                </ChromeTextButton>
+              ) : (
+                <ChromeTextButton icon={LogOut} onClick={leave}>
+                  Leave
+                </ChromeTextButton>
+              )}
+              <button
+                onClick={toggleMinimize}
+                aria-label="Minimize party"
+                title="Minimize to picture-in-picture"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                <Minus size={14} />
+              </button>
+              <button
+                onClick={toggleMaximize}
+                aria-label={isMaximized ? "Restore" : "Maximize"}
+                title={isMaximized ? "Restore" : "Maximize"}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
+            </div>
           </div>
-          <div className="flex items-center gap-1 shrink-0" data-nodrag>
-            <button
-              onClick={toggleMinimize}
-              aria-label="Minimize party"
-              title="Minimize to picture-in-picture"
-              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            >
-              <Minus size={14} />
-            </button>
-            <button
-              onClick={toggleMaximize}
-              aria-label={isMaximized ? "Restore" : "Maximize"}
-              title={isMaximized ? "Restore" : "Maximize"}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            >
-              {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            </button>
-            <button
-              onClick={isOwner ? end : leave}
-              aria-label={isOwner ? "End party" : "Leave party"}
-              title={isOwner ? "End party" : "Leave"}
-              className="ml-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-white/70 hover:bg-danger hover:text-white transition-colors"
-            >
-              <X size={12} />
-            </button>
-          </div>
+          {sourceOpen && (
+            <div className="flex max-w-2xl items-center gap-2" data-nodrag>
+              <input
+                ref={sourceRef}
+                type="url"
+                defaultValue={streamUrl ?? ""}
+                placeholder="Paste a link to the video you want to watch"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitSource();
+                  if (e.key === "Escape") setSourceOpen(false);
+                }}
+                className="min-w-0 flex-1 rounded-full border border-border bg-bg-secondary px-4 py-2 text-sm text-text-primary transition-colors placeholder:text-text-muted focus-visible:border-accent"
+              />
+              <Button size="sm" onClick={submitSource}>
+                Play it
+              </Button>
+              <ChromeTextButton onClick={() => setSourceOpen(false)}>Cancel</ChromeTextButton>
+            </div>
+          )}
         </div>
       )}
 
@@ -1040,85 +1088,10 @@ export function WatchPartyWindow() {
               if (!e.currentTarget.contains(e.relatedTarget as Node)) setHoldChrome(false);
             }}
             className={cx(
-              "pointer-events-none absolute inset-0 z-20 flex flex-col justify-between transition-opacity duration-200 motion-reduce:transition-none",
+              "pointer-events-none absolute inset-0 z-20 flex flex-col justify-end transition-opacity duration-200 motion-reduce:transition-none",
               chromeShown ? "opacity-100" : "opacity-0",
             )}
           >
-        {/* Session — who is here, who is driving, how to get out. */}
-        <header className="pointer-events-auto flex flex-col gap-2 bg-gradient-to-b from-black/75 to-transparent px-4 pt-3 pb-10">
-          <div className="flex items-center gap-3">
-            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
-              <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
-                <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-                {audioMode ? "Listen party" : "Watch party"}
-              </span>
-              <ChromeChip>
-                {members.length === 1 ? "Just you" : `${members.length} watching`}
-              </ChromeChip>
-              <PartyPresence />
-              <ChromeChip tone={controller ? "accent" : "neutral"}>
-                {controller ? "You control playback" : `${controllerName} is controlling`}
-              </ChromeChip>
-            </div>
-
-            <div className="ml-auto flex shrink-0 items-center gap-1.5">
-              {controller && members.length > 1 && (
-                <PlayerMenu
-                  icon={Crown}
-                  label="Give control to"
-                  heading="Give control to"
-                  side="bottom"
-                  items={members
-                    .filter((m) => m.id !== self?.identityId)
-                    .map((m) => ({
-                      value: m.id,
-                      label: contactsById[m.id]?.displayName ?? "Guest",
-                      hint: m.ready ? undefined : "still buffering",
-                    }))}
-                  onSelect={handControlTo}
-                />
-              )}
-              {controller && streamUrl && (
-                <ChromeButton
-                  icon={Film}
-                  label="Play something else"
-                  onClick={() => setSourceOpen((o) => !o)}
-                  className={cx(sourceOpen && "bg-white/20 text-white")}
-                />
-              )}
-              {isOwner ? (
-                <ChromeTextButton icon={X} tone="danger" onClick={end}>
-                  End party
-                </ChromeTextButton>
-              ) : (
-                <ChromeTextButton icon={LogOut} onClick={leave}>
-                  Leave
-                </ChromeTextButton>
-              )}
-            </div>
-          </div>
-
-          {sourceOpen && (
-            <div className="flex max-w-2xl items-center gap-2">
-              <input
-                ref={sourceRef}
-                type="url"
-                defaultValue={streamUrl ?? ""}
-                placeholder="Paste a link to the video you want to watch"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitSource();
-                  if (e.key === "Escape") setSourceOpen(false);
-                }}
-                className="min-w-0 flex-1 rounded-full border border-border bg-bg-secondary px-4 py-2 text-sm text-text-primary transition-colors placeholder:text-text-muted focus-visible:border-accent"
-              />
-              <Button size="sm" onClick={submitSource}>
-                Play it
-              </Button>
-              <ChromeTextButton onClick={() => setSourceOpen(false)}>Cancel</ChromeTextButton>
-            </div>
-          )}
-        </header>
-
         {/* Transport — the film's own controls. */}
         <div className="pointer-events-auto bg-gradient-to-t from-black/85 via-black/55 to-transparent px-4 pt-10 pb-3">
           <Scrubber
