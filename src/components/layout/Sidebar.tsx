@@ -24,6 +24,8 @@ import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
 import { cx } from "../../lib/cx";
+import { copyText } from "../../lib/clipboard";
+import { toast } from "../../stores/useToastStore";
 
 export type Selection =
   | { kind: "home" }
@@ -123,13 +125,16 @@ export function Sidebar({
     };
   }, [callParticipantsByRoom, groupRooms]);
 
-  function copyId() {
+  async function copyId() {
     if (!self) return;
-    void navigator.clipboard.writeText(self.identityId).then(() => {
+    const ok = await copyText(self.identityId);
+    if (ok) {
       setCopied(true);
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
-    });
+    } else {
+      toast.error("Copy failed", "Couldn't copy to clipboard.");
+    }
   }
 
   return (

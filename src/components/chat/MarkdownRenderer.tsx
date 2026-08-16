@@ -1,6 +1,7 @@
 import React from "react";
 import { cx } from "../../lib/cx";
 import { resolveEmoji } from "../../lib/animatedEmoji";
+import { openExternal } from "../../lib/openExternal";
 
 /** Resolves a mentioned identityId to a display name (the viewer's own roster
  * name for that id), or null when unknown. */
@@ -133,19 +134,24 @@ function parseInlineMarkdown(
         </em>,
       );
     } else if (matchedStr.startsWith("http://") || matchedStr.startsWith("https://")) {
-      // Link
+      // Link — open in system browser (Tauri opener), not inside webview
+      const href = matchedStr;
       elements.push(
         <a
           key={index++}
-          href={matchedStr}
+          href={href}
           target="_blank"
           rel="noopener noreferrer"
+          onClick={(e) => {
+            e.preventDefault();
+            void openExternal(href);
+          }}
           className={cx(
             "underline underline-offset-2 transition-opacity hover:opacity-80",
             isOwn ? "text-white font-medium" : "text-accent font-medium",
           )}
         >
-          {matchedStr}
+          {href}
         </a>,
       );
     } else {

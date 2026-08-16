@@ -7,6 +7,7 @@ import { safetyNumber } from "../../lib/crypto";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { toast } from "../../stores/useToastStore";
+import { copyText } from "../../lib/clipboard";
 
 type VerifyContactModalProps = {
   open: boolean;
@@ -50,8 +51,9 @@ export function VerifyContactModal({ open, onClose, contactId }: VerifyContactMo
 
   async function handleCopy() {
     if (!groups) return;
-    await navigator.clipboard.writeText(groups.join(" "));
-    setCopied(true);
+    const ok = await copyText(groups.join(" "));
+    if (ok) setCopied(true);
+    else toast.error("Copy failed", "Couldn't copy to clipboard.");
   }
 
   if (!contact) return null;

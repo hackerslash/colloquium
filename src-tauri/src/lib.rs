@@ -122,6 +122,8 @@ pub fn run() {
         // actively picked in a native dialog are ever writable.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         // Migrations run in our own keyed pool inside `db::init` (below), not
         // via the plugin — see setup. The plugin is registered bare so its
         // execute/select commands resolve against the injected SQLCipher pool.

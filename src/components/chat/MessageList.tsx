@@ -26,6 +26,7 @@ import { saveToDisk } from "../../lib/saveFile";
 import { fetchAttachment } from "../../lib/fetchAttachment";
 import * as fileRepo from "../../services/db/fileRepo";
 import { toast } from "../../stores/useToastStore";
+import { copyText } from "../../lib/clipboard";
 
 const GROUP_GAP_MS = 5 * 60_000;
 
@@ -293,13 +294,16 @@ const MessageRow = memo(function MessageRow({
   const jumboIds =
     !deleted && !message.attachmentName ? jumboAnimatedEmojiIds(message.body) : null;
 
-  function copyBody() {
+  async function copyBody() {
     const text = humanizeAnimatedEmoji(humanizeMentions(message.body ?? ""));
-    void navigator.clipboard.writeText(text).then(() => {
+    const ok = await copyText(text);
+    if (ok) {
       setCopied(true);
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_200);
-    });
+    } else {
+      toast.error("Copy failed", "Couldn't copy to clipboard — try selecting the text manually.");
+    }
   }
 
   function openPicker(e: React.MouseEvent<HTMLButtonElement>) {

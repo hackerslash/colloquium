@@ -58,6 +58,8 @@ tokio = { version = "1", features = ["fs", "net", "rt", "time"] }
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "stream", "http2"] }
 tauri-plugin-dialog = "2.7.2"
 tauri-plugin-fs = "2.5.1"
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
 
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
 tauri-plugin-single-instance = "2"

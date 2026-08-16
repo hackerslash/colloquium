@@ -7,9 +7,13 @@ import {
   Film,
   LogOut,
   Maximize,
+  Maximize2,
   Mic,
   MicOff,
   Minimize,
+  Minimize2,
+  Minus,
+  Move,
   Pause,
   Play,
   RotateCcw,
@@ -45,6 +49,7 @@ import { hasLiveVideo } from "../../lib/mediaTracks";
 import { enterFullscreen, exitFullscreen } from "../../lib/fullscreen";
 import { formatClock } from "../../lib/time";
 import { cx } from "../../lib/cx";
+import { useDraggable } from "../../hooks/useDraggable";
 
 /** How long the pointer must rest before the chrome gets out of the way. */
 const IDLE_MS = 2_600;
@@ -582,6 +587,58 @@ export function WatchPartyWindow() {
   const [railShown, setRailShown] = useState(true);
   const [audioMode, setAudioMode] = useState(false);
 
+  // Window chrome — floating keeps chat accessible, minimized keeps a PIP
+  type WindowState = "floating" | "minimized" | "maximized";
+  const [windowState, setWindowState] = useState<WindowState>("floating");
+  const { pos, dragRef, headerProps } = useDraggable();
+  const [size, setSize] = useState<{ w: number; h: number }>({
+    w: Math.min(960, Math.max(480, typeof window !== "undefined" ? Math.floor(window.innerWidth * 0.62) : 960)),
+    h: Math.min(640, Math.max(360, typeof window !== "undefined" ? Math.floor(window.innerHeight * 0.62) : 600)),
+  });
+  const resizingRef = useRef<null | { dir: "e" | "s" | "se"; startX: number; startY: number; startW: number; startH: number }>(null);
+
+  function toggleMaximize() {
+    setWindowState((s) => (s === "maximized" ? "floating" : "maximized"));
+  }
+  function toggleMinimize() {
+    setWindowState((s) => (s === "minimized" ? "floating" : "minimized"));
+  }
+  function onResizeStart(dir: "e" | "s" | "se") {
+    return (e: React.PointerEvent) => {
+      e.preventDefault();
+      resizingRef.current = { dir, startX: e.clientX, startY: e.clientY, startW: size.w, startH: size.h };
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    };
+  }
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      const r = resizingRef.current;
+      if (!r) return;
+      const dx = e.clientX - r.startX;
+      const dy = e.clientY - r.startY;
+      let nw = r.startW;
+      let nh = r.startH;
+      if (r.dir === "e" || r.dir === "se") nw = r.startW + dx;
+      if (r.dir === "s" || r.dir === "se") nh = r.startH + dy;
+      const minW = 360;
+      const minH = 260;
+      const maxW = window.innerWidth - 24;
+      const maxH = window.innerHeight - 24;
+      nw = Math.max(minW, Math.min(nw, maxW));
+      nh = Math.max(minH, Math.min(nh, maxH));
+      setSize({ w: nw, h: nh });
+    }
+    function onUp() {
+      resizingRef.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [size.w, size.h]);
+
   const controller = selfIsController();
 
   const wake = useCallback(() => {
@@ -692,6 +749,52 @@ export function WatchPartyWindow() {
     if (sourceOpen) sourceRef.current?.focus();
   }, [sourceOpen]);
 
+  // Keep the fullscreen DOM target stable — the container itself is fullscreened.
+  // Must be before any early return (Rules of Hooks).
+  const setRefs = useCallback(
+    (el: HTMLDivElement | null) => {
+      (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      (dragRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    },
+    [dragRef],
+  );
+
+  const isMinimized = windowState === "minimized";
+  const isMaximized = windowState === "maximized";
+  const isFloating = windowState === "floating";
+
+  let containerStyle: React.CSSProperties = {};
+  if (isMaximized) {
+    containerStyle = { position: "fixed", inset: "12px", zIndex: 40 };
+  } else if (isMinimized) {
+    containerStyle = {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      width: "360px",
+      height: "220px",
+      zIndex: 40,
+    };
+  } else if (pos) {
+    containerStyle = {
+      position: "fixed",
+      left: `${pos.x}px`,
+      top: `${pos.y}px`,
+      width: `${size.w}px`,
+      height: `${size.h}px`,
+      zIndex: 40,
+    };
+  } else {
+    containerStyle = {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      width: `${size.w}px`,
+      height: `${size.h}px`,
+      zIndex: 40,
+    };
+  }
+
   if (!active) return null;
 
   const isOwner = !!self && ownerId === self.identityId;
@@ -754,31 +857,193 @@ export function WatchPartyWindow() {
     setSourceOpen(false);
   };
 
+  // Unified portal — single <video> stays mounted so minimize never tears down playback.
+  // audio keeps playing because Stage is never unmounted.
   return createPortal(
     <div
-      ref={rootRef}
-      className={cx("fixed inset-0 z-40 bg-black", !chromeShown && "cursor-none")}
-      onPointerMove={wake}
-      onPointerDown={wake}
+      ref={setRefs}
+      style={containerStyle}
+      className={cx(
+        "flex flex-col overflow-hidden bg-black shadow-2xl",
+        isMinimized && "rounded-2xl border border-white/10",
+        isFloating && "rounded-2xl border border-white/10",
+        isMaximized && "rounded-2xl border border-white/10",
+        !isMinimized && !chromeShown && "cursor-none",
+      )}
+      onPointerMove={!isMinimized ? wake : undefined}
+      onPointerDown={!isMinimized ? wake : undefined}
     >
-      <Stage videoRef={videoRef} onStageClick={onStageClick} />
+      {/* Header — compact when minimized, draggable when floating/maximized */}
+      {isMinimized ? (
+        <header
+          {...headerProps}
+          onDoubleClick={toggleMaximize}
+          className="flex h-8 shrink-0 items-center justify-between bg-black px-2 select-none cursor-grab active:cursor-grabbing"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Move size={12} className="shrink-0 text-white/40" aria-hidden="true" />
+            <span className="truncate text-xs font-semibold text-white">
+              {audioMode ? "Listen party" : "Watch party"} · {members.length} watching
+            </span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0" data-nodrag>
+            <button
+              onClick={toggleMinimize}
+              aria-label="Expand party"
+              title="Expand"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              <Maximize2 size={12} />
+            </button>
+            <button
+              onClick={isOwner ? end : leave}
+              aria-label={isOwner ? "End party" : "Leave party"}
+              title={isOwner ? "End party" : "Leave"}
+              className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-white/70 hover:bg-danger hover:text-white transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </header>
+      ) : (
+        <div
+          {...(isMaximized ? {} : headerProps)}
+          onDoubleClick={toggleMaximize}
+          className={cx(
+            "flex h-8 shrink-0 items-center justify-between border-b border-white/10 bg-black px-2 select-none z-30",
+            !isMaximized && "cursor-grab active:cursor-grabbing",
+          )}
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            {!isMaximized && <Move size={12} className="shrink-0 text-white/30" aria-hidden="true" />}
+            <span className="truncate text-xs font-semibold text-white">
+              {audioMode ? "Listen party" : "Watch party"}
+            </span>
+            <span className="hidden sm:inline text-[11px] text-white/50 truncate">
+              · {members.length === 1 ? "Just you" : `${members.length} watching`}
+              {controller ? " · You control" : ` · ${controllerName} controls`}
+            </span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0" data-nodrag>
+            <button
+              onClick={toggleMinimize}
+              aria-label="Minimize party"
+              title="Minimize to picture-in-picture"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              <Minus size={14} />
+            </button>
+            <button
+              onClick={toggleMaximize}
+              aria-label={isMaximized ? "Restore" : "Maximize"}
+              title={isMaximized ? "Restore" : "Maximize"}
+              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+            <button
+              onClick={isOwner ? end : leave}
+              aria-label={isOwner ? "End party" : "Leave party"}
+              title={isOwner ? "End party" : "Leave"}
+              className="ml-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-white/70 hover:bg-danger hover:text-white transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </div>
+      )}
 
-      {audioMode && streamUrl && <AudioStage paused={paused} />}
+      <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
+        {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
+        <Stage videoRef={videoRef} onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick} />
 
-      <PresenceRail roomId={roomId} visible={railShown && !audioMode} />
+        {!isMinimized && audioMode && streamUrl && <AudioStage paused={paused} />}
 
-      <div
-        onPointerEnter={() => setHoldChrome(true)}
-        onPointerLeave={() => setHoldChrome(false)}
-        onFocus={() => setHoldChrome(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setHoldChrome(false);
-        }}
-        className={cx(
-          "pointer-events-none absolute inset-0 z-20 flex flex-col justify-between transition-opacity duration-200 motion-reduce:transition-none",
-          chromeShown ? "opacity-100" : "opacity-0",
+        {!isMinimized && <PresenceRail roomId={roomId} visible={railShown && !audioMode} />}
+
+        {/* Minimized PIP overlay — compact, keeps audio playing */}
+        {isMinimized && (
+          <>
+            {audioMode && streamUrl ? (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 cursor-pointer"
+                style={{ background: "radial-gradient(120% 90% at 50% 25%, #17070d 0%, #000 62%, #08040c 100%)" }}
+                onClick={() => setWindowState("floating")}
+              >
+                <span className="pointer-events-none absolute top-1/4 left-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/15 blur-[40px]" aria-hidden="true" />
+                <div className="relative scale-[0.62] origin-center pointer-events-none -my-2">
+                  <Disc spinning={!paused} />
+                </div>
+                <p className="relative text-xs font-medium text-white">Listening together</p>
+                {(() => {
+                  let host = "";
+                  try {
+                    host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
+                  } catch {
+                    host = "";
+                  }
+                  return host ? <p className="relative text-[10px] tracking-wide text-white/40 -mt-1 truncate max-w-full">{host}</p> : null;
+                })()}
+                <div className="relative mt-1 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!transportOff) togglePlay();
+                    }}
+                    disabled={transportOff}
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 disabled:opacity-40 transition-colors"
+                    aria-label={paused ? "Play" : "Pause"}
+                  >
+                    {paused ? <Play size={12} className="ml-0.5" /> : <Pause size={12} />}
+                  </button>
+                  <span className="text-[11px] tabular-nums text-white/70">
+                    {formatClock(positionSec)} <span className="text-white/30">/ {formatClock(durationSec)}</span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div
+                className="absolute inset-0 cursor-pointer"
+                onClick={() => setWindowState("floating")}
+              >
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+                <div className="absolute bottom-0 left-0 right-0 flex items-center gap-1.5 px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!transportOff) togglePlay();
+                    }}
+                    disabled={transportOff}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 disabled:opacity-40 transition-colors"
+                    aria-label={paused ? "Play" : "Pause"}
+                  >
+                    {paused ? <Play size={10} className="ml-0.5" /> : <Pause size={10} />}
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-white/90">
+                    {streamUrl ? (() => { try { return new URL(streamUrl).hostname.replace(/^www\./, ""); } catch { return "Video"; } })() : "Nothing playing"}
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-white/60">{formatClock(positionSec)}</span>
+                </div>
+              </div>
+            )}
+          </>
         )}
-      >
+
+        {!isMinimized && (
+          <div
+            onPointerEnter={() => setHoldChrome(true)}
+            onPointerLeave={() => setHoldChrome(false)}
+            onFocus={() => setHoldChrome(true)}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setHoldChrome(false);
+            }}
+            className={cx(
+              "pointer-events-none absolute inset-0 z-20 flex flex-col justify-between transition-opacity duration-200 motion-reduce:transition-none",
+              chromeShown ? "opacity-100" : "opacity-0",
+            )}
+          >
         {/* Session — who is here, who is driving, how to get out. */}
         <header className="pointer-events-auto flex flex-col gap-2 bg-gradient-to-b from-black/75 to-transparent px-4 pt-3 pb-10">
           <div className="flex items-center gap-3">
@@ -1014,6 +1279,31 @@ export function WatchPartyWindow() {
           </div>
         </div>
       </div>
+        )}
+      </div>
+
+      {/* Resize handles — floating only; maximized/fullscreen use inset sizing */}
+      {isFloating && !fullscreen && (
+        <>
+          <div
+            onPointerDown={onResizeStart("s")}
+            className="absolute bottom-0 left-3 right-3 h-2 cursor-ns-resize touch-none"
+            aria-hidden="true"
+          />
+          <div
+            onPointerDown={onResizeStart("e")}
+            className="absolute right-0 top-3 bottom-3 w-2 cursor-ew-resize touch-none"
+            aria-hidden="true"
+          />
+          <div
+            onPointerDown={onResizeStart("se")}
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
+            aria-hidden="true"
+          >
+            <span className="absolute bottom-1 right-1 h-2 w-2 rounded-sm border-r-2 border-b-2 border-white/20" />
+          </div>
+        </>
+      )}
 
       <input
         ref={fileRef}
