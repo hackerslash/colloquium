@@ -173,6 +173,16 @@ textarea,
   transform-origin: center;
   animation: disc-spin 6s linear infinite;
 }
+/* The tonearm is drawn on the record; parking it is one rotation about the
+   pivot, so play/pause is a single class swap and the swing is interruptible. */
+.gramo-tonearm {
+  transform-box: view-box;
+  transform-origin: 120px 26px;
+  transition: transform 700ms cubic-bezier(0.34, 1.2, 0.4, 1);
+}
+.gramo-tonearm--parked {
+  transform: rotate(-73deg);
+}
 @keyframes eq {
   from {
     transform: scaleY(0.25);
@@ -188,6 +198,10 @@ textarea,
 @media (prefers-reduced-motion: reduce) {
   .gramo-record {
     animation: none;
+  }
+  /* The arm still moves between rest and groove — only the swing goes away. */
+  .gramo-tonearm {
+    transition: none;
   }
   .eq-bar {
     animation: none;

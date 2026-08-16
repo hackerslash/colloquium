@@ -341,25 +341,46 @@ function Equalizer({
   );
 }
 
-/** The audio-mode record: a spinning disc that freezes when the film is paused,
- * standing in for the picture we're no longer showing. */
-/** A spinning record that freezes when the film is paused. */
+/** The audio-mode turntable: a spinning record that freezes when the film is
+ * paused, standing in for the picture we're no longer showing. The tonearm
+ * rides the outer grooves while it plays and swings back to its rest when it
+ * stops, so play state reads from across the room. */
 function Disc({ spinning }: { spinning: boolean }) {
   return (
     <svg
-      viewBox="0 0 120 120"
-      className="h-28 w-28 shrink-0 drop-shadow-[0_0_45px_rgba(0,0,0,0.5)]"
+      viewBox="0 0 140 128"
+      className="h-28 w-[7.7rem] shrink-0 drop-shadow-[0_0_45px_rgba(0,0,0,0.5)]"
       role="img"
-      aria-label="Record"
+      aria-label={spinning ? "Record playing" : "Record paused"}
     >
       <g className={cx("gramo-record", !spinning && "[animation-play-state:paused]")}>
-        <circle cx="60" cy="60" r="58" fill="#141414" stroke="rgba(255,255,255,0.08)" />
-        <circle cx="60" cy="60" r="46" fill="none" stroke="rgba(255,255,255,0.06)" />
-        <circle cx="60" cy="60" r="36" fill="none" stroke="rgba(255,255,255,0.06)" />
-        <circle cx="60" cy="60" r="26" fill="none" stroke="rgba(255,255,255,0.06)" />
-        <line x1="60" y1="60" x2="60" y2="6" stroke="rgba(255,255,255,0.10)" strokeWidth="1.5" />
-        <circle cx="60" cy="60" r="16" fill="var(--color-accent)" />
-        <circle cx="60" cy="60" r="3" fill="#000" />
+        <circle cx="56" cy="64" r="54" fill="#141414" stroke="rgba(255,255,255,0.08)" />
+        <circle cx="56" cy="64" r="44" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="56" cy="64" r="34" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="56" cy="64" r="24" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <line x1="56" y1="64" x2="56" y2="10" stroke="rgba(255,255,255,0.10)" strokeWidth="1.5" />
+        <circle cx="56" cy="64" r="15" fill="var(--color-accent)" />
+        <circle cx="56" cy="64" r="2.5" fill="#000" />
+      </g>
+
+      {/* The rest post the arm parks on. */}
+      <rect x="124" y="54" width="8" height="18" rx="4" fill="#1b1b1b" stroke="rgba(255,255,255,0.08)" />
+
+      {/* Drawn in the playing position; parked is the same arm rotated about
+          its pivot — see .gramo-tonearm in globals.css. */}
+      <g className={cx("gramo-tonearm", !spinning && "gramo-tonearm--parked")}>
+        <circle cx="120" cy="26" r="8" fill="#1b1b1b" stroke="rgba(255,255,255,0.12)" />
+        <circle cx="128" cy="21" r="4.5" fill="#242424" stroke="rgba(255,255,255,0.10)" />
+        <line
+          x1="120"
+          y1="26"
+          x2="90"
+          y2="44"
+          stroke="rgba(255,255,255,0.55)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        />
+        <circle cx="90" cy="44" r="3.2" fill="var(--color-accent)" />
       </g>
     </svg>
   );
