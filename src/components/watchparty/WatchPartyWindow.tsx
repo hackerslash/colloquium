@@ -96,12 +96,12 @@ function PrimingOverlay() {
   );
 }
 
-/** Where YouTube's own iframe player draws. It is mounted wherever the picture
- * belongs — the stage, or audio mode's card — and the player module rebuilds it
- * when that place changes, because moving an iframe reloads it. Pointer events
- * are off so clicks reach the stage: the party's transport is the only thing
- * allowed to move a playhead everyone else is following. */
-function YouTubeSurface({ className }: { className?: string }) {
+/** YouTube's iframe player, which is only ever heard: the party plays the
+ * sound and draws its own chrome over it. It is invisible rather than hidden —
+ * a display:none or zero-size player is a player browsers are entitled to stop
+ * — and it is mounted here, on the stage that never unmounts, so nothing moves
+ * it: an iframe reloads when it moves. */
+function YouTubeAudio() {
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     player.attachYouTube(hostRef.current);
@@ -110,7 +110,8 @@ function YouTubeSurface({ className }: { className?: string }) {
   return (
     <div
       ref={hostRef}
-      className={cx("pointer-events-none [&>iframe]:h-full [&>iframe]:w-full", className)}
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 opacity-0 [&>iframe]:h-full [&>iframe]:w-full"
     />
   );
 }
@@ -123,11 +124,9 @@ function YouTubeSurface({ className }: { className?: string }) {
  */
 function Stage({
   videoRef,
-  audioMode,
   onStageClick,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
-  audioMode: boolean;
   onStageClick: (e: React.MouseEvent) => void;
 }) {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -184,17 +183,14 @@ function Stage({
 
   return (
     <>
-      {/* Kept transparent rather than unmounted for a YouTube source: it still
-          catches the stage clicks, and unmounting it would detach the player
-          from the element it is attached to for every other source. */}
       <video
         ref={videoRef}
         onClick={onStageClick}
-        className={cx("h-full w-full object-contain", ytId && "opacity-0")}
+        className="h-full w-full object-contain"
         playsInline
       />
 
-      {ytId && !audioMode && <YouTubeSurface className="absolute inset-0" />}
+      {ytId && <YouTubeAudio />}
 
       {gated && !error && <PrimingOverlay />}
 
@@ -478,7 +474,6 @@ function AudioStage({ paused }: { paused: boolean }) {
   useRoomCallStore((s) => s.mediaVersion);
 
   const inCall = callRoomId === roomId;
-  const ytId = streamUrl ? youtubeId(streamUrl) : null;
   let host = "";
   try {
     host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
@@ -500,25 +495,18 @@ function AudioStage({ paused }: { paused: boolean }) {
         aria-hidden="true"
       />
 
-      {/* Audio chrome: the player (or the record, when there is no picture to
-          show at all) and the caption. */}
-      {ytId ? (
-        <div className="relative flex w-full max-w-xl shrink-0 flex-col items-center gap-3">
-          <YouTubeSurface className="aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-white/10" />
-          <p className="text-center font-display text-lg leading-snug text-balance text-white">
-            {videoTitle ?? "Listening together"}
-          </p>
-          {host && <p className="text-[11px] tracking-wide text-white/45">{host}</p>}
+      {/* Audio chrome: the record and the caption. */}
+      <div className="relative flex shrink-0 flex-col items-center gap-3">
+        <Disc spinning={!paused} />
+        <div className="flex max-w-lg flex-col items-center gap-0.5">
+          <p className="font-display text-xl leading-none text-white">Listening together</p>
+          {(videoTitle ?? host) && (
+            <p className="text-center text-[11px] tracking-wide text-balance text-white/45">
+              {videoTitle ?? host}
+            </p>
+          )}
         </div>
-      ) : (
-        <div className="relative flex shrink-0 flex-col items-center gap-3">
-          <Disc spinning={!paused} />
-          <div className="flex flex-col items-center gap-0.5">
-            <p className="font-display text-xl leading-none text-white">Listening together</p>
-            {host && <p className="text-[11px] tracking-wide text-white/45">{host}</p>}
-          </div>
-        </div>
-      )}
+      </div>
 
       {/* Mic / camera / leave — the rail is hidden in audio mode, so its
           controls move here. */}
@@ -1063,11 +1051,7 @@ export function WatchPartyWindow() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
         {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
-        <Stage
-          videoRef={videoRef}
-          audioMode={audioMode && !isMinimized}
-          onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick}
-        />
+        <Stage videoRef={videoRef} onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick} />
 
         {!isMinimized && audioMode && streamUrl && <AudioStage paused={paused} />}
 
