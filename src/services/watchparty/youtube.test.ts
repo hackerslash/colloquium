@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { youtubeId } from "./youtube";
+import { embedUrl, youtubeId } from "./youtube";
 
 describe("youtubeId", () => {
   it("reads the id out of the link shapes people paste", () => {
@@ -23,5 +23,28 @@ describe("youtubeId", () => {
     expect(youtubeId("")).toBeNull();
     // A host that merely ends in youtube.com is not YouTube.
     expect(youtubeId("https://notyoutube.com/watch?v=dQw4w9WgXcQ")).toBeNull();
+  });
+});
+
+describe("embedUrl", () => {
+  it("asks for a bare player, in the src where the player reads it", () => {
+    const p = new URL(embedUrl("dQw4w9WgXcQ")).searchParams;
+    expect(p.get("controls")).toBe("0");
+    expect(p.get("enablejsapi")).toBe("1");
+    expect(p.get("rel")).toBe("0");
+    expect(p.get("disablekb")).toBe("1");
+    expect(p.get("fs")).toBe("0");
+    expect(p.get("autoplay")).toBe("0");
+    expect(p.has("start")).toBe(false);
+  });
+
+  it("carries the position and an http origin, and drops a tauri:// one", () => {
+    const p = new URL(
+      embedUrl("dQw4w9WgXcQ", { startSec: 91.6, autoplay: true, origin: "http://tauri.localhost" }),
+    ).searchParams;
+    expect(p.get("start")).toBe("91");
+    expect(p.get("autoplay")).toBe("1");
+    expect(p.get("origin")).toBe("http://tauri.localhost");
+    expect(new URL(embedUrl("dQw4w9WgXcQ", { origin: "tauri://localhost" })).searchParams.has("origin")).toBe(false);
   });
 });

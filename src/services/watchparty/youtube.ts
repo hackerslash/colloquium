@@ -22,10 +22,6 @@ export type YtPlayer = {
 };
 
 export type YtPlayerOptions = {
-  videoId: string;
-  width?: string;
-  height?: string;
-  playerVars?: Record<string, string | number>;
   events?: {
     onReady?: () => void;
     onStateChange?: (e: { data: number }) => void;
@@ -34,7 +30,9 @@ export type YtPlayerOptions = {
 };
 
 type YtNamespace = {
-  Player: new (host: HTMLElement, opts: YtPlayerOptions) => YtPlayer;
+  /** Given an <iframe> that already points at an `enablejsapi=1` embed, the API
+   * binds to it instead of building one. */
+  Player: new (frame: HTMLIFrameElement, opts: YtPlayerOptions) => YtPlayer;
 };
 
 /** `onStateChange` codes. Named here rather than read off YT.PlayerState so the
@@ -63,6 +61,36 @@ export function youtubeId(url: string): string | null {
   if (u.pathname === "/watch") return ok(u.searchParams.get("v"));
   const m = u.pathname.match(/^\/(?:embed|shorts|live|v)\/([^/?#]+)/);
   return ok(m?.[1]);
+}
+
+/**
+ * The embed URL, written out rather than handed to the API as `playerVars` —
+ * which is where `controls=0` went to die: the player came up with YouTube's
+ * full control bar, "More videos" and all.
+ *
+ * `origin` is what `enablejsapi` posts its messages back to. YouTube wants a
+ * real http(s) origin, so a `tauri://` one is left off rather than sent and
+ * rejected.
+ */
+export function embedUrl(
+  videoId: string,
+  opts: { startSec?: number; autoplay?: boolean; origin?: string } = {},
+): string {
+  const params = new URLSearchParams({
+    enablejsapi: "1",
+    // The party's own transport is the only control.
+    controls: "0",
+    disablekb: "1",
+    fs: "0",
+    rel: "0",
+    playsinline: "1",
+    iv_load_policy: "3",
+    autoplay: opts.autoplay ? "1" : "0",
+  });
+  const start = Math.floor(opts.startSec ?? 0);
+  if (start > 0) params.set("start", String(start));
+  if (opts.origin?.startsWith("http")) params.set("origin", opts.origin);
+  return `https://www.youtube.com/embed/${videoId}?${params}`;
 }
 
 let apiPromise: Promise<YtNamespace> | null = null;

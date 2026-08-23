@@ -24,6 +24,7 @@ import {
 } from "./codecSupport";
 import { decidePlan, planLabel, type Plan } from "./mediaPlan";
 import {
+  embedUrl,
   loadIframeApi,
   youtubeId,
   ytErrorText,
@@ -425,34 +426,25 @@ async function buildYt(
   }
   if (seq !== ytSeq || ytHost !== host) return;
   emit({ kind: "buffering", pausedForCache: true, ready: false });
-  // The API replaces the element it is given with the iframe, so it gets a child
-  // of our own making — replacing the host itself would tear a node out from
-  // under React.
-  const mount = document.createElement("div");
-  host.replaceChildren(mount);
-  yt = new api.Player(mount, {
-    videoId,
-    width: "100%",
-    height: "100%",
-    playerVars: {
-      autoplay: autoplay ? 1 : 0,
-      // The party's own transport is the only control: YouTube's would move one
-      // peer's playhead without telling the others.
-      controls: 0,
-      disablekb: 1,
-      modestbranding: 1,
-      rel: 0,
-      playsinline: 1,
-      iv_load_policy: 3,
-      start: Math.floor(startSec),
-    },
+  // The iframe is built here, not by the API: options handed to the API as
+  // `playerVars` never reached the player, which came up with YouTube's whole
+  // control bar. Written into the src they hold. It is also a child of the host
+  // rather than the host itself — the API keeps the element it is given, and
+  // React must keep its own.
+  const frame = document.createElement("iframe");
+  frame.src = embedUrl(videoId, { startSec, autoplay, origin: location.origin });
+  frame.title = "YouTube player";
+  frame.allow = "autoplay; encrypted-media";
+  frame.setAttribute("frameborder", "0");
+  host.replaceChildren(frame);
+  yt = new api.Player(frame, {
     events: {
       onReady: () => {
         if (seq !== ytSeq) return;
         applyYtVolume();
         yt?.setPlaybackRate(rate);
-        // playerVars.start only takes whole seconds; the party's position is not
-        // whole seconds.
+        // The `start` param only takes whole seconds; the party's position is
+        // not whole seconds.
         if (startSec > 0) yt?.seekTo(startSec, true);
         if (autoplay) yt?.playVideo();
         ytDuration = yt?.getDuration() ?? 0;
