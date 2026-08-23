@@ -45,6 +45,8 @@ sign up for.
 **Watch party**
 - Watch a local video file in sync with a room — one controller drives playback
   for everyone
+- Paste a YouTube link and it plays through YouTube's own player, in sync and
+  titled, with no download
 - Audio-track and subtitle selection follow the controller
 - Files that a browser engine can't play natively are remuxed on the fly by a
   bundled ffmpeg, so HEVC, AC3/E-AC3/DTS/TrueHD and multi-track files work
