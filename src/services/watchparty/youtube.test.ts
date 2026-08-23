@@ -35,6 +35,7 @@ describe("embedUrl", () => {
     expect(p.get("disablekb")).toBe("1");
     expect(p.get("fs")).toBe("0");
     expect(p.get("autoplay")).toBe("0");
+    expect(p.get("cc_load_policy")).toBe("0");
     expect(p.has("start")).toBe(false);
   });
 

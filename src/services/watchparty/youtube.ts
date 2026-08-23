@@ -82,6 +82,10 @@ export function embedUrl(
     controls: "0",
     disablekb: "1",
     fs: "0",
+    // Off unless the party turns them on, rather than following whatever the
+    // viewer's own YouTube account prefers — one peer's captions are not the
+    // party's.
+    cc_load_policy: "0",
     rel: "0",
     playsinline: "1",
     iv_load_policy: "3",
