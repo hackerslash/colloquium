@@ -96,13 +96,30 @@ function PrimingOverlay() {
   );
 }
 
+/** How far the player is grown, and cropped back, top and bottom. `controls=0`
+ * takes YouTube's transport away but not the row it keeps beside it — "More
+ * videos", the speed, the logo, fullscreen — nor the title bar at the top. Both
+ * are pinned to the player's own edges, so a taller player with its edges
+ * outside the box takes them out of sight. What is cropped is the letterbox the
+ * extra height creates, not the picture: the video is sized to the width of a
+ * 16:9 box, and stays that size however tall the player around it is.
+ *
+ * ponytail: true for 16:9 sources, which is nearly all of YouTube. A portrait
+ * video is sized by height instead and does lose its top and bottom to this —
+ * crop only the bottom, and wear the title bar, if that ever matters. */
+const PLAYER_CROP_PX = 96;
+
 /** YouTube's iframe player: the picture on the stage, and in audio mode the
  * sound behind the record. Hidden by opacity rather than by unmounting or by
  * display:none — an iframe reloads when it moves, and a zero-size or undisplayed
- * player is one browsers are entitled to stop. Pointer events stay off in both:
- * the party's transport is the only thing allowed to move a playhead everyone
- * else is following. */
-function YouTubePlayer({ visible }: { visible: boolean }) {
+ * player is one browsers are entitled to stop. */
+function YouTubePlayer({
+  visible,
+  onStageClick,
+}: {
+  visible: boolean;
+  onStageClick: (e: React.MouseEvent) => void;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     player.attachYouTube(hostRef.current);
@@ -110,13 +127,25 @@ function YouTubePlayer({ visible }: { visible: boolean }) {
   }, []);
   return (
     <div
-      ref={hostRef}
       aria-hidden={!visible}
       className={cx(
-        "pointer-events-none absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full",
+        "pointer-events-none absolute inset-0 flex items-center justify-center",
         !visible && "opacity-0",
       )}
-    />
+    >
+      <div className="relative aspect-video max-h-full w-full max-w-full overflow-hidden">
+        <div
+          ref={hostRef}
+          className="absolute inset-x-0 [&>iframe]:h-full [&>iframe]:w-full"
+          style={{ top: -PLAYER_CROP_PX, bottom: -PLAYER_CROP_PX }}
+        />
+        {/* The player must never see a pointer: hovering it is what summons the
+            chrome, and `pointer-events: none` on the iframe did not hold. This
+            takes the clicks instead and gives them to the stage, which is where
+            play, pause and fullscreen already live. */}
+        {visible && <div className="pointer-events-auto absolute inset-0" onClick={onStageClick} />}
+      </div>
+    </div>
   );
 }
 
@@ -196,7 +225,7 @@ function Stage({
         playsInline
       />
 
-      {ytId && <YouTubePlayer visible={!audioMode} />}
+      {ytId && <YouTubePlayer visible={!audioMode} onStageClick={onStageClick} />}
 
       {gated && !error && <PrimingOverlay />}
 
