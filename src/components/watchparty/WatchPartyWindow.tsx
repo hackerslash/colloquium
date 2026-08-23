@@ -96,12 +96,13 @@ function PrimingOverlay() {
   );
 }
 
-/** YouTube's iframe player, which is only ever heard: the party plays the
- * sound and draws its own chrome over it. It is invisible rather than hidden —
- * a display:none or zero-size player is a player browsers are entitled to stop
- * — and it is mounted here, on the stage that never unmounts, so nothing moves
- * it: an iframe reloads when it moves. */
-function YouTubeAudio() {
+/** YouTube's iframe player: the picture on the stage, and in audio mode the
+ * sound behind the record. Hidden by opacity rather than by unmounting or by
+ * display:none — an iframe reloads when it moves, and a zero-size or undisplayed
+ * player is one browsers are entitled to stop. Pointer events stay off in both:
+ * the party's transport is the only thing allowed to move a playhead everyone
+ * else is following. */
+function YouTubePlayer({ visible }: { visible: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     player.attachYouTube(hostRef.current);
@@ -110,8 +111,11 @@ function YouTubeAudio() {
   return (
     <div
       ref={hostRef}
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 opacity-0 [&>iframe]:h-full [&>iframe]:w-full"
+      aria-hidden={!visible}
+      className={cx(
+        "pointer-events-none absolute inset-0 [&>iframe]:h-full [&>iframe]:w-full",
+        !visible && "opacity-0",
+      )}
     />
   );
 }
@@ -124,9 +128,11 @@ function YouTubeAudio() {
  */
 function Stage({
   videoRef,
+  audioMode,
   onStageClick,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  audioMode: boolean;
   onStageClick: (e: React.MouseEvent) => void;
 }) {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -190,7 +196,7 @@ function Stage({
         playsInline
       />
 
-      {ytId && <YouTubeAudio />}
+      {ytId && <YouTubePlayer visible={!audioMode} />}
 
       {gated && !error && <PrimingOverlay />}
 
@@ -563,7 +569,8 @@ function AudioStage({ paused }: { paused: boolean }) {
               >
                 <VideoTile
                   stream={stream}
-                  muted={id === self?.identityId}
+                  // The presence rail is playing these same streams underneath.
+                  muted
                   mirror={id === self?.identityId}
                   label={nameOf(id)}
                   participantId={id}
@@ -1051,11 +1058,18 @@ export function WatchPartyWindow() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
         {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
-        <Stage videoRef={videoRef} onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick} />
+        <Stage
+          videoRef={videoRef}
+          audioMode={audioMode}
+          onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick}
+        />
 
         {!isMinimized && audioMode && streamUrl && <AudioStage paused={paused} />}
 
-        {!isMinimized && <PresenceRail roomId={roomId} visible={railShown && !audioMode} />}
+        {/* Never unmounted: these tiles are what plays the room's voices, and
+            a hidden tile still plays. Mounting them only when they are on
+            screen cut the call every time the party was minimized. */}
+        <PresenceRail roomId={roomId} visible={railShown && !audioMode && !isMinimized} />
 
         {/* Minimized PIP overlay — compact, keeps audio playing */}
         {isMinimized && (
