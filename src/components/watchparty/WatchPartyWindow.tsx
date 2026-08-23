@@ -50,6 +50,7 @@ import { enterFullscreen, exitFullscreen } from "../../lib/fullscreen";
 import { formatClock } from "../../lib/time";
 import { cx } from "../../lib/cx";
 import { useDraggable } from "../../hooks/useDraggable";
+import { youtubeId } from "../../services/watchparty/youtube";
 
 /** How long the pointer must rest before the chrome gets out of the way. */
 const IDLE_MS = 2_600;
@@ -95,6 +96,25 @@ function PrimingOverlay() {
   );
 }
 
+/** Where YouTube's own iframe player draws. It is mounted wherever the picture
+ * belongs — the stage, or audio mode's card — and the player module rebuilds it
+ * when that place changes, because moving an iframe reloads it. Pointer events
+ * are off so clicks reach the stage: the party's transport is the only thing
+ * allowed to move a playhead everyone else is following. */
+function YouTubeSurface({ className }: { className?: string }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    player.attachYouTube(hostRef.current);
+    return () => player.attachYouTube(null);
+  }, []);
+  return (
+    <div
+      ref={hostRef}
+      className={cx("pointer-events-none [&>iframe]:h-full [&>iframe]:w-full", className)}
+    />
+  );
+}
+
 /**
  * The film. Everything drawn here sits on black in both themes, so its text is
  * light-on-dark rather than token-themed — `text-text-primary` would be near
@@ -103,9 +123,11 @@ function PrimingOverlay() {
  */
 function Stage({
   videoRef,
+  audioMode,
   onStageClick,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  audioMode: boolean;
   onStageClick: (e: React.MouseEvent) => void;
 }) {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -117,6 +139,7 @@ function Stage({
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const controller = selfIsController();
+  const ytId = streamUrl ? youtubeId(streamUrl) : null;
   const urlRef = useRef<HTMLInputElement>(null);
   // How the source is being played ("Remuxing", "Transcoding"…), which is what
   // explains a slow start.
@@ -161,12 +184,17 @@ function Stage({
 
   return (
     <>
+      {/* Kept transparent rather than unmounted for a YouTube source: it still
+          catches the stage clicks, and unmounting it would detach the player
+          from the element it is attached to for every other source. */}
       <video
         ref={videoRef}
         onClick={onStageClick}
-        className="h-full w-full object-contain"
+        className={cx("h-full w-full object-contain", ytId && "opacity-0")}
         playsInline
       />
+
+      {ytId && !audioMode && <YouTubeSurface className="absolute inset-0" />}
 
       {gated && !error && <PrimingOverlay />}
 
@@ -434,6 +462,7 @@ function IdleFaces({ paused }: { paused: boolean }) {
 function AudioStage({ paused }: { paused: boolean }) {
   const roomId = useWatchPartyStore((s) => s.roomId);
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
+  const videoTitle = useWatchPartyStore((s) => s.videoTitle);
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
 
@@ -449,6 +478,7 @@ function AudioStage({ paused }: { paused: boolean }) {
   useRoomCallStore((s) => s.mediaVersion);
 
   const inCall = callRoomId === roomId;
+  const ytId = streamUrl ? youtubeId(streamUrl) : null;
   let host = "";
   try {
     host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
@@ -470,14 +500,25 @@ function AudioStage({ paused }: { paused: boolean }) {
         aria-hidden="true"
       />
 
-      {/* Audio chrome: the record and the caption. */}
-      <div className="relative flex shrink-0 flex-col items-center gap-3">
-        <Disc spinning={!paused} />
-        <div className="flex flex-col items-center gap-0.5">
-          <p className="font-display text-xl leading-none text-white">Listening together</p>
+      {/* Audio chrome: the player (or the record, when there is no picture to
+          show at all) and the caption. */}
+      {ytId ? (
+        <div className="relative flex w-full max-w-xl shrink-0 flex-col items-center gap-3">
+          <YouTubeSurface className="aspect-video w-full overflow-hidden rounded-xl bg-black ring-1 ring-white/10" />
+          <p className="text-center font-display text-lg leading-snug text-balance text-white">
+            {videoTitle ?? "Listening together"}
+          </p>
           {host && <p className="text-[11px] tracking-wide text-white/45">{host}</p>}
         </div>
-      </div>
+      ) : (
+        <div className="relative flex shrink-0 flex-col items-center gap-3">
+          <Disc spinning={!paused} />
+          <div className="flex flex-col items-center gap-0.5">
+            <p className="font-display text-xl leading-none text-white">Listening together</p>
+            {host && <p className="text-[11px] tracking-wide text-white/45">{host}</p>}
+          </div>
+        </div>
+      )}
 
       {/* Mic / camera / leave — the rail is hidden in audio mode, so its
           controls move here. */}
@@ -559,6 +600,7 @@ function AudioStage({ paused }: { paused: boolean }) {
 export function WatchPartyWindow() {
   const active = useWatchPartyStore((s) => s.active);
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
+  const videoTitle = useWatchPartyStore((s) => s.videoTitle);
   const paused = useWatchPartyStore((s) => s.paused);
   const positionSec = useWatchPartyStore((s) => s.positionSec);
   const durationSec = useWatchPartyStore((s) => s.durationSec);
@@ -711,10 +753,7 @@ export function WatchPartyWindow() {
 
   // Volume is deliberately local: it is about this room, not about the party.
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.muted = muted;
-    v.volume = volume;
+    player.setVolume(volume, muted);
   }, [muted, volume]);
 
   // Player shortcuts. Transport keys are controller-only — a follower pressing
@@ -1024,7 +1063,11 @@ export function WatchPartyWindow() {
 
       <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
         {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
-        <Stage videoRef={videoRef} onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick} />
+        <Stage
+          videoRef={videoRef}
+          audioMode={audioMode && !isMinimized}
+          onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick}
+        />
 
         {!isMinimized && audioMode && streamUrl && <AudioStage paused={paused} />}
 
@@ -1051,7 +1094,8 @@ export function WatchPartyWindow() {
                   } catch {
                     host = "";
                   }
-                  return host ? <p className="relative text-[10px] tracking-wide text-white/40 -mt-1 truncate max-w-full">{host}</p> : null;
+                  const label = videoTitle ?? host;
+                  return label ? <p className="relative text-[10px] tracking-wide text-white/40 -mt-1 truncate max-w-full">{label}</p> : null;
                 })()}
                 <div className="relative mt-1 flex items-center gap-2">
                   <button
@@ -1091,7 +1135,7 @@ export function WatchPartyWindow() {
                     {paused ? <Play size={10} className="ml-0.5" /> : <Pause size={10} />}
                   </button>
                   <span className="min-w-0 flex-1 truncate text-[11px] text-white/90">
-                    {streamUrl ? (() => { try { return new URL(streamUrl).hostname.replace(/^www\./, ""); } catch { return "Video"; } })() : "Nothing playing"}
+                    {videoTitle ?? (streamUrl ? (() => { try { return new URL(streamUrl).hostname.replace(/^www\./, ""); } catch { return "Video"; } })() : "Nothing playing")}
                   </span>
                   <span className="shrink-0 text-[11px] tabular-nums text-white/60">{formatClock(positionSec)}</span>
                 </div>
