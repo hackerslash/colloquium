@@ -229,7 +229,10 @@ function Stage({
 
       {gated && !error && <PrimingOverlay />}
 
-      {buffering && !gated && !blocked && !error && (
+      {/* Not for a YouTube source: its player spins its own, in the same
+          place, and the label under ours would read "YouTube…" — a pipeline
+          note for a pipeline that isn't running. */}
+      {buffering && !ytId && !gated && !blocked && !error && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span
             className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-accent motion-reduce:animate-none"
