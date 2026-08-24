@@ -102,7 +102,8 @@ export function AddMembersModal({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search connections..."
-          className="mb-3 w-full rounded-md border border-border-strong bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent"
+          aria-label="Search connections"
+          className="mb-3 w-full rounded-md border border-border-strong bg-bg-tertiary px-3 py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent focus-visible:ring-accent"
         />
       )}
       <ul className="max-h-60 space-y-1 overflow-y-auto">
