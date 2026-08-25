@@ -248,8 +248,6 @@ type MessageRowProps = {
   replyToMessage: Message | undefined;
   nameOf: (id: string) => string;
   highlighted: boolean;
-  /** Whether this row is the single currently-hovered message. */
-  hovered: boolean;
   onToggleReaction: (messageId: string, emoji: string) => void;
   onReply: (message: Message) => void;
   onEdit: (message: Message) => void;
@@ -269,7 +267,6 @@ const MessageRow = memo(function MessageRow({
   replyToMessage,
   nameOf,
   highlighted,
-  hovered,
   onToggleReaction,
   onReply,
   onEdit,
@@ -390,7 +387,7 @@ const MessageRow = memo(function MessageRow({
           )}
           <div
             className={cx(
-              "flex items-end gap-1.5",
+              "flex items-end gap-1.5 group",
               isOwn ? "flex-row-reverse" : "flex-row",
             )}
             data-message-id={message.id}
@@ -401,9 +398,9 @@ const MessageRow = memo(function MessageRow({
                   className={cx(
                     "absolute -top-3 z-10 flex items-center gap-0.5 rounded-lg border border-border/60 bg-bg-elevated p-0.5 shadow-md transition-opacity",
                     isOwn ? "right-1" : "left-1",
-                    hovered || pickerPos || confirmingDelete
+                    pickerPos || confirmingDelete
                       ? "opacity-100"
-                      : "pointer-events-none opacity-0",
+                      : "pointer-events-none opacity-0 group-hover:opacity-100 group-hover:pointer-events-auto",
                   )}
                 >
                   <button
@@ -535,7 +532,7 @@ const MessageRow = memo(function MessageRow({
               className={cx(
                 "mb-0.5 flex shrink-0 items-center gap-1 text-[10px] text-text-muted",
                 "transition-opacity",
-                hovered || pickerPos || confirmingDelete ? "opacity-100" : "opacity-0",
+                pickerPos || confirmingDelete ? "opacity-100" : "opacity-0 group-hover:opacity-100",
               )}
             >
               {timeOf(message.sentAt)}
@@ -625,16 +622,8 @@ export function MessageList({
   const beginEdit = useChatStore((s) => s.beginEdit);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const [highlightId, setHighlightId] = useState<string | null>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [missedCount, setMissedCount] = useState(0);
-  // Delegated on the container: every mouseover recomputes which message is
-  // under the cursor, so a stale row self-corrects even if its own
-  // mouseleave was dropped (Chromium misses it on fast moves/re-renders).
-  const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const row = (e.target as HTMLElement).closest("[data-message-id]");
-    setHoveredId(row ? row.getAttribute("data-message-id") : null);
-  }, []);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const unreadBannerRef = useRef<HTMLLIElement>(null);
@@ -904,8 +893,6 @@ export function MessageList({
         ref={containerRef}
         className="flex-1 overflow-y-auto px-4 py-4"
         role="log"
-        onMouseOver={handleMouseOver}
-        onMouseLeave={() => setHoveredId(null)}
       >
       <ul>
         {messages.map((message, i) => {
@@ -946,7 +933,6 @@ export function MessageList({
                 }
                 nameOf={nameOf}
                 highlighted={highlightId === message.id}
-                hovered={hoveredId === message.id}
                 onToggleReaction={handleToggleReaction}
                 onReply={handleReply}
                 onEdit={handleEdit}
