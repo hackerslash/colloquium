@@ -89,9 +89,13 @@ export function WelcomeScreen() {
 
           <form onSubmit={handleSubmit} className="mt-8">
             <div className="space-y-2">
+              <label htmlFor="displayName" className="block text-[13px] font-medium text-text-secondary pl-1">
+                Display name <span className="text-danger" aria-hidden="true">*</span>
+              </label>
               <input
                 id="displayName"
                 autoFocus
+                required
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="What should we call you?"

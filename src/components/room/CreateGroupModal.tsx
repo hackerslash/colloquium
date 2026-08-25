@@ -78,7 +78,12 @@ export function CreateGroupModal({ open, onClose, onCreated }: CreateGroupModalP
         </>
       }
     >
+      <label htmlFor="roomName" className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+        Room name <span className="text-danger" aria-hidden="true">*</span>
+      </label>
       <input
+        id="roomName"
+        required
         autoFocus
         value={name}
         onChange={(e) => setName(e.target.value)}
