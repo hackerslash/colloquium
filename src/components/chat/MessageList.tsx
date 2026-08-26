@@ -38,7 +38,10 @@ function daySeparatorLabel(ms: number): string {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
   if (sameDay(d, today)) return "Today";
   if (sameDay(d, yesterday)) return "Yesterday";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -852,6 +855,29 @@ export function MessageList({
     onJumpConsumed?.();
   }, [messages, jumpToMessageId, handleQuoteClick, onJumpConsumed]);
 
+  const rowLayouts = useMemo(() => {
+    if (!messages) return [];
+    return messages.map((message, i) => {
+      const prev = messages[i - 1];
+      const isOwn = message.authorId === self?.identityId;
+      let newDay = !prev;
+      if (prev) {
+        const d1 = new Date(prev.sentAt);
+        const d2 = new Date(message.sentAt);
+        newDay =
+          d1.getFullYear() !== d2.getFullYear() ||
+          d1.getMonth() !== d2.getMonth() ||
+          d1.getDate() !== d2.getDate();
+      }
+      const startsGroup =
+        newDay ||
+        !prev ||
+        prev.authorId !== message.authorId ||
+        message.sentAt - prev.sentAt > GROUP_GAP_MS;
+      return { isOwn, newDay, startsGroup };
+    });
+  }, [messages, self?.identityId]);
+
   if (messages === undefined) {
     return (
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -909,15 +935,10 @@ export function MessageList({
       >
       <ul>
         {messages.map((message, i) => {
-          const prev = messages[i - 1];
-          const isOwn = message.authorId === self?.identityId;
-          const newDay =
-            !prev || new Date(prev.sentAt).toDateString() !== new Date(message.sentAt).toDateString();
-          const startsGroup =
-            newDay ||
-            !prev ||
-            prev.authorId !== message.authorId ||
-            message.sentAt - prev.sentAt > GROUP_GAP_MS;
+          const layout = rowLayouts[i];
+          const isOwn = layout.isOwn;
+          const newDay = layout.newDay;
+          const startsGroup = layout.startsGroup;
 
           const isFirstUnread = i === firstUnreadIndex;
 
