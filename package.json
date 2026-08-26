@@ -12,11 +12,12 @@
     "test": "vitest run",
     "tauri": "tauri",
     "ffmpeg": "node scripts/fetch-ffmpeg.mjs",
-    "predev": "node scripts/fetch-ffmpeg.mjs",
-    "prebuild": "node scripts/fetch-ffmpeg.mjs",
+    "ytdlp": "node scripts/fetch-ytdlp.mjs",
+    "predev": "node scripts/fetch-ffmpeg.mjs && node scripts/fetch-ytdlp.mjs",
+    "prebuild": "node scripts/fetch-ffmpeg.mjs && node scripts/fetch-ytdlp.mjs",
     "sign:dev": "bash scripts/sign-dev.sh",
-    "tauri:dev": "pnpm ffmpeg && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev --config src-tauri/tauri.dev.conf.json",
-    "tauri:dev:win": "pnpm ffmpeg && tauri dev --config src-tauri/tauri.dev.conf.json"
+    "tauri:dev": "pnpm ffmpeg && pnpm ytdlp && cargo build --manifest-path src-tauri/Cargo.toml && bash scripts/sign-dev.sh && tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:dev:win": "pnpm ffmpeg && pnpm ytdlp && tauri dev --config src-tauri/tauri.dev.conf.json"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "^5.2.9",

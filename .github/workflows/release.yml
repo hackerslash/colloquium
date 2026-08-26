@@ -104,14 +104,16 @@ jobs:
           node-version: 22
           cache: pnpm
 
-      - name: Cache ffmpeg sidecars
+      - name: Cache sidecars
         uses: actions/cache@v4
         with:
           path: src-tauri/binaries
-          key: ffmpeg-${{ matrix.platform }}-${{ hashFiles('scripts/ffmpeg-manifest.json') }}
+          key: sidecars-${{ matrix.platform }}-${{ hashFiles('scripts/ffmpeg-manifest.json', 'scripts/ytdlp-manifest.json') }}
 
-      - name: Fetch ffmpeg sidecars
-        run: pnpm ffmpeg --require-published ${{ matrix.platform == 'macos-latest' && '--universal' || '' }}
+      - name: Fetch sidecars
+        run: |
+          pnpm ffmpeg --require-published ${{ matrix.platform == 'macos-latest' && '--universal' || '' }}
+          pnpm ytdlp ${{ matrix.platform == 'macos-latest' && '--universal' || '' }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

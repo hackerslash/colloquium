@@ -86,6 +86,23 @@ replace the bundled files.
 - **Windows** — `ffmpeg.exe` and `ffprobe.exe` beside `Colloquium.exe` in the
   installation directory.
 
+## yt-dlp
+
+Colloquium bundles the `yt-dlp` executable as a sidecar. The watch-party feature
+runs it to turn a share link into a media URL the player can open — a stream
+manifest and the video's title — and nothing else; it is invoked as a child
+process and nothing in Colloquium links against it.
+
+**License: The Unlicense (public domain).**
+
+- Upstream: <https://github.com/yt-dlp/yt-dlp>
+- Version: see `release.tag` in `scripts/ytdlp-manifest.json`
+- License text: <https://github.com/yt-dlp/yt-dlp/blob/master/LICENSE>
+
+The bundled binary is the unmodified release asset published by the project, and
+`scripts/fetch-ytdlp.mjs` verifies it against the sha256 recorded in the
+manifest before putting it in place.
+
 ## hls.js
 
 Bundled into the application JavaScript and used to play the HLS output of the

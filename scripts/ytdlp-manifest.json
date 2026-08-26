@@ -1,0 +1,42 @@
+{
+  "$comment": [
+    "Pins the yt-dlp sidecar that Colloquium bundles to resolve a share link (a",
+    "YouTube URL) into a playable media URL. Upstream publishes one self-contained",
+    "binary per platform, so unlike the ffmpeg sidecars there is nothing to build:",
+    "the checksums below are the ones in the release's own SHA2-256SUMS file.",
+    "",
+    "To bump: pick a release tag, then copy that release's SHA2-256SUMS lines for",
+    "the assets named here. yt-dlp ships often, and an extractor that has stopped",
+    "working is almost always fixed by moving to a newer tag."
+  ],
+  "release": {
+    "repo": "yt-dlp/yt-dlp",
+    "tag": "2026.08.19"
+  },
+  "assets": {
+    "x86_64-pc-windows-msvc": {
+      "name": "yt-dlp.exe",
+      "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
+    },
+    "aarch64-apple-darwin": {
+      "name": "yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+    },
+    "x86_64-apple-darwin": {
+      "name": "yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+    },
+    "universal-apple-darwin": {
+      "name": "yt-dlp_macos",
+      "sha256": "0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "name": "yt-dlp_linux",
+      "sha256": "58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a"
+    },
+    "aarch64-unknown-linux-gnu": {
+      "name": "yt-dlp_linux_aarch64",
+      "sha256": "b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc"
+    }
+  }
+}
