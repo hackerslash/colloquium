@@ -50,7 +50,6 @@ import { enterFullscreen, exitFullscreen } from "../../lib/fullscreen";
 import { formatClock } from "../../lib/time";
 import { cx } from "../../lib/cx";
 import { useDraggable } from "../../hooks/useDraggable";
-import { youtubeId } from "../../services/watchparty/youtube";
 
 /** How long the pointer must rest before the chrome gets out of the way. */
 const IDLE_MS = 2_600;
@@ -96,59 +95,6 @@ function PrimingOverlay() {
   );
 }
 
-/** How far the player is grown, and cropped back, top and bottom. `controls=0`
- * takes YouTube's transport away but not the row it keeps beside it — "More
- * videos", the speed, the logo, fullscreen — nor the title bar at the top. Both
- * are pinned to the player's own edges, so a taller player with its edges
- * outside the box takes them out of sight. What is cropped is the letterbox the
- * extra height creates, not the picture: the video is sized to the width of a
- * 16:9 box, and stays that size however tall the player around it is.
- *
- * ponytail: true for 16:9 sources, which is nearly all of YouTube. A portrait
- * video is sized by height instead and does lose its top and bottom to this —
- * crop only the bottom, and wear the title bar, if that ever matters. */
-const PLAYER_CROP_PX = 96;
-
-/** YouTube's iframe player: the picture on the stage, and in audio mode the
- * sound behind the record. Hidden by opacity rather than by unmounting or by
- * display:none — an iframe reloads when it moves, and a zero-size or undisplayed
- * player is one browsers are entitled to stop. */
-function YouTubePlayer({
-  visible,
-  onStageClick,
-}: {
-  visible: boolean;
-  onStageClick: (e: React.MouseEvent) => void;
-}) {
-  const hostRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    player.attachYouTube(hostRef.current);
-    return () => player.attachYouTube(null);
-  }, []);
-  return (
-    <div
-      aria-hidden={!visible}
-      className={cx(
-        "pointer-events-none absolute inset-0 flex items-center justify-center",
-        !visible && "opacity-0",
-      )}
-    >
-      <div className="relative aspect-video max-h-full w-full max-w-full overflow-hidden">
-        <div
-          ref={hostRef}
-          className="absolute inset-x-0 [&>iframe]:h-full [&>iframe]:w-full"
-          style={{ top: -PLAYER_CROP_PX, bottom: -PLAYER_CROP_PX }}
-        />
-        {/* The player must never see a pointer: hovering it is what summons the
-            chrome, and `pointer-events: none` on the iframe did not hold. This
-            takes the clicks instead and gives them to the stage, which is where
-            play, pause and fullscreen already live. */}
-        {visible && <div className="pointer-events-auto absolute inset-0" onClick={onStageClick} />}
-      </div>
-    </div>
-  );
-}
-
 /**
  * The film. Everything drawn here sits on black in both themes, so its text is
  * light-on-dark rather than token-themed — `text-text-primary` would be near
@@ -157,11 +103,9 @@ function YouTubePlayer({
  */
 function Stage({
   videoRef,
-  audioMode,
   onStageClick,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
-  audioMode: boolean;
   onStageClick: (e: React.MouseEvent) => void;
 }) {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -173,7 +117,6 @@ function Stage({
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const controller = selfIsController();
-  const ytId = streamUrl ? youtubeId(streamUrl) : null;
   const urlRef = useRef<HTMLInputElement>(null);
   // How the source is being played ("Remuxing", "Transcoding"…), which is what
   // explains a slow start.
@@ -225,14 +168,9 @@ function Stage({
         playsInline
       />
 
-      {ytId && <YouTubePlayer visible={!audioMode} onStageClick={onStageClick} />}
-
       {gated && !error && <PrimingOverlay />}
 
-      {/* Not for a YouTube source: its player spins its own, in the same
-          place, and the label under ours would read "YouTube…" — a pipeline
-          note for a pipeline that isn't running. */}
-      {buffering && !ytId && !gated && !blocked && !error && (
+      {buffering && !gated && !blocked && !error && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span
             className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-accent motion-reduce:animate-none"
@@ -1092,7 +1030,6 @@ export function WatchPartyWindow() {
         {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
         <Stage
           videoRef={videoRef}
-          audioMode={audioMode}
           onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick}
         />
 
