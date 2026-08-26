@@ -99,6 +99,12 @@ let stalled = false;
 
 type OpenResult = { sessionId: string };
 type WindowResult = { playlistUrl: string; offsetSec: number };
+type Resolved = {
+  url: string;
+  kind: "hls" | "file";
+  title: string | null;
+  durationSec: number;
+};
 
 let sessionId: string | null = null;
 let probe: Probe | null = null;
@@ -345,6 +351,24 @@ function playDirect(url: string) {
   v.muted = muted;
 }
 
+/**
+ * Plays a remote HLS manifest — what a share link resolves to — through hls.js.
+ *
+ * No session, no ffmpeg and no windows: the whole source is one playlist the
+ * far end already segmented, so positions are element time and the plan is
+ * `direct`. That is not cosmetic. `readiness()` and `loadedAhead()` read the
+ * plan to decide whether the lead comes from the element's buffer or from what
+ * ffmpeg has written, and here there is no ffmpeg to ask.
+ */
+async function playManifest(r: Resolved): Promise<void> {
+  plan = { video: "copy", audio: "copy", container: "direct" };
+  offsetSec = 0;
+  sourceDurationSec = r.durationSec;
+  emit({ kind: "duration", duration: sourceDurationSec });
+  emit({ kind: "tracks", tracks: [] });
+  await attachHls(r.url, 0, false);
+}
+
 // ---- YouTube backend ------------------------------------------------------
 
 /** The iframe player is its own decoder, buffer and clock: none of the ffmpeg
@@ -517,18 +541,6 @@ function applyYtVolume(): void {
   else yt.unMute();
 }
 
-/** Plays a YouTube link through YouTube's own player. Nothing is probed,
- * remuxed or downloaded: the party is synchronised against the iframe's clock
- * exactly as it is against a <video>'s. */
-function loadYouTube(videoId: string): void {
-  ytId = videoId;
-  ytPos = 0;
-  ytPaused = true;
-  ytDuration = 0;
-  emit({ kind: "tracks", tracks: [] });
-  if (ytHost) void buildYt(ytHost, videoId);
-}
-
 export async function load(url: string): Promise<void> {
   loadCount += 1;
   try {
@@ -556,19 +568,30 @@ async function loadInner(url: string): Promise<void> {
   currentSubId = "no";
   subDelaySec = 0;
 
-  const videoId = youtubeId(url);
-  if (videoId) {
-    // The <video> keeps whatever it last played otherwise, and would go on
-    // playing it underneath the iframe.
-    stopHtml();
-    loadYouTube(videoId);
-    return;
-  }
   if (!htmlVideo) return;
+
+  // A share link is not a media URL. yt-dlp turns it into one — and hands back
+  // the title on the way, which is the only place we ever learn it.
+  let source = url;
+  if (youtubeId(url)) {
+    let resolved: Resolved;
+    try {
+      resolved = await invoke<Resolved>("media_resolve", { url });
+    } catch (err) {
+      emit({ kind: "error", message: `${err}` });
+      return;
+    }
+    emit({ kind: "title", title: resolved.title });
+    if (resolved.kind === "hls") {
+      await playManifest(resolved);
+      return;
+    }
+    source = resolved.url;
+  }
 
   let opened: OpenResult;
   try {
-    opened = await invoke<OpenResult>("media_open", { source: url });
+    opened = await invoke<OpenResult>("media_open", { source });
     sessionId = opened.sessionId;
     probe = await invoke<Probe>("media_probe", { sessionId: opened.sessionId });
   } catch (err) {
@@ -577,7 +600,7 @@ async function loadInner(url: string): Promise<void> {
     // does not do — so hand it the URL untouched rather than refusing outright.
     console.warn("watch party: probe failed, falling back to direct playback", err);
     plan = { video: "copy", audio: "copy", container: "direct" };
-    playDirect(url);
+    playDirect(source);
     return;
   }
 
@@ -591,7 +614,7 @@ async function loadInner(url: string): Promise<void> {
     // The webview fetches the remote URL itself here — its own TLS and HTTP/2
     // are better than proxying, and the session stays open only so embedded
     // subtitles can still be extracted.
-    playDirect(url);
+    playDirect(source);
     return;
   }
   await openWindow(0);
