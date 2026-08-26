@@ -380,6 +380,9 @@ async function loadInner(url: string): Promise<void> {
   // the title on the way, which is the only place we ever learn it.
   let source = url;
   if (youtubeId(url)) {
+    // Resolving is a few seconds of network with nothing on screen to explain
+    // it. The element clears this again on its first `canplay`.
+    emit({ kind: "buffering", pausedForCache: true, ready: false });
     let resolved: Resolved;
     try {
       resolved = await invoke<Resolved>("media_resolve", { url });
