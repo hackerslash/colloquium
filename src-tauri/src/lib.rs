@@ -212,6 +212,7 @@ pub fn run() {
             identity::identity_delete_keypair,
             sysaudio::sysaudio_start,
             sysaudio::sysaudio_stop,
+            media::media_resolve,
             media::media_open,
             media::media_probe,
             media::media_open_window,

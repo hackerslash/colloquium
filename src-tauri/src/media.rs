@@ -740,6 +740,77 @@ fn check_source(source: &str) -> Result<(), String> {
     }
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resolved {
+    /// What to play. An HLS manifest when `kind` is "hls", a media file otherwise.
+    url: String,
+    kind: &'static str,
+    title: Option<String>,
+    /// 0 when the site did not report one.
+    duration_sec: f64,
+}
+
+/// Turns a share link into something the player can open, with the bundled
+/// yt-dlp.
+///
+/// The URL it returns is bound to this machine — YouTube signs it against the
+/// requesting IP — so each peer resolves the party's link for itself rather
+/// than one of them resolving and sharing the result.
+///
+/// An HLS manifest is preferred over a progressive file because it is the only
+/// single URL that still carries both picture and sound: YouTube has stopped
+/// serving muxed formats, and the alternative is two streams that would have to
+/// be muxed back together by ffmpeg before anything could play. A manifest goes
+/// straight to hls.js with seeking, a real duration and no sidecar at all.
+#[tauri::command]
+pub async fn media_resolve(url: String) -> Result<Resolved, String> {
+    check_source(&url)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = run(
+            "yt-dlp",
+            &[
+                "--no-warnings", "--no-playlist", "--no-progress",
+                "--socket-timeout", "15",
+                // The fallback is the best single file, for sites that publish
+                // no manifest at all.
+                "-f", "bv*[protocol^=m3u8]/b",
+                // One field per line, in this order. The title is last because
+                // it is the only one that could contain a newline of its own.
+                "--print", "%(manifest_url)s",
+                "--print", "%(url)s",
+                "--print", "%(duration)s",
+                "--print", "%(title)s",
+                &url,
+            ],
+        )?;
+        let text = String::from_utf8_lossy(&out);
+        let mut lines = text.lines();
+        // yt-dlp prints the string "NA" for a field the extractor did not fill.
+        let na = |s: &str| {
+            let s = s.trim();
+            (!s.is_empty() && s != "NA").then(|| s.to_string())
+        };
+        let manifest = lines.next().and_then(na);
+        let file = lines.next().and_then(na);
+        let duration_sec = lines
+            .next()
+            .and_then(na)
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let title = na(&lines.collect::<Vec<_>>().join("
+"));
+
+        let (url, kind) = match manifest {
+            Some(m) => (m, "hls"),
+            None => (file.ok_or("yt-dlp found no playable stream")?, "file"),
+        };
+        Ok(Resolved { url, kind, title, duration_sec })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Opens a session: allocates the token and cache dir and starts the loopback
 /// server. Nothing is decoded yet — the caller probes next, then decides a plan.
 #[tauri::command]
