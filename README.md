@@ -45,8 +45,9 @@ sign up for.
 **Watch party**
 - Watch a local video file in sync with a room — one controller drives playback
   for everyone
-- Paste a YouTube link and it plays through YouTube's own player, in sync and
-  titled, with no download
+- Paste a YouTube link and it plays on the same stage as a file, in sync and
+  titled — resolved to a stream by a bundled yt-dlp, with no download and none
+  of YouTube's own chrome
 - Audio-track and subtitle selection follow the controller
 - Files that a browser engine can't play natively are remuxed on the fly by a
   bundled ffmpeg, so HEVC, AC3/E-AC3/DTS/TrueHD and multi-track files work
@@ -119,10 +120,11 @@ pnpm install
 pnpm tauri:dev
 ```
 
-Watch party needs `ffmpeg`/`ffprobe`, but **you don't install them** — they're
-bundled sidecars that `pnpm tauri:dev` downloads and checksum-verifies before the
-first build. To fetch them ahead of time, run `pnpm ffmpeg`. They're built from
-source by CI to stay LGPL-2.1 and small (~13 MB each); see
+Watch party needs `ffmpeg`/`ffprobe` and `yt-dlp`, but **you don't install
+them** — they're bundled sidecars that `pnpm tauri:dev` downloads and
+checksum-verifies before the first build. To fetch them ahead of time, run
+`pnpm ffmpeg` and `pnpm ytdlp`. ffmpeg is built from source by CI to stay
+LGPL-2.1 and small (~13 MB each); yt-dlp is the upstream release binary. See
 [THIRD-PARTY.md](THIRD-PARTY.md).
 
 ```sh
