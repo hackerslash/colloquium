@@ -1,0 +1,3 @@
+## 2024-05-18 - Avoid inline array props breaking child memoization
+**Learning:** In React components like `ChatView` where state updates frequently (e.g. typing in a composer updates a local draft state or store), passing inline arrays like `[contactId]` down to large child components like `MessageList` breaks their `React.memo` optimizations. This causes O(N) re-renders (entire message list re-rendering on every keystroke) because the array reference changes on every render.
+**Action:** Always wrap arrays and objects passed as props to heavy components in `useMemo` if they are derived from simple primitives or don't change often, and ensure heavy list components like `MessageList` are actually wrapped in `React.memo()`.

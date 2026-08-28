@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BellOff, Download, Hash, Phone, Clapperboard } from "lucide-react";
 import { useChatStore } from "../../stores/useChatStore";
 import { useRoomStore } from "../../stores/useRoomStore";
@@ -68,6 +68,29 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
   const inAnotherCall = callRoomId !== null && callRoomId !== roomId;
   const othersInCall = callParticipants.filter((id) => id !== self?.identityId);
   const callActive = inThisCall || othersInCall.length > 0;
+
+  const mentionCandidates = useMemo(
+    () =>
+      memberIds
+        .filter((id) => id !== self?.identityId)
+        .map((id) => ({ id, name: contactsById[id]?.displayName ?? "Unknown" })),
+    [memberIds, self?.identityId, contactsById],
+  );
+
+  const replyingToProps = useMemo(
+    () =>
+      replyingTo
+        ? {
+            id: replyingTo.id,
+            authorName:
+              replyingTo.authorId === self?.identityId
+                ? self?.displayName ?? "You"
+                : contactsById[replyingTo.authorId]?.displayName ?? "Unknown",
+            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
+          }
+        : null,
+    [replyingTo, self?.identityId, self?.displayName, contactsById],
+  );
 
   useEffect(() => {
     setActiveRoom(roomId);
@@ -227,19 +250,8 @@ export function GroupRoomView({ roomId, onLeft, jumpToMessageId, onJumpConsumed 
         ref={composerRef}
         value={draft}
         placeholder={`Message ${room.name ?? "the room"}`}
-        mentionCandidates={memberIds
-          .filter((id) => id !== self?.identityId)
-          .map((id) => ({ id, name: contactsById[id]?.displayName ?? "Unknown" }))}
-        replyingTo={
-          replyingTo && {
-            id: replyingTo.id,
-            authorName:
-              replyingTo.authorId === self?.identityId
-                ? self.displayName
-                : contactsById[replyingTo.authorId]?.displayName ?? "Unknown",
-            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
-          }
-        }
+        mentionCandidates={mentionCandidates}
+        replyingTo={replyingToProps}
         onCancelReply={() => setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => cancelEdit(roomId)}
