@@ -609,7 +609,7 @@ type MessageListProps = {
   onJumpConsumed?: () => void;
 };
 
-export function MessageList({
+export const MessageList = memo(function MessageList({
   messages,
   roomId,
   memberIds,
@@ -961,4 +961,4 @@ export function MessageList({
       </div>
     </div>
   );
-}
+});
