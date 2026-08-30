@@ -8,6 +8,7 @@ import {
   Mic,
   MicOff,
   Plus,
+  Search,
   Settings,
   Video,
   Volume2,
@@ -34,6 +35,7 @@ type SidebarProps = {
   onSelect: (selection: Selection) => void;
   onCreateGroup: () => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
 };
 
 function shortId(identityId: string): string {
@@ -70,6 +72,7 @@ export function Sidebar({
   onSelect,
   onCreateGroup,
   onOpenSettings,
+  onOpenSearch,
 }: SidebarProps) {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
@@ -476,6 +479,7 @@ export function Sidebar({
             )}
           </span>
         </button>
+        <IconButton icon={Search} label="Search messages" onClick={onOpenSearch} />
         <IconButton icon={Settings} label="Settings" onClick={onOpenSettings} />
       </div>
     </nav>
