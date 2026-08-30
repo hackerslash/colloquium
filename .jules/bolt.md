@@ -1,0 +1,3 @@
+## 2025-03-01 - Avoid JS-based hover states in React lists
+**Learning:** Attaching mouse event handlers (like `onMouseOver` and `onMouseLeave`) to list items or list containers and saving hover states to a React component's state (e.g., `hoveredId`) can cause unnecessary component re-renders on mouse movement, creating performance bottlenecks, particularly in large lists like chat histories.
+**Action:** Use CSS-based hover states via Tailwind CSS named groups (`group/{name}` on the container and `group-hover/{name}:*` on the target children) instead of React state for implementing hover interactions in UI components to ensure smooth scrolling and rendering performance without unnecessary React overhead.
