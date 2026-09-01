@@ -1,0 +1,3 @@
+## 2025-03-01 - Date allocation inside frequent render loops
+**Learning:** `MessageList` calls `new Date(sentAt).toDateString()` for group breaking (determining if a message falls on a new day) inside its main render loop `messages.map()`. Because `MessageList` holds the hover state (`hoveredId`), moving the mouse rapidly causes the component to re-render, firing `messages.map()` and triggering thousands of Date allocations per second.
+**Action:** Extract expensive message group boundaries into a separate `useMemo` dependency array (e.g. `messageMetadata`) that computes only when the `messages` list changes, allowing the render loop to remain lightweight even during intense hover events.

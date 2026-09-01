@@ -802,6 +802,25 @@ export function MessageList({
     return map;
   }, [messages]);
 
+  // Pre-compute expensive row properties (like Date formatting) that depend only
+  // on the message list. Without this, hovering over any message causes the
+  // entire list to re-evaluate these properties, creating 2*N Date objects per frame.
+  const messageMetadata = useMemo(() => {
+    if (!messages) return [];
+    return messages.map((message, i) => {
+      const prev = messages[i - 1];
+      const isOwn = message.authorId === self?.identityId;
+      const newDay =
+        !prev || new Date(prev.sentAt).toDateString() !== new Date(message.sentAt).toDateString();
+      const startsGroup =
+        newDay ||
+        !prev ||
+        prev.authorId !== message.authorId ||
+        message.sentAt - prev.sentAt > GROUP_GAP_MS;
+      return { isOwn, newDay, startsGroup };
+    });
+  }, [messages, self?.identityId]);
+
   const handleToggleReaction = useCallback(
     (messageId: string, emoji: string) => {
       if (!roomId) return;
@@ -909,16 +928,7 @@ export function MessageList({
       >
       <ul>
         {messages.map((message, i) => {
-          const prev = messages[i - 1];
-          const isOwn = message.authorId === self?.identityId;
-          const newDay =
-            !prev || new Date(prev.sentAt).toDateString() !== new Date(message.sentAt).toDateString();
-          const startsGroup =
-            newDay ||
-            !prev ||
-            prev.authorId !== message.authorId ||
-            message.sentAt - prev.sentAt > GROUP_GAP_MS;
-
+          const meta = messageMetadata[i];
           const isFirstUnread = i === firstUnreadIndex;
 
           return (
@@ -934,10 +944,10 @@ export function MessageList({
               )}
               <MessageRow
                 message={message}
-                isOwn={isOwn}
+                isOwn={meta.isOwn}
                 authorName={nameOf(message.authorId)}
-                startsGroup={startsGroup}
-                newDay={newDay}
+                startsGroup={meta.startsGroup}
+                newDay={meta.newDay}
                 animateIn={didInitialRender.current}
                 selfId={selfId}
                 reactions={reactionsByMessage?.[message.id]}
