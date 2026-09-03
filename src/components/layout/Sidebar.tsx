@@ -460,8 +460,10 @@ export function Sidebar({
           <Avatar id={self.identityId} name={self.displayName} size="md" />
         )}
         <button
+          type="button"
           onClick={copyId}
           title="Copy your ID"
+          aria-label="Copy your ID"
           className="min-w-0 flex-1 text-left"
         >
           <span className="block truncate text-[14px] font-medium text-text-primary transition-colors hover:text-accent">
