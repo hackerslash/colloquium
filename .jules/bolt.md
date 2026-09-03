@@ -1,0 +1,3 @@
+## 2023-10-27 - CSS hover group vs JS mouse enter tracking
+**Learning:** JS state-based hovers that update components (like `useState` for tracking `hoveredId` on mouse move events) causes massive re-renders across the entire component list and is a major performance bottleneck for long lists like chat messages.
+**Action:** Use CSS named groups (`group/name`, `group-hover/name:opacity-100`) to manage component-level hover state purely in CSS instead of React state and event listeners, significantly reducing JS execution time and React rendering cycles.
