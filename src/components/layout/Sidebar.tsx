@@ -23,6 +23,7 @@ import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
 import { cx } from "../../lib/cx";
+import { toast } from "../../stores/useToastStore";
 
 export type Selection =
   | { kind: "home" }
@@ -126,6 +127,7 @@ export function Sidebar({
     if (!self) return;
     void navigator.clipboard.writeText(self.identityId).then(() => {
       setCopied(true);
+      toast.success("ID copied to clipboard");
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
     });
