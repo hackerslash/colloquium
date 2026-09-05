@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Hash, Search, User } from "lucide-react";
+import { Hash, Search, User, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { EmptyState } from "../ui/EmptyState";
 import { useRoomStore } from "../../stores/useRoomStore";
@@ -195,7 +195,7 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
   return (
     <Modal open={open} onClose={onClose} title="Search messages" size="lg">
       <div className="flex flex-col gap-3">
-        <div className="flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/60 px-3">
+        <div className="flex items-center gap-2 rounded-xl border border-border bg-bg-tertiary/60 px-3 transition-colors focus-within:border-accent/60 focus-within:ring-1 focus-within:ring-accent/40 shadow-sm">
           <Search size={16} className="shrink-0 text-text-muted" aria-hidden="true" />
           <input
             ref={inputRef}
@@ -203,8 +203,23 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Search messages…"
-            className="flex-1 bg-transparent py-2.5 text-sm text-text-primary outline-none placeholder:text-text-muted"
+            aria-label="Search messages"
+            className="flex-1 bg-transparent py-2.5 text-sm text-text-primary outline-none focus:outline-none focus:ring-0 focus:border-0 shadow-none placeholder:text-text-muted"
           />
+          {query && (
+            <button
+              type="button"
+              onClick={() => {
+                setQuery("");
+                inputRef.current?.focus();
+              }}
+              aria-label="Clear search"
+              title="Clear search"
+              className="rounded-full bg-black/5 p-1 text-text-muted hover:bg-black/10 hover:text-text-primary transition-colors"
+            >
+              <X size={14} aria-hidden="true" />
+            </button>
+          )}
         </div>
 
         {activeRoomId && activeRoomName && (
