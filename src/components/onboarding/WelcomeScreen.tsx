@@ -89,6 +89,9 @@ export function WelcomeScreen() {
 
           <form onSubmit={handleSubmit} className="mt-8">
             <div className="space-y-2">
+              <label htmlFor="displayName" className="block px-1 text-[13px] font-medium text-text-secondary">
+                Display name
+              </label>
               <input
                 id="displayName"
                 autoFocus

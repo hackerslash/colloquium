@@ -124,6 +124,7 @@ export function HomeView() {
               value={joinInput}
               onChange={(e) => setJoinInput(e.target.value)}
               rows={2}
+              aria-label="Invite string"
               placeholder="Paste invite string here..."
               className="w-full resize-none rounded-[16px] border border-border bg-bg-primary p-4 font-mono text-[12px] text-text-primary outline-none transition-all placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent"
             />
