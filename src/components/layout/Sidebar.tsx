@@ -478,6 +478,7 @@ export function Sidebar({
           <Avatar id={self.identityId} name={self.displayName} size="md" />
         )}
         <button
+          type="button"
           onClick={copyId}
           title="Copy your ID"
           aria-label={self ? `Copy your ID: ${self.displayName}` : "Copy your ID"}
