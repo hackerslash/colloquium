@@ -511,6 +511,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <span className="flex-1 truncate font-medium">{selectedFile.name}</span>
             <button
               onClick={() => setSelectedFile(null)}
+              aria-label="Remove attachment"
               className="rounded-full bg-black/10 p-1 text-text-muted transition-colors hover:bg-danger/20 hover:text-danger"
             >
               <X size={14} />
@@ -682,6 +683,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
             <button
               type="button"
               title="Attach file"
+              aria-label="Attach file"
               onClick={() => fileInputRef.current?.click()}
               className="mb-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/5 text-text-muted hover:bg-accent hover:text-white transition-colors"
             >
@@ -716,6 +718,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     type="button"
                     onClick={() => wrapFormatting("**")}
                     title="Bold (**text**)"
+                    aria-label="Bold text"
                     className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
                   >
                     <Bold size={14} />
@@ -724,6 +727,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     type="button"
                     onClick={() => wrapFormatting("*")}
                     title="Italic (*text*)"
+                    aria-label="Italic text"
                     className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
                   >
                     <Italic size={14} />
@@ -732,6 +736,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     type="button"
                     onClick={() => wrapFormatting("~~")}
                     title="Strikethrough (~~text~~)"
+                    aria-label="Strikethrough text"
                     className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
                   >
                     <Strikethrough size={14} />
@@ -740,6 +745,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     type="button"
                     onClick={() => wrapFormatting("`")}
                     title="Code (`code`)"
+                    aria-label="Code text"
                     className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
                   >
                     <Code size={14} />
@@ -748,6 +754,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                     type="button"
                     onClick={() => wrapFormatting("> ", "")}
                     title="Quote (> text)"
+                    aria-label="Quote text"
                     className="rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary transition-colors"
                   >
                     <Quote size={14} />
@@ -758,6 +765,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
                 <button
                   type="button"
                   title="Add emoji"
+                  aria-label="Add emoji"
                   onClick={() => setShowEmojiPicker((v) => !v)}
                   className={`rounded-lg p-1.5 transition-colors ${
                     showEmojiPicker

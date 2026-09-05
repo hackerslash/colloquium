@@ -17,3 +17,7 @@
 ## 2024-05-18 - Missing ARIA labels and Labels on Form inputs
 **Learning:** Many form inputs relied exclusively on `placeholder` attributes which are not sufficient for accessibility.
 **Action:** Ensure inputs either have explicit associated semantic `<label>` elements or `aria-label` attributes if visual labels are not appropriate.
+
+## 2026-09-01 - ARIA Labels for Icon-Only Buttons
+**Learning:** Found multiple icon-only buttons (markdown formatters, clear search, categories) that relied only on `title` attributes, which are less reliable than `aria-label` for screen reader users. Added semantic `aria-label` properties to enhance accessibility.
+**Action:** Always verify icon-only buttons have `aria-label` attributes when implementing new features or making UX passes.
