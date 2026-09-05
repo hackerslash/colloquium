@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BellOff, Download, Phone, ShieldCheck, ShieldQuestion, Video } from "lucide-react";
 import { useIdentityStore } from "../../stores/useIdentityStore";
 import { useRosterStore } from "../../stores/useRosterStore";
@@ -147,6 +147,26 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
       ? `Last seen ${formatLastSeen(contact.lastSeenAt)}`
       : PRESENCE_LABEL[presence];
 
+  const memberIds = useMemo(() => [contactId], [contactId]);
+  const mentionCandidates = useMemo(
+    () => [{ id: contactId, name: contact.displayName }],
+    [contactId, contact.displayName],
+  );
+  const replyingToProps = useMemo(
+    () =>
+      replyingTo
+        ? {
+            id: replyingTo.id,
+            authorName:
+              replyingTo.authorId === self?.identityId
+                ? self?.displayName ?? "You"
+                : contact.displayName,
+            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
+          }
+        : null,
+    [replyingTo, self?.identityId, self?.displayName, contact.displayName],
+  );
+
   return (
     <DropZone onFileDrop={(file) => composerRef.current?.acceptFile(file)}>
       <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
@@ -190,7 +210,7 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
       <MessageList
         messages={messages}
         roomId={roomId ?? undefined}
-        memberIds={[contactId]}
+        memberIds={memberIds}
         jumpToMessageId={jumpToMessageId}
         onJumpConsumed={onJumpConsumed}
       />
@@ -199,17 +219,8 @@ export function ChatView({ contactId, jumpToMessageId, onJumpConsumed }: ChatVie
         ref={composerRef}
         value={draft}
         placeholder={`Message ${contact.displayName}`}
-        mentionCandidates={[{ id: contactId, name: contact.displayName }]}
-        replyingTo={
-          replyingTo && {
-            id: replyingTo.id,
-            authorName:
-              replyingTo.authorId === self?.identityId
-                ? self.displayName
-                : contact.displayName,
-            snippet: replyingTo.body || replyingTo.attachmentName || "Attachment",
-          }
-        }
+        mentionCandidates={mentionCandidates}
+        replyingTo={replyingToProps}
         onCancelReply={() => roomId && setReplyingTo(roomId, null)}
         editing={!!editing}
         onCancelEdit={() => roomId && cancelEdit(roomId)}
