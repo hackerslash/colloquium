@@ -203,6 +203,7 @@ export function SearchModal({ open, onClose, onPick }: SearchModalProps) {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="Search messages…"
+            aria-label="Search messages"
             className="flex-1 bg-transparent py-2.5 text-sm text-text-primary outline-none placeholder:text-text-muted"
           />
         </div>

@@ -162,6 +162,7 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
+                aria-label="Room name"
                 maxLength={48}
                 disabled={renaming}
                 className="flex-1 rounded-md border border-border-strong bg-bg-tertiary px-2.5 py-1 text-sm text-text-primary outline-none focus:border-accent"
@@ -213,6 +214,7 @@ export function RoomMembersModal({ open, onClose, roomId, onLeft }: RoomMembersM
                 autoFocus
                 value={newTopic}
                 onChange={(e) => setNewTopic(e.target.value)}
+                aria-label="Room topic"
                 maxLength={140}
                 disabled={savingTopic}
                 placeholder="What's this space for?"

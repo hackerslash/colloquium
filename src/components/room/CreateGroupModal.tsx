@@ -83,6 +83,7 @@ export function CreateGroupModal({ open, onClose, onCreated }: CreateGroupModalP
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="Room name"
+        aria-label="Room name"
         maxLength={48}
         className="w-full rounded-md border border-border-strong bg-bg-tertiary px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent"
       />
