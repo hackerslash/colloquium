@@ -1,0 +1,1 @@
+## 2024-03-22 - JS-based hover states in list\n**Learning:** Using React state to track hovered items in a long list like MessageList causes massive unnecessary re-renders of the list and all items. The app already supports Tailwind named groups.\n**Action:** Use Tailwind `group/name` and `group-hover/name` instead of `onMouseOver`/`onMouseLeave` state.
