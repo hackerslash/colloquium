@@ -219,6 +219,7 @@ function AnimatedEmojiCell({
     <button
       type="button"
       title={name}
+      aria-label={name}
       onClick={onSelect}
       onMouseEnter={() => setActive(true)}
       onMouseLeave={() => setActive(false)}
@@ -323,6 +324,7 @@ export function EmojiPicker({
           <button
             type="button"
             onClick={() => setSearchQuery("")}
+            aria-label="Clear search"
             className="rounded p-0.5 text-text-muted hover:text-text-primary"
           >
             <X size={14} />
@@ -339,6 +341,7 @@ export function EmojiPicker({
               type="button"
               onClick={() => setActiveCategory(cat.id)}
               title={cat.name}
+              aria-label={cat.name}
               className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                 activeCategory === cat.id ? "bg-accent/20 text-accent" : "hover:bg-bg-tertiary"
               }`}
@@ -350,6 +353,7 @@ export function EmojiPicker({
             type="button"
             onClick={() => setActiveCategory(ANIMATED_TAB_ID)}
             title="Animated"
+            aria-label="Animated emojis"
             className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
               activeCategory === ANIMATED_TAB_ID ? "bg-accent/20 text-accent" : "hover:bg-bg-tertiary"
             }`}
@@ -374,6 +378,7 @@ export function EmojiPicker({
                     key={raw}
                     type="button"
                     title={resolved.kind === "animated" ? resolved.name : raw}
+                    aria-label={resolved.kind === "animated" ? resolved.name : raw}
                     onClick={() => select(raw)}
                     className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
                   >
@@ -401,6 +406,7 @@ export function EmojiPicker({
               <button
                 key={`glyph-${hit.glyph}-${idx}`}
                 type="button"
+                aria-label={hit.glyph}
                 onClick={() => select(hit.glyph)}
                 className="flex h-8 w-8 items-center justify-center rounded-lg hover:scale-125 hover:bg-bg-tertiary transition-transform duration-100"
               >
