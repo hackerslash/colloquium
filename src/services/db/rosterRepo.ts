@@ -15,6 +15,7 @@ type RosterRow = {
   revoked: number;
   revoked_at: number | null;
   revoked_by: string | null;
+  verified_at: number | null;
 };
 
 function fromRow(row: RosterRow): RosterContact {
@@ -31,6 +32,7 @@ function fromRow(row: RosterRow): RosterContact {
     revoked: row.revoked === 1,
     revokedAt: row.revoked_at,
     revokedBy: row.revoked_by,
+    verifiedAt: row.verified_at,
   };
 }
 
@@ -100,6 +102,17 @@ export async function revokeContact(
       WHERE identity_id = $3`,
     [now, revokedBy, identityId],
   );
+}
+
+/** Records (or clears) an out-of-band safety-number check. Deliberately does
+ * NOT bump updated_at: verification is a local belief about a key, not roster
+ * state that should gossip to peers. */
+export async function setVerified(identityId: string, verifiedAt: number | null): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE roster SET verified_at = $1 WHERE identity_id = $2", [
+    verifiedAt,
+    identityId,
+  ]);
 }
 
 export async function markSeen(identityId: string, peerId: string, seenAt: number): Promise<void> {

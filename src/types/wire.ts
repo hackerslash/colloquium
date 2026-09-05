@@ -96,6 +96,25 @@ export type ReactionWire = {
   reactedAt: number;
 };
 
+/** Pin toggle on a message. Same trust model as reactions: attributed to the
+ * authenticated peer connection, never a wire-carried sender id. A room's pin
+ * list is the union of its members' own sets, so a peer can only ever unpin
+ * what it pinned. */
+export type PinMessage = {
+  type: "pin";
+  roomId: string;
+  messageId: string;
+  op: "add" | "remove";
+  pinnedAt: number;
+};
+
+/** A pin carried in a room sync response. Author is implicitly the responding
+ * peer — same reasoning as ReactionWire. */
+export type PinWire = {
+  messageId: string;
+  pinnedAt: number;
+};
+
 /** Author-signed edit of an existing text message. `sig` is over the same
  * canonicalMessage array as the original send, with `body`/`editedAt`
  * substituted and `deletedAt` null — receivers reconstruct that array from
@@ -177,6 +196,9 @@ export type RoomSyncResponseMessage = {
    * set, so removals made while the requester was offline converge too.
    * Absent (older peer) means "no information", not "no reactions". */
   reactions?: ReactionWire[];
+  /** The responder's own current pins in this room — full replacement set,
+   * same convergence story as `reactions`. */
+  pins?: PinWire[];
 };
 
 // --- Call control (a layer above raw negotiation). inviteId ties the whole
@@ -593,6 +615,7 @@ export type ColloquiumMessage =
   | RosterSyncMessage
   | ChatMessageMessage
   | ReactionMessage
+  | PinMessage
   | MsgEditMessage
   | MsgDeleteMessage
   | TypingMessage

@@ -6,3 +6,10 @@ import { invoke } from "@tauri-apps/api/core";
 export function setCloseToTray(enabled: boolean): Promise<void> {
   return invoke("set_close_to_tray", { enabled });
 }
+
+/** True when this process was launched by the autostart entry at login, in
+ * which case the window should stay hidden and the app just runs in the tray.
+ * Only Rust can see the process arguments, hence the round trip. */
+export function shouldStartHidden(): Promise<boolean> {
+  return invoke("should_start_hidden");
+}

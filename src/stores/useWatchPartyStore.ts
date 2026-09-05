@@ -40,6 +40,9 @@ type WatchPartyStoreState = {
   roomId: string | null;
   partyId: string | null;
   streamUrl: string | null;
+  /** What the source calls itself, when the backend can say — YouTube's player
+   * knows the video's title, a file on disk does not. */
+  videoTitle: string | null;
   ownerId: string | null;
   controllerId: string | null;
   announcedByRoom: Record<string, AnnouncedParty>;
@@ -90,6 +93,7 @@ type WatchPartyStoreState = {
   }) => void;
   _setController: (id: string | null) => void;
   _setStreamUrl: (url: string) => void;
+  _setVideoTitle: (title: string | null) => void;
   _setPlayback: (v: Partial<PlaybackSlice>) => void;
   _setTracks: (tracks: TrackInfo[]) => void;
   _setSubLoading: (loading: boolean, progress?: number | null) => void;
@@ -119,6 +123,7 @@ const INITIAL: PlaybackSlice & {
   roomId: null;
   partyId: null;
   streamUrl: null;
+  videoTitle: null;
   ownerId: null;
   controllerId: null;
   tracks: TrackInfo[];
@@ -134,6 +139,7 @@ const INITIAL: PlaybackSlice & {
   roomId: null,
   partyId: null,
   streamUrl: null,
+  videoTitle: null,
   ownerId: null,
   controllerId: null,
   paused: true,
@@ -206,12 +212,14 @@ export const useWatchPartyStore = create<WatchPartyStoreState>((set) => ({
       roomId: v.roomId,
       partyId: v.partyId,
       streamUrl: v.streamUrl,
+      videoTitle: null,
       ownerId: v.ownerId,
       controllerId: v.controllerId,
       error: null,
     }),
   _setController: (id) => set({ controllerId: id }),
-  _setStreamUrl: (url) => set({ streamUrl: url }),
+  _setStreamUrl: (url) => set({ streamUrl: url, videoTitle: null }),
+  _setVideoTitle: (videoTitle) => set({ videoTitle }),
   _setPlayback: (v) => set(v),
   _setTracks: (tracks) => set({ tracks }),
   _setSubLoading: (subLoading, subProgress = null) => set({ subLoading, subProgress }),

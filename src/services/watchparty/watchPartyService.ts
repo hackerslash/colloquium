@@ -215,6 +215,9 @@ function onPlayerEvent(e: WpEvent) {
     case "tracks":
       store._setTracks(e.tracks);
       break;
+    case "title":
+      store._setVideoTitle(e.title);
+      break;
     case "subtitles":
       store._setSubLoading(e.loading, e.progress);
       if (e.failed) {

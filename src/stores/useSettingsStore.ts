@@ -4,6 +4,11 @@ import * as settingsRepo from "../services/db/settingsRepo";
 import * as callService from "../services/call/callService";
 import * as roomCallService from "../services/call/roomCallService";
 import { setCloseToTray as syncCloseToTray } from "../services/window";
+import {
+  enable as enableAutostart,
+  disable as disableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 import { toast } from "./useToastStore";
 
 export type ThemePref = "system" | "light" | "dark";
@@ -33,6 +38,10 @@ type SettingsState = {
   accent: string;
   pushToTalk: boolean;
   closeToTray: boolean;
+  /** Launch Colloquium at login, straight to the tray, so rooms stay backed by
+   * an online peer. The OS (registry / launch agent) is the source of truth —
+   * this is a mirror of it, not a persisted setting of ours. */
+  startAtLogin: boolean;
   /** Show an OS notification for new messages while Colloquium is unfocused. */
   desktopNotifications: boolean;
   /** Play a chime for new messages arriving in a room you're not viewing. */
@@ -67,6 +76,7 @@ type SettingsState = {
   setAccent: (key: string) => Promise<void>;
   setPushToTalk: (on: boolean) => Promise<void>;
   setCloseToTray: (on: boolean) => Promise<void>;
+  setStartAtLogin: (on: boolean) => Promise<void>;
   setDesktopNotifications: (on: boolean) => Promise<void>;
   setNotificationSounds: (on: boolean) => Promise<void>;
   setNotificationPreviews: (on: boolean) => Promise<void>;
@@ -183,6 +193,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   accent: "ember",
   pushToTalk: false,
   closeToTray: true,
+  startAtLogin: false,
   desktopNotifications: true,
   notificationSounds: true,
   notificationPreviews: true,
@@ -242,6 +253,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       loaded: true,
     });
     void syncCloseToTray(closeToTray);
+    // Not read from settingsRepo: the OS owns this one, and a DB copy would
+    // drift the moment the user removes the entry outside the app.
+    void isAutostartEnabled()
+      .then((on) => set({ startAtLogin: on }))
+      .catch(() => {});
   },
 
   setTheme: async (theme) => {
@@ -298,6 +314,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ closeToTray: previous });
       void syncCloseToTray(previous);
       toast.error("Setting not saved", "Please try again.");
+    }
+  },
+
+  setStartAtLogin: async (on) => {
+    const previous = get().startAtLogin;
+    set({ startAtLogin: on });
+    try {
+      if (on) await enableAutostart();
+      else await disableAutostart();
+    } catch (err) {
+      console.error("Failed to change autostart:", err);
+      set({ startAtLogin: previous });
+      toast.error("Setting not saved", "Colloquium couldn't change your login items.");
     }
   },
 

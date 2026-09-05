@@ -23,6 +23,17 @@ import {
   type ProbeStream,
 } from "./codecSupport";
 import { decidePlan, planLabel, type Plan } from "./mediaPlan";
+import {
+  embedUrl,
+  loadIframeApi,
+  youtubeId,
+  ytErrorText,
+  YT_BUFFERING,
+  YT_ENDED,
+  YT_PAUSED,
+  YT_PLAYING,
+  type YtPlayer,
+} from "./youtube";
 import { READY_LEAD_SEC } from "./watchPartySync";
 import { assToVtt, looksLikeVtt, shiftVtt, srtToVtt } from "./vtt";
 
@@ -47,6 +58,8 @@ export type WpEvent =
   | { kind: "pause"; paused: boolean }
   | { kind: "buffering"; pausedForCache: boolean; ready: boolean }
   | { kind: "tracks"; tracks: TrackInfo[] }
+  /** The source's own name, once the backend knows it. Null until then. */
+  | { kind: "title"; title: string | null }
   /** `progress` is 0..1 through the source, or null when it isn't known yet. */
   | { kind: "subtitles"; loading: boolean; failed: boolean; progress: number | null }
   | { kind: "eof" }
@@ -94,6 +107,8 @@ let hls: HlsType | null = null;
 let sourceDurationSec = 0;
 let audioOrdinal = 0;
 let rate = 1;
+let volume = 1;
+let muted = false;
 
 /** Source-time of media-time 0 for the current window. Zero for direct play and
  * for a window starting at the beginning; otherwise the *probed* keyframe the
@@ -158,6 +173,10 @@ function loadedAhead(v: HTMLVideoElement): number {
 }
 
 export function busy(): boolean {
+  // While the player is loading there is no clock to report, and the
+  // controller must not advertise the position it is frozen at as one that is
+  // still advancing.
+  if (ytId) return loadCount > 0 || !ytReady;
   return loadCount > 0 || openCount > 0 || reopenTimer !== null;
 }
 
@@ -167,6 +186,7 @@ export function busy(): boolean {
  * the position being moved to is reported instead.
  */
 export function positionSec(): number {
+  if (ytId) return yt && ytReady ? yt.getCurrentTime() : ytPos;
   const v = htmlVideo;
   if (!v) return pendingTarget;
   if (busy() || (seekPending && v.seeking)) return pendingTarget;
@@ -182,6 +202,14 @@ export function positionSec(): number {
  * where the lead can never reach the target — does not block playback.
  */
 export function readiness(): { leadSec: number; primed: boolean; needSec: number } {
+  if (ytId) {
+    // YouTube buffers to its own rules and reports one number for it. Treat a
+    // ready player as primed: there is no knob to make it fetch further ahead,
+    // so holding the party back on this lead would hold it back for good.
+    if (!yt || !ytReady) return { leadSec: 0, primed: false, needSec: 0 };
+    const leadSec = Math.max(0, yt.getVideoLoadedFraction() * ytDuration - positionSec());
+    return { leadSec, primed: true, needSec: 0 };
+  }
   const v = htmlVideo;
   if (!v) return { leadSec: 0, primed: false, needSec: READY_LEAD_SEC };
   const leadSec = loadedAhead(v);
@@ -200,6 +228,7 @@ export function onPlayerEvent(l: Listener): () => void {
 
 /** How this source is being played, for a UI badge. Null before a plan exists. */
 export function pipelineLabel(): string | null {
+  if (ytId) return "YouTube";
   return plan ? planLabel(plan) : null;
 }
 
@@ -293,6 +322,17 @@ async function closeSession() {
   }
 }
 
+/** Leaves the <video> holding nothing: a source that has moved to the iframe
+ * player, or a party that has ended, must not go on playing underneath. */
+function stopHtml() {
+  const v = htmlVideo;
+  if (!v) return;
+  v.pause();
+  for (const el of Array.from(v.querySelectorAll("track"))) el.remove();
+  v.removeAttribute("src");
+  v.load();
+}
+
 function playDirect(url: string) {
   const v = htmlVideo;
   if (!v) return;
@@ -301,6 +341,192 @@ function playDirect(url: string) {
   v.src = url;
   v.load();
   v.playbackRate = rate;
+  v.volume = volume;
+  v.muted = muted;
+}
+
+// ---- YouTube backend ------------------------------------------------------
+
+/** The iframe player is its own decoder, buffer and clock: none of the ffmpeg
+ * state above applies to it, so every entry point below branches on `ytId`
+ * rather than trying to make one set of variables mean both. */
+let ytId: string | null = null;
+let yt: YtPlayer | null = null;
+/** The element the UI has given us to draw in. An iframe reloads when it is
+ * moved in the DOM, so audio mode hands over a different host and the player is
+ * rebuilt in it at the position we already had. */
+let ytHost: HTMLElement | null = null;
+/** A YT.Player carries none of its API until it binds to its iframe and calls
+ * onReady: every method on it throws until then. The party polls the player
+ * from a timer, so an unguarded call does not fail alone — it takes down the
+ * tick that carries the heartbeat, and with it the announce that is how anyone
+ * else finds out the party exists. */
+let ytReady = false;
+let ytPos = 0;
+let ytPaused = true;
+let ytDuration = 0;
+let ytTimer: number | null = null;
+/** Identifies the newest build request, so a host swapped mid-load discards the
+ * player it was waiting on. */
+let ytSeq = 0;
+
+/** How often the position is read. The API has no timeupdate event, and the sync
+ * loop corrects against this number twice a second. */
+const YT_POLL_MS = 250;
+
+/** Where the iframe player draws, or null when the UI has taken it away. Safe to
+ * call before a YouTube source is loaded — the player is built when both a host
+ * and a video id exist. */
+export function attachYouTube(host: HTMLElement | null): void {
+  if (host === ytHost) return;
+  ytHost = host;
+  if (!ytId) return;
+  destroyYt();
+  if (host) void buildYt(host, ytId);
+}
+
+function destroyYt(): void {
+  ytSeq += 1;
+  stopYtPoll();
+  const p = yt;
+  const wasReady = ytReady;
+  yt = null;
+  ytReady = false;
+  if (!p) return;
+  // Where the party is, for the player that takes this one's place. A player
+  // that never became ready has no position to give and no clock to ask.
+  if (wasReady) ytPos = p.getCurrentTime();
+  try {
+    p.destroy();
+  } catch {
+    // The iframe is going away with its host regardless.
+  }
+}
+
+function stopYtPoll(): void {
+  if (ytTimer === null) return;
+  window.clearInterval(ytTimer);
+  ytTimer = null;
+}
+
+function emitYtTitle(): void {
+  if (!ytReady) return;
+  const title = yt?.getVideoData()?.title?.trim();
+  if (title) emit({ kind: "title", title });
+}
+
+/** Builds the player at the position and pause state the party is in now —
+ * both live in module state, so a rebuild between hosts lands where the last
+ * one left off, and a seek or a play arriving before the player is ready is
+ * applied by onReady rather than thrown away. */
+async function buildYt(host: HTMLElement, videoId: string): Promise<void> {
+  const seq = ++ytSeq;
+  let api;
+  try {
+    api = await loadIframeApi();
+  } catch (err) {
+    emit({ kind: "error", message: String((err as Error)?.message ?? err) });
+    return;
+  }
+  if (seq !== ytSeq || ytHost !== host) return;
+  emit({ kind: "buffering", pausedForCache: true, ready: false });
+  // The iframe is built here, not by the API: options handed to the API as
+  // `playerVars` never reached the player, which came up with YouTube's whole
+  // control bar. Written into the src they hold. It is also a child of the host
+  // rather than the host itself — the API keeps the element it is given, and
+  // React must keep its own.
+  const frame = document.createElement("iframe");
+  frame.src = embedUrl(videoId, {
+    startSec: ytPos,
+    autoplay: !ytPaused,
+    origin: location.origin,
+  });
+  frame.title = "YouTube player";
+  frame.allow = "autoplay; encrypted-media";
+  frame.setAttribute("frameborder", "0");
+  host.replaceChildren(frame);
+  yt = new api.Player(frame, {
+    events: {
+      onReady: () => {
+        if (seq !== ytSeq) return;
+        ytReady = true;
+        applyYtVolume();
+        yt?.setPlaybackRate(rate);
+        // The `start` param only takes whole seconds; the party's position is
+        // not whole seconds. Everything the party asked for while the player
+        // was loading is applied here, from the state it left behind.
+        if (ytPos > 0) yt?.seekTo(ytPos, true);
+        if (!ytPaused) yt?.playVideo();
+        ytDuration = yt?.getDuration() ?? 0;
+        if (ytDuration > 0) {
+          sourceDurationSec = ytDuration;
+          emit({ kind: "duration", duration: ytDuration });
+        }
+        emitYtTitle();
+        // A cued player never reports PLAYING until someone plays it, and the
+        // stage would spin over a picture that is simply waiting.
+        emit({ kind: "buffering", pausedForCache: false, ready: true });
+        stopYtPoll();
+        ytTimer = window.setInterval(pollYt, YT_POLL_MS);
+      },
+      onStateChange: (e) => {
+        if (seq !== ytSeq) return;
+        switch (e.data) {
+          case YT_PLAYING:
+            ytPaused = false;
+            emit({ kind: "pause", paused: false });
+            emit({ kind: "buffering", pausedForCache: false, ready: true });
+            emitYtTitle();
+            break;
+          case YT_PAUSED:
+            ytPaused = true;
+            emit({ kind: "pause", paused: true });
+            break;
+          case YT_BUFFERING:
+            emit({ kind: "buffering", pausedForCache: true, ready: false });
+            break;
+          case YT_ENDED:
+            emit({ kind: "eof" });
+            break;
+        }
+      },
+      onError: (e) => {
+        if (seq !== ytSeq) return;
+        emit({ kind: "error", message: ytErrorText(e.data) });
+      },
+    },
+  });
+}
+
+function pollYt(): void {
+  if (!yt || !ytReady) return;
+  ytPos = yt.getCurrentTime();
+  emit({ kind: "time", pos: ytPos, tsMs: performance.now() });
+  const d = yt.getDuration();
+  if (d > 0 && d !== ytDuration) {
+    ytDuration = d;
+    sourceDurationSec = d;
+    emit({ kind: "duration", duration: d });
+  }
+}
+
+function applyYtVolume(): void {
+  if (!yt || !ytReady) return;
+  yt.setVolume(Math.round(volume * 100));
+  if (muted) yt.mute();
+  else yt.unMute();
+}
+
+/** Plays a YouTube link through YouTube's own player. Nothing is probed,
+ * remuxed or downloaded: the party is synchronised against the iframe's clock
+ * exactly as it is against a <video>'s. */
+function loadYouTube(videoId: string): void {
+  ytId = videoId;
+  ytPos = 0;
+  ytPaused = true;
+  ytDuration = 0;
+  emit({ kind: "tracks", tracks: [] });
+  if (ytHost) void buildYt(ytHost, videoId);
 }
 
 export async function load(url: string): Promise<void> {
@@ -314,6 +540,9 @@ export async function load(url: string): Promise<void> {
 
 async function loadInner(url: string): Promise<void> {
   await closeSession();
+  destroyYt();
+  ytId = null;
+  emit({ kind: "title", title: null });
   stalled = false;
   seekPending = false;
   offsetSec = 0;
@@ -326,6 +555,15 @@ async function loadInner(url: string): Promise<void> {
   subs.clear();
   currentSubId = "no";
   subDelaySec = 0;
+
+  const videoId = youtubeId(url);
+  if (videoId) {
+    // The <video> keeps whatever it last played otherwise, and would go on
+    // playing it underneath the iframe.
+    stopHtml();
+    loadYouTube(videoId);
+    return;
+  }
   if (!htmlVideo) return;
 
   let opened: OpenResult;
@@ -470,6 +708,13 @@ async function attachHls(
 // ---- transport -----------------------------------------------------------
 
 export async function setPause(paused: boolean): Promise<void> {
+  if (ytId) {
+    ytPaused = paused;
+    if (!ytReady) return;
+    if (paused) yt?.pauseVideo();
+    else yt?.playVideo();
+    return;
+  }
   if (!htmlVideo) return;
   if (paused) {
     htmlVideo.pause();
@@ -515,6 +760,11 @@ function scheduleReopen(target: number) {
 }
 
 export async function seek(sec: number): Promise<void> {
+  if (ytId) {
+    ytPos = Math.max(0, sec);
+    if (ytReady) yt?.seekTo(ytPos, true);
+    return;
+  }
   const v = htmlVideo;
   if (!v) return;
   // Clamped to the source: near the end, a follower's projected target can
@@ -548,7 +798,26 @@ export async function seek(sec: number): Promise<void> {
 
 export async function setSpeed(newRate: number): Promise<void> {
   rate = newRate;
+  if (ytId) {
+    if (ytReady) yt?.setPlaybackRate(newRate);
+    return;
+  }
   if (htmlVideo) htmlVideo.playbackRate = newRate;
+}
+
+/** Local, not party state: it is about this room, not about the film. Lives here
+ * because which player is making the sound is this module's business. */
+export function setVolume(nextVolume: number, nextMuted: boolean): void {
+  volume = nextVolume;
+  muted = nextMuted;
+  if (ytId) {
+    applyYtVolume();
+    return;
+  }
+  if (htmlVideo) {
+    htmlVideo.volume = nextVolume;
+    htmlVideo.muted = nextMuted;
+  }
 }
 
 // ---- tracks --------------------------------------------------------------
@@ -612,6 +881,7 @@ function buildTracks(): TrackInfo[] {
  * — debounced, gated by `busy()` — so nothing new is needed to make it safe.
  */
 export async function setAudioTrack(id: AudioTrackId): Promise<void> {
+  if (ytId) return;
   if (!probe) return;
   const count = streamsOf(probe, "audio").length;
   if (count === 0) return;
@@ -797,12 +1067,10 @@ export async function addSubtitle(name: string, bytes: Uint8Array): Promise<numb
 }
 
 export function teardown(): Promise<void> {
-  if (htmlVideo) {
-    htmlVideo.pause();
-    for (const el of Array.from(htmlVideo.querySelectorAll("track"))) el.remove();
-    htmlVideo.removeAttribute("src");
-    htmlVideo.load();
-  }
+  destroyYt();
+  ytId = null;
+  ytHost = null;
+  stopHtml();
   if (subObjectUrl) {
     URL.revokeObjectURL(subObjectUrl);
     subObjectUrl = null;

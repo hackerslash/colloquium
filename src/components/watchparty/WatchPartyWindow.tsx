@@ -3,16 +3,25 @@ import { createPortal } from "react-dom";
 import {
   AudioLines,
   Crown,
+  Disc3,
   Film,
   LogOut,
   Maximize,
+  Maximize2,
+  Mic,
+  MicOff,
   Minimize,
+  Minimize2,
+  Minus,
+  Move,
   Pause,
   Play,
   RotateCcw,
   RotateCw,
   Subtitles,
   Users,
+  Video,
+  VideoOff,
   Volume2,
   VolumeX,
   X,
@@ -34,9 +43,14 @@ import {
 } from "./PlayerChrome";
 import { PresenceRail } from "./PresenceRail";
 import { Scrubber } from "./Scrubber";
+import { VideoTile } from "../call/VideoTile";
+import { tileColumn, tileGrid, tileTracks } from "../call/tileGrid";
+import { hasLiveVideo } from "../../lib/mediaTracks";
 import { enterFullscreen, exitFullscreen } from "../../lib/fullscreen";
 import { formatClock } from "../../lib/time";
 import { cx } from "../../lib/cx";
+import { useDraggable } from "../../hooks/useDraggable";
+import { youtubeId } from "../../services/watchparty/youtube";
 
 /** How long the pointer must rest before the chrome gets out of the way. */
 const IDLE_MS = 2_600;
@@ -82,6 +96,59 @@ function PrimingOverlay() {
   );
 }
 
+/** How far the player is grown, and cropped back, top and bottom. `controls=0`
+ * takes YouTube's transport away but not the row it keeps beside it — "More
+ * videos", the speed, the logo, fullscreen — nor the title bar at the top. Both
+ * are pinned to the player's own edges, so a taller player with its edges
+ * outside the box takes them out of sight. What is cropped is the letterbox the
+ * extra height creates, not the picture: the video is sized to the width of a
+ * 16:9 box, and stays that size however tall the player around it is.
+ *
+ * ponytail: true for 16:9 sources, which is nearly all of YouTube. A portrait
+ * video is sized by height instead and does lose its top and bottom to this —
+ * crop only the bottom, and wear the title bar, if that ever matters. */
+const PLAYER_CROP_PX = 96;
+
+/** YouTube's iframe player: the picture on the stage, and in audio mode the
+ * sound behind the record. Hidden by opacity rather than by unmounting or by
+ * display:none — an iframe reloads when it moves, and a zero-size or undisplayed
+ * player is one browsers are entitled to stop. */
+function YouTubePlayer({
+  visible,
+  onStageClick,
+}: {
+  visible: boolean;
+  onStageClick: (e: React.MouseEvent) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    player.attachYouTube(hostRef.current);
+    return () => player.attachYouTube(null);
+  }, []);
+  return (
+    <div
+      aria-hidden={!visible}
+      className={cx(
+        "pointer-events-none absolute inset-0 flex items-center justify-center",
+        !visible && "opacity-0",
+      )}
+    >
+      <div className="relative aspect-video max-h-full w-full max-w-full overflow-hidden">
+        <div
+          ref={hostRef}
+          className="absolute inset-x-0 [&>iframe]:h-full [&>iframe]:w-full"
+          style={{ top: -PLAYER_CROP_PX, bottom: -PLAYER_CROP_PX }}
+        />
+        {/* The player must never see a pointer: hovering it is what summons the
+            chrome, and `pointer-events: none` on the iframe did not hold. This
+            takes the clicks instead and gives them to the stage, which is where
+            play, pause and fullscreen already live. */}
+        {visible && <div className="pointer-events-auto absolute inset-0" onClick={onStageClick} />}
+      </div>
+    </div>
+  );
+}
+
 /**
  * The film. Everything drawn here sits on black in both themes, so its text is
  * light-on-dark rather than token-themed — `text-text-primary` would be near
@@ -90,9 +157,11 @@ function PrimingOverlay() {
  */
 function Stage({
   videoRef,
+  audioMode,
   onStageClick,
 }: {
   videoRef: React.RefObject<HTMLVideoElement | null>;
+  audioMode: boolean;
   onStageClick: (e: React.MouseEvent) => void;
 }) {
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
@@ -104,6 +173,7 @@ function Stage({
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
   const controller = selfIsController();
+  const ytId = streamUrl ? youtubeId(streamUrl) : null;
   const urlRef = useRef<HTMLInputElement>(null);
   // How the source is being played ("Remuxing", "Transcoding"…), which is what
   // explains a slow start.
@@ -155,9 +225,14 @@ function Stage({
         playsInline
       />
 
+      {ytId && <YouTubePlayer visible={!audioMode} onStageClick={onStageClick} />}
+
       {gated && !error && <PrimingOverlay />}
 
-      {buffering && !gated && !blocked && !error && (
+      {/* Not for a YouTube source: its player spins its own, in the same
+          place, and the label under ours would read "YouTube…" — a pipeline
+          note for a pipeline that isn't running. */}
+      {buffering && !ytId && !gated && !blocked && !error && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3">
           <span
             className="h-9 w-9 animate-spin rounded-full border-2 border-white/25 border-t-accent motion-reduce:animate-none"
@@ -288,9 +363,271 @@ function PartyPresence() {
   );
 }
 
+/** Decorative spectrogram. `active` gates both "should move" and the film's own
+ * play state — when it is false the bars sit low and still. Durations/delays are
+ * derived from the index so they stagger without a random source. */
+function Equalizer({
+  active,
+  count,
+  className,
+  barClassName,
+}: {
+  active: boolean;
+  count: number;
+  className?: string;
+  barClassName?: string;
+}) {
+  return (
+    <div className={cx("flex items-end justify-center gap-[3px]", className)} aria-hidden="true">
+      {Array.from({ length: count }).map((_, i) =>
+        active ? (
+          <span
+            key={i}
+            className={cx("eq-bar h-full rounded-full bg-accent", barClassName)}
+            style={
+              {
+                "--eq-dur": `${0.6 + ((i * 37) % 70) / 100}s`,
+                "--eq-delay": `${((i * 53) % 60) / 100}s`,
+              } as React.CSSProperties
+            }
+          />
+        ) : (
+          <span
+            key={i}
+            className={cx("h-full origin-bottom rounded-full bg-accent/70", barClassName)}
+            style={{ transform: "scaleY(0.3)" }}
+          />
+        ),
+      )}
+    </div>
+  );
+}
+
+/** The audio-mode turntable: a spinning record that freezes when the film is
+ * paused, standing in for the picture we're no longer showing. The tonearm
+ * rides the outer grooves while it plays and swings back to its rest when it
+ * stops, so play state reads from across the room. */
+function Disc({ spinning }: { spinning: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 140 128"
+      className="h-28 w-[7.7rem] shrink-0 drop-shadow-[0_0_45px_rgba(0,0,0,0.5)]"
+      role="img"
+      aria-label={spinning ? "Record playing" : "Record paused"}
+    >
+      <g className={cx("gramo-record", !spinning && "[animation-play-state:paused]")}>
+        <circle cx="56" cy="64" r="54" fill="#141414" stroke="rgba(255,255,255,0.08)" />
+        <circle cx="56" cy="64" r="44" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="56" cy="64" r="34" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <circle cx="56" cy="64" r="24" fill="none" stroke="rgba(255,255,255,0.06)" />
+        <line x1="56" y1="64" x2="56" y2="10" stroke="rgba(255,255,255,0.10)" strokeWidth="1.5" />
+        <circle cx="56" cy="64" r="15" fill="var(--color-accent)" />
+        <circle cx="56" cy="64" r="2.5" fill="#000" />
+      </g>
+
+      {/* The rest post the arm parks on. */}
+      <rect x="124" y="54" width="8" height="18" rx="4" fill="#1b1b1b" stroke="rgba(255,255,255,0.08)" />
+
+      {/* Drawn in the playing position; parked is the same arm rotated about
+          its pivot — see .gramo-tonearm in globals.css. */}
+      <g className={cx("gramo-tonearm", !spinning && "gramo-tonearm--parked")}>
+        <circle cx="120" cy="26" r="8" fill="#1b1b1b" stroke="rgba(255,255,255,0.12)" />
+        <circle cx="128" cy="21" r="4.5" fill="#242424" stroke="rgba(255,255,255,0.10)" />
+        <line
+          x1="120"
+          y1="26"
+          x2="90"
+          y2="44"
+          stroke="rgba(255,255,255,0.55)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        />
+        <circle cx="90" cy="44" r="3.2" fill="var(--color-accent)" />
+      </g>
+    </svg>
+  );
+}
+
+/** The faces when nobody has joined the call yet: big highlighted avatars, each
+ * with its own spectrogram, so the room still reads as a shared listening space
+ * before any camera is live. */
+function IdleFaces({ paused }: { paused: boolean }) {
+  const members = useWatchPartyStore((s) => s.members);
+  const controllerId = useWatchPartyStore((s) => s.controllerId);
+  const self = useIdentityStore((s) => s.self);
+  const contactsById = useRosterStore((s) => s.contactsById);
+
+  return (
+    <div className="relative flex max-w-4xl flex-wrap items-start justify-center gap-x-8 gap-y-8">
+      {members.map((m) => {
+        const name =
+          m.id === self?.identityId
+            ? (self?.displayName ?? "You")
+            : (contactsById[m.id]?.displayName ?? "Guest");
+        const isController = m.id === controllerId;
+        return (
+          <div key={m.id} className="flex w-24 flex-col items-center gap-2.5">
+            <div className="relative">
+              <span className="relative inline-flex rounded-full p-1 ring-2 ring-white/15">
+                <Avatar id={m.id} name={name} size="xl" />
+              </span>
+              {isController && (
+                <span
+                  className="absolute -top-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-accent text-accent-ink ring-4 ring-black"
+                  aria-label="Controlling playback"
+                >
+                  <Crown size={13} aria-hidden="true" />
+                </span>
+              )}
+            </div>
+            <Equalizer active={!paused} count={5} className="h-4 w-12 opacity-80" barClassName="w-1" />
+            <span className="w-full truncate text-sm font-medium text-white">{name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Audio mode. Covers the picture — the `<video>` keeps playing underneath, so
+ * the sound and the sync loop never stop. It's a normal call grid dressed in
+ * audio chrome: a spinning record, a spectrogram, and the room's own cameras
+ * front and centre. Falls back to highlighted faces before anyone joins. */
+function AudioStage({ paused }: { paused: boolean }) {
+  const roomId = useWatchPartyStore((s) => s.roomId);
+  const streamUrl = useWatchPartyStore((s) => s.streamUrl);
+  const videoTitle = useWatchPartyStore((s) => s.videoTitle);
+  const self = useIdentityStore((s) => s.self);
+  const contactsById = useRosterStore((s) => s.contactsById);
+
+  const callRoomId = useRoomCallStore((s) => s.roomId);
+  const participants = useRoomCallStore((s) => s.participants);
+  const streams = useRoomCallStore((s) => s.streamsByParticipant);
+  const camOnByParticipant = useRoomCallStore((s) => s.camOnByParticipant);
+  const qualityByParticipant = useRoomCallStore((s) => s.qualityByParticipant);
+  const localStream = useRoomCallStore((s) => s.localStream);
+  const micOn = useRoomCallStore((s) => s.micOn);
+  const camOn = useRoomCallStore((s) => s.camOn);
+  const speakingIds = useRoomCallStore((s) => s.speakingIds);
+  useRoomCallStore((s) => s.mediaVersion);
+
+  const inCall = callRoomId === roomId;
+  let host = "";
+  try {
+    host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
+  } catch {
+    host = "";
+  }
+
+  const nameOf = (id: string) =>
+    id === self?.identityId ? (self?.displayName ?? "You") : (contactsById[id]?.displayName ?? "Guest");
+  const { cols, rows } = tileGrid(participants.length);
+
+  return (
+    <div
+      className="absolute inset-0 flex flex-col items-center gap-6 overflow-y-auto px-4 pt-20 pb-32"
+      style={{ background: "radial-gradient(120% 90% at 50% 25%, #17070d 0%, #000 62%, #08040c 100%)" }}
+    >
+      <span
+        className="pointer-events-none absolute top-1/4 left-1/2 h-[40rem] w-[40rem] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/20 blur-[120px]"
+        aria-hidden="true"
+      />
+
+      {/* Audio chrome: the record and the caption. */}
+      <div className="relative flex shrink-0 flex-col items-center gap-3">
+        <Disc spinning={!paused} />
+        <div className="flex max-w-lg flex-col items-center gap-0.5">
+          <p className="font-display text-xl leading-none text-white">Listening together</p>
+          {(videoTitle ?? host) && (
+            <p className="text-center text-[11px] tracking-wide text-balance text-white/45">
+              {videoTitle ?? host}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Mic / camera / leave — the rail is hidden in audio mode, so its
+          controls move here. */}
+      <div className="relative shrink-0">
+        {inCall ? (
+          <div className="flex items-center gap-1 rounded-full bg-black/55 p-1 ring-1 ring-white/10 backdrop-blur-md">
+            <ChromeButton
+              icon={micOn ? Mic : MicOff}
+              label={micOn ? "Mute" : "Unmute"}
+              onClick={() => useRoomCallStore.getState().toggleMic()}
+              className={cx(!micOn && "text-danger hover:text-danger")}
+            />
+            <ChromeButton
+              icon={camOn ? Video : VideoOff}
+              label={camOn ? "Turn camera off" : "Turn camera on"}
+              onClick={() => void useRoomCallStore.getState().toggleCam()}
+            />
+            <ChromeButton
+              icon={LogOut}
+              label="Leave call"
+              onClick={() => useRoomCallStore.getState().leave()}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => roomId && void useRoomCallStore.getState().join(roomId)}
+            className="flex items-center gap-2 rounded-full bg-black/55 px-4 py-2.5 text-sm font-medium text-white/90 ring-1 ring-white/10 backdrop-blur-md transition-colors hover:bg-black/70 hover:text-white"
+          >
+            <Video size={15} aria-hidden="true" className="shrink-0 text-accent" />
+            Join with camera &amp; mic
+          </button>
+        )}
+      </div>
+
+      {/* The room's cameras, large — a normal call grid. Rows divide the
+          available height so the grid never spills past the transport bar. */}
+      {inCall && participants.length > 0 ? (
+        <div
+          className="relative grid min-h-0 w-full max-w-6xl flex-1 gap-3"
+          style={tileTracks(cols, rows)}
+        >
+          {participants.map((id, i) => {
+            const stream = id === self?.identityId ? localStream : (streams[id] ?? null);
+            const hasVideo =
+              id === self?.identityId
+                ? camOn
+                : hasLiveVideo(stream) && camOnByParticipant[id] !== false;
+            return (
+              <div
+                key={id}
+                className="min-h-0 min-w-0"
+                style={{ gridColumn: tileColumn(i, participants.length, cols) }}
+              >
+                <VideoTile
+                  stream={stream}
+                  // The presence rail is playing these same streams underneath.
+                  muted
+                  mirror={id === self?.identityId}
+                  label={nameOf(id)}
+                  participantId={id}
+                  quality={id === self?.identityId ? undefined : qualityByParticipant[id]}
+                  hasVideo={hasVideo}
+                  speaking={speakingIds.has(id)}
+                  fit="fill"
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="relative flex flex-1 items-center">
+          <IdleFaces paused={paused} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function WatchPartyWindow() {
   const active = useWatchPartyStore((s) => s.active);
   const streamUrl = useWatchPartyStore((s) => s.streamUrl);
+  const videoTitle = useWatchPartyStore((s) => s.videoTitle);
   const paused = useWatchPartyStore((s) => s.paused);
   const positionSec = useWatchPartyStore((s) => s.positionSec);
   const durationSec = useWatchPartyStore((s) => s.durationSec);
@@ -338,6 +675,59 @@ export function WatchPartyWindow() {
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [railShown, setRailShown] = useState(true);
+  const [audioMode, setAudioMode] = useState(false);
+
+  // Window chrome — floating keeps chat accessible, minimized keeps a PIP
+  type WindowState = "floating" | "minimized" | "maximized";
+  const [windowState, setWindowState] = useState<WindowState>("floating");
+  const { pos, dragRef, headerProps } = useDraggable();
+  const [size, setSize] = useState<{ w: number; h: number }>({
+    w: Math.min(960, Math.max(480, typeof window !== "undefined" ? Math.floor(window.innerWidth * 0.62) : 960)),
+    h: Math.min(640, Math.max(360, typeof window !== "undefined" ? Math.floor(window.innerHeight * 0.62) : 600)),
+  });
+  const resizingRef = useRef<null | { dir: "e" | "s" | "se"; startX: number; startY: number; startW: number; startH: number }>(null);
+
+  function toggleMaximize() {
+    setWindowState((s) => (s === "maximized" ? "floating" : "maximized"));
+  }
+  function toggleMinimize() {
+    setWindowState((s) => (s === "minimized" ? "floating" : "minimized"));
+  }
+  function onResizeStart(dir: "e" | "s" | "se") {
+    return (e: React.PointerEvent) => {
+      e.preventDefault();
+      resizingRef.current = { dir, startX: e.clientX, startY: e.clientY, startW: size.w, startH: size.h };
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    };
+  }
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      const r = resizingRef.current;
+      if (!r) return;
+      const dx = e.clientX - r.startX;
+      const dy = e.clientY - r.startY;
+      let nw = r.startW;
+      let nh = r.startH;
+      if (r.dir === "e" || r.dir === "se") nw = r.startW + dx;
+      if (r.dir === "s" || r.dir === "se") nh = r.startH + dy;
+      const minW = 360;
+      const minH = 260;
+      const maxW = window.innerWidth - 24;
+      const maxH = window.innerHeight - 24;
+      nw = Math.max(minW, Math.min(nw, maxW));
+      nh = Math.max(minH, Math.min(nh, maxH));
+      setSize({ w: nw, h: nh });
+    }
+    function onUp() {
+      resizingRef.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [size.w, size.h]);
 
   const controller = selfIsController();
 
@@ -390,10 +780,7 @@ export function WatchPartyWindow() {
 
   // Volume is deliberately local: it is about this room, not about the party.
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.muted = muted;
-    v.volume = volume;
+    player.setVolume(volume, muted);
   }, [muted, volume]);
 
   // Player shortcuts. Transport keys are controller-only — a follower pressing
@@ -449,6 +836,52 @@ export function WatchPartyWindow() {
     if (sourceOpen) sourceRef.current?.focus();
   }, [sourceOpen]);
 
+  // Keep the fullscreen DOM target stable — the container itself is fullscreened.
+  // Must be before any early return (Rules of Hooks).
+  const setRefs = useCallback(
+    (el: HTMLDivElement | null) => {
+      (rootRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+      (dragRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+    },
+    [dragRef],
+  );
+
+  const isMinimized = windowState === "minimized";
+  const isMaximized = windowState === "maximized";
+  const isFloating = windowState === "floating";
+
+  let containerStyle: React.CSSProperties = {};
+  if (isMaximized) {
+    containerStyle = { position: "fixed", inset: "12px", zIndex: 40 };
+  } else if (isMinimized) {
+    containerStyle = {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      width: "360px",
+      height: "220px",
+      zIndex: 40,
+    };
+  } else if (pos) {
+    containerStyle = {
+      position: "fixed",
+      left: `${pos.x}px`,
+      top: `${pos.y}px`,
+      width: `${size.w}px`,
+      height: `${size.h}px`,
+      zIndex: 40,
+    };
+  } else {
+    containerStyle = {
+      position: "fixed",
+      bottom: "24px",
+      right: "24px",
+      width: `${size.w}px`,
+      height: `${size.h}px`,
+      zIndex: 40,
+    };
+  }
+
   if (!active) return null;
 
   const isOwner = !!self && ownerId === self.identityId;
@@ -459,7 +892,8 @@ export function WatchPartyWindow() {
 
   // Chrome stays up while paused, while there is nothing to watch, and while the
   // pointer or focus is inside it — hiding a menu mid-interaction is hostile.
-  const chromeShown = !idle || paused || !streamUrl || holdChrome || sourceOpen;
+  // Audio mode has no picture to get out of the way of, so the controls stay.
+  const chromeShown = !idle || paused || !streamUrl || holdChrome || sourceOpen || audioMode;
   const transportOff = !controller || !streamUrl;
 
   const audio = tracks.filter((t) => t.type === "audio");
@@ -510,47 +944,77 @@ export function WatchPartyWindow() {
     setSourceOpen(false);
   };
 
+  // Unified portal — single <video> stays mounted so minimize never tears down playback.
+  // audio keeps playing because Stage is never unmounted.
   return createPortal(
     <div
-      ref={rootRef}
-      className={cx("fixed inset-0 z-40 bg-black", !chromeShown && "cursor-none")}
-      onPointerMove={wake}
-      onPointerDown={wake}
+      ref={setRefs}
+      style={containerStyle}
+      className={cx(
+        "flex flex-col overflow-hidden bg-black shadow-2xl",
+        isMinimized && "rounded-2xl border border-white/10",
+        isFloating && "rounded-2xl border border-white/10",
+        isMaximized && "rounded-2xl border border-white/10",
+        !isMinimized && !chromeShown && "cursor-none",
+      )}
+      onPointerMove={!isMinimized ? wake : undefined}
+      onPointerDown={!isMinimized ? wake : undefined}
     >
-      <Stage videoRef={videoRef} onStageClick={onStageClick} />
-
-      <PresenceRail roomId={roomId} visible={railShown} />
-
-      <div
-        onPointerEnter={() => setHoldChrome(true)}
-        onPointerLeave={() => setHoldChrome(false)}
-        onFocus={() => setHoldChrome(true)}
-        onBlur={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setHoldChrome(false);
-        }}
-        className={cx(
-          "pointer-events-none absolute inset-0 z-20 flex flex-col justify-between transition-opacity duration-200 motion-reduce:transition-none",
-          chromeShown ? "opacity-100" : "opacity-0",
-        )}
-      >
-        {/* Session — who is here, who is driving, how to get out. */}
-        <header className="pointer-events-auto flex flex-col gap-2 bg-gradient-to-b from-black/75 to-transparent px-4 pt-3 pb-10">
+      {/* Header — compact when minimized, draggable when floating/maximized */}
+      {isMinimized ? (
+        <header
+          {...headerProps}
+          onDoubleClick={toggleMaximize}
+          className="flex h-8 shrink-0 items-center justify-between bg-black px-2 select-none cursor-grab active:cursor-grabbing"
+        >
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Move size={12} className="shrink-0 text-white/40" aria-hidden="true" />
+            <span className="truncate text-xs font-semibold text-white">
+              {audioMode ? "Listen party" : "Watch party"} · {members.length} watching
+            </span>
+          </div>
+          <div className="flex items-center gap-1 shrink-0" data-nodrag>
+            <button
+              onClick={toggleMinimize}
+              aria-label="Expand party"
+              title="Expand"
+              className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+            >
+              <Maximize2 size={12} />
+            </button>
+            <button
+              onClick={isOwner ? end : leave}
+              aria-label={isOwner ? "End party" : "Leave party"}
+              title={isOwner ? "End party" : "Leave"}
+              className="flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-white/70 hover:bg-danger hover:text-white transition-colors"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        </header>
+      ) : (
+        <div
+          {...(isMaximized ? {} : headerProps)}
+          onDoubleClick={toggleMaximize}
+          className={cx(
+            "flex shrink-0 flex-col gap-2 bg-black px-3 py-2 border-b border-white/10 select-none z-30",
+            !isMaximized && "cursor-grab active:cursor-grabbing",
+          )}
+        >
           <div className="flex items-center gap-3">
-            <div className="flex min-w-0 items-center gap-3 overflow-hidden">
+            <div className="flex min-w-0 items-center gap-2.5 overflow-hidden">
+              {!isMaximized && <Move size={12} className="shrink-0 text-white/30" aria-hidden="true" />}
               <span className="flex shrink-0 items-center gap-2 text-sm font-semibold text-white">
                 <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden="true" />
-                Watch party
+                {audioMode ? "Listen party" : "Watch party"}
               </span>
-              <ChromeChip>
-                {members.length === 1 ? "Just you" : `${members.length} watching`}
-              </ChromeChip>
+              <ChromeChip>{members.length === 1 ? "Just you" : `${members.length} watching`}</ChromeChip>
               <PartyPresence />
               <ChromeChip tone={controller ? "accent" : "neutral"}>
                 {controller ? "You control playback" : `${controllerName} is controlling`}
               </ChromeChip>
             </div>
-
-            <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <div className="ml-auto flex shrink-0 items-center gap-1.5" data-nodrag>
               {controller && members.length > 1 && (
                 <PlayerMenu
                   icon={Crown}
@@ -584,11 +1048,26 @@ export function WatchPartyWindow() {
                   Leave
                 </ChromeTextButton>
               )}
+              <button
+                onClick={toggleMinimize}
+                aria-label="Minimize party"
+                title="Minimize to picture-in-picture"
+                className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                <Minus size={14} />
+              </button>
+              <button
+                onClick={toggleMaximize}
+                aria-label={isMaximized ? "Restore" : "Maximize"}
+                title={isMaximized ? "Restore" : "Maximize"}
+                className="flex h-6 w-6 items-center justify-center rounded-md text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+              </button>
             </div>
           </div>
-
           {sourceOpen && (
-            <div className="flex max-w-2xl items-center gap-2">
+            <div className="flex max-w-2xl items-center gap-2" data-nodrag>
               <input
                 ref={sourceRef}
                 type="url"
@@ -606,8 +1085,108 @@ export function WatchPartyWindow() {
               <ChromeTextButton onClick={() => setSourceOpen(false)}>Cancel</ChromeTextButton>
             </div>
           )}
-        </header>
+        </div>
+      )}
 
+      <div className="relative flex-1 min-h-0 overflow-hidden bg-black">
+        {/* Single persistent video — never unmounted, so minimize doesn't teardown player */}
+        <Stage
+          videoRef={videoRef}
+          audioMode={audioMode}
+          onStageClick={isMinimized ? () => setWindowState("floating") : onStageClick}
+        />
+
+        {!isMinimized && audioMode && streamUrl && <AudioStage paused={paused} />}
+
+        {/* Never unmounted: these tiles are what plays the room's voices, and
+            a hidden tile still plays. Mounting them only when they are on
+            screen cut the call every time the party was minimized. */}
+        <PresenceRail roomId={roomId} visible={railShown && !audioMode && !isMinimized} />
+
+        {/* Minimized PIP overlay — compact, keeps audio playing */}
+        {isMinimized && (
+          <>
+            {audioMode && streamUrl ? (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-3 cursor-pointer"
+                style={{ background: "radial-gradient(120% 90% at 50% 25%, #17070d 0%, #000 62%, #08040c 100%)" }}
+                onClick={() => setWindowState("floating")}
+              >
+                <span className="pointer-events-none absolute top-1/4 left-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/15 blur-[40px]" aria-hidden="true" />
+                <div className="relative scale-[0.62] origin-center pointer-events-none -my-2">
+                  <Disc spinning={!paused} />
+                </div>
+                <p className="relative text-xs font-medium text-white">Listening together</p>
+                {(() => {
+                  let host = "";
+                  try {
+                    host = streamUrl ? new URL(streamUrl).hostname.replace(/^www\./, "") : "";
+                  } catch {
+                    host = "";
+                  }
+                  const label = videoTitle ?? host;
+                  return label ? <p className="relative text-[10px] tracking-wide text-white/40 -mt-1 truncate max-w-full">{label}</p> : null;
+                })()}
+                <div className="relative mt-1 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!transportOff) togglePlay();
+                    }}
+                    disabled={transportOff}
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 disabled:opacity-40 transition-colors"
+                    aria-label={paused ? "Play" : "Pause"}
+                  >
+                    {paused ? <Play size={12} className="ml-0.5" /> : <Pause size={12} />}
+                  </button>
+                  <span className="text-[11px] tabular-nums text-white/70">
+                    {formatClock(positionSec)} <span className="text-white/30">/ {formatClock(durationSec)}</span>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div
+                className="absolute inset-0 cursor-pointer"
+                onClick={() => setWindowState("floating")}
+              >
+                <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
+                <div className="absolute bottom-0 left-0 right-0 flex items-center gap-1.5 px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!transportOff) togglePlay();
+                    }}
+                    disabled={transportOff}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white text-black hover:bg-white/90 disabled:opacity-40 transition-colors"
+                    aria-label={paused ? "Play" : "Pause"}
+                  >
+                    {paused ? <Play size={10} className="ml-0.5" /> : <Pause size={10} />}
+                  </button>
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-white/90">
+                    {videoTitle ?? (streamUrl ? (() => { try { return new URL(streamUrl).hostname.replace(/^www\./, ""); } catch { return "Video"; } })() : "Nothing playing")}
+                  </span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-white/60">{formatClock(positionSec)}</span>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {!isMinimized && (
+          <div
+            onPointerEnter={() => setHoldChrome(true)}
+            onPointerLeave={() => setHoldChrome(false)}
+            onFocus={() => setHoldChrome(true)}
+            onBlur={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setHoldChrome(false);
+            }}
+            className={cx(
+              "pointer-events-none absolute inset-0 z-20 flex flex-col justify-end transition-opacity duration-200 motion-reduce:transition-none",
+              chromeShown ? "opacity-100" : "opacity-0",
+            )}
+          >
         {/* Transport — the film's own controls. */}
         <div className="pointer-events-auto bg-gradient-to-t from-black/85 via-black/55 to-transparent px-4 pt-10 pb-3">
           <Scrubber
@@ -743,12 +1322,22 @@ export function WatchPartyWindow() {
                 onSelect={(v) => setRate(Number(v))}
               />
 
-              <ChromeButton
-                icon={Users}
-                label={railShown ? "Hide cameras" : "Show cameras"}
-                onClick={() => setRailShown((p) => !p)}
-                className={cx(railShown && "bg-white/15 text-white")}
-              />
+              {streamUrl && (
+                <ChromeButton
+                  icon={Disc3}
+                  label={audioMode ? "Back to video" : "Audio mode"}
+                  onClick={() => setAudioMode((a) => !a)}
+                  className={cx(audioMode && "bg-white/15 text-white")}
+                />
+              )}
+              {!audioMode && (
+                <ChromeButton
+                  icon={Users}
+                  label={railShown ? "Hide cameras" : "Show cameras"}
+                  onClick={() => setRailShown((p) => !p)}
+                  className={cx(railShown && "bg-white/15 text-white")}
+                />
+              )}
               <ChromeButton
                 icon={fullscreen ? Minimize : Maximize}
                 label={fullscreen ? "Exit full screen" : "Full screen"}
@@ -758,6 +1347,31 @@ export function WatchPartyWindow() {
           </div>
         </div>
       </div>
+        )}
+      </div>
+
+      {/* Resize handles — floating only; maximized/fullscreen use inset sizing */}
+      {isFloating && !fullscreen && (
+        <>
+          <div
+            onPointerDown={onResizeStart("s")}
+            className="absolute bottom-0 left-3 right-3 h-2 cursor-ns-resize touch-none"
+            aria-hidden="true"
+          />
+          <div
+            onPointerDown={onResizeStart("e")}
+            className="absolute right-0 top-3 bottom-3 w-2 cursor-ew-resize touch-none"
+            aria-hidden="true"
+          />
+          <div
+            onPointerDown={onResizeStart("se")}
+            className="absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize touch-none"
+            aria-hidden="true"
+          >
+            <span className="absolute bottom-1 right-1 h-2 w-2 rounded-sm border-r-2 border-b-2 border-white/20" />
+          </div>
+        </>
+      )}
 
       <input
         ref={fileRef}

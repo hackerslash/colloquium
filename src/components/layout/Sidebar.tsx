@@ -8,7 +8,9 @@ import {
   Mic,
   MicOff,
   Plus,
+  Search,
   Settings,
+  ShieldCheck,
   Video,
   Volume2,
   X,
@@ -23,6 +25,8 @@ import { Avatar } from "../ui/Avatar";
 import { UnreadBadge } from "../ui/Badge";
 import { IconButton } from "../ui/IconButton";
 import { cx } from "../../lib/cx";
+import { copyText } from "../../lib/clipboard";
+import { toast } from "../../stores/useToastStore";
 
 export type Selection =
   | { kind: "home" }
@@ -34,6 +38,7 @@ type SidebarProps = {
   onSelect: (selection: Selection) => void;
   onCreateGroup: () => void;
   onOpenSettings: () => void;
+  onOpenSearch: () => void;
 };
 
 function shortId(identityId: string): string {
@@ -70,6 +75,7 @@ export function Sidebar({
   onSelect,
   onCreateGroup,
   onOpenSettings,
+  onOpenSearch,
 }: SidebarProps) {
   const self = useIdentityStore((s) => s.self);
   const contactsById = useRosterStore((s) => s.contactsById);
@@ -122,13 +128,17 @@ export function Sidebar({
     };
   }, [callParticipantsByRoom, groupRooms]);
 
-  function copyId() {
+  async function copyId() {
     if (!self) return;
-    void navigator.clipboard.writeText(self.identityId).then(() => {
+    const ok = await copyText(self.identityId);
+    if (ok) {
       setCopied(true);
+      toast.success("ID copied to clipboard");
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
-    });
+    } else {
+      toast.error("Copy failed", "Couldn't copy to clipboard.");
+    }
   }
 
   return (
@@ -383,6 +393,13 @@ export function Sidebar({
                 >
                   {contact.displayName}
                 </span>
+                {contact.verifiedAt && (
+                  <ShieldCheck
+                    size={12}
+                    className="shrink-0 text-success"
+                    aria-label="Safety number verified"
+                  />
+                )}
                 {muted && (
                   <BellOff size={12} className="shrink-0 text-text-muted" aria-label="Muted" />
                 )}
@@ -440,6 +457,7 @@ export function Sidebar({
           type="button"
           onClick={() => void setSnooze(null)}
           title="Resume notifications"
+          aria-label="Resume notifications"
           className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-left transition-colors hover:border-accent/60"
         >
           <BellOff size={14} className="shrink-0 text-accent" aria-hidden="true" />
@@ -460,8 +478,10 @@ export function Sidebar({
           <Avatar id={self.identityId} name={self.displayName} size="md" />
         )}
         <button
+          type="button"
           onClick={copyId}
           title="Copy your ID"
+          aria-label={self ? `Copy your ID: ${self.displayName}` : "Copy your ID"}
           className="min-w-0 flex-1 text-left"
         >
           <span className="block truncate text-[14px] font-medium text-text-primary transition-colors hover:text-accent">
@@ -476,6 +496,7 @@ export function Sidebar({
             )}
           </span>
         </button>
+        <IconButton icon={Search} label="Search messages" onClick={onOpenSearch} />
         <IconButton icon={Settings} label="Settings" onClick={onOpenSettings} />
       </div>
     </nav>

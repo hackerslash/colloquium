@@ -3,6 +3,7 @@ import { Check, Copy, KeyRound, UserPlus, Sparkles } from "lucide-react";
 import { useRosterStore } from "../../stores/useRosterStore";
 import { Button } from "../ui/Button";
 import { toast } from "../../stores/useToastStore";
+import { copyText } from "../../lib/clipboard";
 
 export function HomeView() {
   const createInvite = useRosterStore((s) => s.createInvite);
@@ -32,10 +33,14 @@ export function HomeView() {
 
   async function handleCopy() {
     if (!inviteLink) return;
-    await navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
-    clearTimeout(copiedTimer.current);
-    copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
+    const ok = await copyText(inviteLink);
+    if (ok) {
+      setCopied(true);
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
+    } else {
+      toast.error("Copy failed", "Couldn't copy to clipboard.");
+    }
   }
 
   async function handleJoin(e: React.FormEvent) {
@@ -119,6 +124,7 @@ export function HomeView() {
               value={joinInput}
               onChange={(e) => setJoinInput(e.target.value)}
               rows={2}
+              aria-label="Invite string"
               placeholder="Paste invite string here..."
               className="w-full resize-none rounded-[16px] border border-border bg-bg-primary p-4 font-mono text-[12px] text-text-primary outline-none transition-all placeholder:text-text-muted focus:border-accent focus:ring-1 focus:ring-accent"
             />

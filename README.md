@@ -27,7 +27,7 @@ sign up for.
 
 **Chat**
 - Persistent text chat in direct messages and group rooms, with replies,
-  edit/delete, reactions, and typing indicators
+  edit/delete, reactions, pinned messages, and typing indicators
 - Markdown, @-mentions with autocomplete, an emoji picker, and animated emoji
 - Voice messages — record with pause/resume, review before sending, and each one
   carries its own waveform
@@ -45,6 +45,8 @@ sign up for.
 **Watch party**
 - Watch a local video file in sync with a room — one controller drives playback
   for everyone
+- Paste a YouTube link and it plays through YouTube's own player, in sync and
+  titled, with no download
 - Audio-track and subtitle selection follow the controller
 - Files that a browser engine can't play natively are remuxed on the fly by a
   bundled ffmpeg, so HEVC, AC3/E-AC3/DTS/TrueHD and multi-track files work
@@ -56,6 +58,8 @@ sign up for.
 - Desktop notifications with per-room mutes and a global snooze
 - Interface scaling (⌘+ / ⌘− / ⌘0) and a shortcut sheet (⌘/)
 - System tray, dark-first design
+- Optional start-at-login that launches straight to the tray, so your rooms
+  keep a peer online without a window open
 
 ## How it works
 
@@ -69,6 +73,11 @@ state — flows over WebRTC directly between them.
   is stored in the OS keychain (macOS Keychain / Windows Credential Manager),
   never on disk in the clear. Every message is signed, so authorship is
   verifiable rather than asserted.
+- **Verification** closes the one gap the broker leaves. Signatures prove a
+  message came from the key you hold — they can't prove that key is your
+  friend's, since invites travel over whatever channel you used to send them.
+  Each pair of contacts has a 60-digit safety number derived from both public
+  keys; compare it over a call or in person and a substituted key can't match.
 - **Storage** is local SQLite, encrypted at rest with SQLCipher using a key held
   in the same OS keychain.
 - **Transport** is WebRTC, so peer traffic is encrypted in transit (DTLS/SRTP) and

@@ -6,8 +6,17 @@ mod sysaudio;
 mod tray;
 
 use std::sync::Mutex;
-use tauri::{Manager, WindowEvent};
+use std::time::Duration;
+use tauri::{Emitter, Manager, WindowEvent};
 use tauri_plugin_window_state::StateFlags;
+
+/// Period of the `net-tick` event that drives peer discovery and heartbeats.
+/// Must match what the frontend's liveness timeouts assume.
+const NET_TICK_MS: u64 = 2_000;
+
+/// Launch flag we register with the autostart plugin, so a login-triggered
+/// start goes straight to the tray instead of popping the window open.
+const HIDDEN_ARG: &str = "--hidden";
 
 /// Mirrors the frontend's `closeToTray` setting so the window-close handler
 /// (which runs on the Rust side, ahead of any JS listener) knows whether to
@@ -21,9 +30,25 @@ struct CloseToTray(Mutex<bool>);
 /// strand the user with no way to reopen the window.
 struct TrayAvailable(bool);
 
+/// Whether this process was launched by the autostart entry (i.e. at login)
+/// rather than by the user. Read once from argv, since the frontend decides
+/// whether to reveal the window and can't see the process arguments itself.
+struct StartHidden(bool);
+
 #[tauri::command]
 fn set_close_to_tray(state: tauri::State<CloseToTray>, enabled: bool) {
     *state.0.lock().unwrap() = enabled;
+}
+
+/// Only honour the hidden launch if there's a tray to restore from — same
+/// reasoning as close-to-tray, since a hidden window with no tray icon leaves
+/// the user no way to reach the app at all.
+#[tauri::command]
+fn should_start_hidden(
+    hidden: tauri::State<StartHidden>,
+    tray: tauri::State<TrayAvailable>,
+) -> bool {
+    hidden.0 && tray.0
 }
 
 /// Grant the webview camera/mic access up front on Windows.
@@ -69,7 +94,7 @@ fn grant_media_capture(window: &tauri::WebviewWindow) -> tauri::Result<()> {
 pub fn run() {
     let mut builder = tauri::Builder::default();
 
-    #[cfg(desktop)]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -78,6 +103,14 @@ pub fn run() {
                 let _ = window.unminimize();
             }
         }));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![HIDDEN_ARG]),
+        ));
     }
 
     builder
@@ -89,6 +122,8 @@ pub fn run() {
         // actively picked in a native dialog are ever writable.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         // Migrations run in our own keyed pool inside `db::init` (below), not
         // via the plugin — see setup. The plugin is registered bare so its
         // execute/select commands resolve against the injected SQLCipher pool.
@@ -102,6 +137,7 @@ pub fn run() {
                 .build(),
         )
         .manage(CloseToTray(Mutex::new(true)))
+        .manage(StartHidden(std::env::args().any(|a| a == HIDDEN_ARG)))
         .manage(media::MediaState::default())
         .setup(|app| {
             // Open (and, on first run after this ships, encrypt) the local DB
@@ -133,6 +169,22 @@ pub fn run() {
             // Drop any watch-party remux cache a previous run left behind — a
             // crash can strand multi-gigabyte segment directories.
             media::cleanup_stale(app.handle());
+
+            // Peer discovery and heartbeats run off this tick rather than a
+            // webview `setInterval`, because a hidden window gets its timers
+            // throttled toward ~1/min — which is slower than the 10s liveness
+            // timeout, so live peers would be reaped and re-dialed forever.
+            // The OS timer keeps its period regardless of window visibility.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut ticker = tokio::time::interval(Duration::from_millis(NET_TICK_MS));
+                loop {
+                    ticker.tick().await;
+                    if handle.emit("net-tick", ()).is_err() {
+                        break;
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -167,6 +219,7 @@ pub fn run() {
             media::media_extract_progress,
             media::media_close,
             set_close_to_tray,
+            should_start_hidden,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

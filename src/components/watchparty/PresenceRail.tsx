@@ -32,7 +32,7 @@ export function PresenceRail({ roomId, visible }: { roomId: string | null; visib
   return (
     <div
       className={cx(
-        "pointer-events-none absolute top-16 right-3 bottom-24 z-10 flex w-40 flex-col items-end gap-2 transition-[opacity,visibility] duration-200 motion-reduce:transition-none",
+        "pointer-events-none absolute top-3 right-3 bottom-24 z-10 flex w-40 flex-col items-end gap-2 transition-[opacity,visibility] duration-200 motion-reduce:transition-none",
         visible ? "opacity-100" : "invisible opacity-0",
       )}
     >

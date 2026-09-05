@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
-import { AlertCircle, ArrowDown, Check, CheckCheck, Clock, Copy, Download, MessageSquare, Paperclip, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowDown, Check, CheckCheck, ChevronDown, Clock, Copy, Download, MessageSquare, Paperclip, Pencil, Pin as PinIcon, PinOff, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import type { DeliveryStatus, Message, Reaction } from "../../types/domain";
 import { useChatStore } from "../../stores/useChatStore";
 import { useIdentityStore } from "../../stores/useIdentityStore";
@@ -26,6 +26,7 @@ import { saveToDisk } from "../../lib/saveFile";
 import { fetchAttachment } from "../../lib/fetchAttachment";
 import * as fileRepo from "../../services/db/fileRepo";
 import { toast } from "../../stores/useToastStore";
+import { copyText } from "../../lib/clipboard";
 
 const GROUP_GAP_MS = 5 * 60_000;
 
@@ -38,7 +39,10 @@ function daySeparatorLabel(ms: number): string {
   const today = new Date();
   const yesterday = new Date();
   yesterday.setDate(today.getDate() - 1);
-  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString();
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
   if (sameDay(d, today)) return "Today";
   if (sameDay(d, yesterday)) return "Yesterday";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -244,13 +248,14 @@ type MessageRowProps = {
   animateIn: boolean;
   selfId: string | undefined;
   reactions: Reaction[] | undefined;
+  /** Whether anyone in the room has pinned this message. */
+  pinned: boolean;
   /** The message this one replies to, if it's loaded in this room. */
   replyToMessage: Message | undefined;
   nameOf: (id: string) => string;
   highlighted: boolean;
-  /** Whether this row is the single currently-hovered message. */
-  hovered: boolean;
   onToggleReaction: (messageId: string, emoji: string) => void;
+  onTogglePin: (messageId: string) => void;
   onReply: (message: Message) => void;
   onEdit: (message: Message) => void;
   onDelete: (messageId: string) => void;
@@ -266,11 +271,12 @@ const MessageRow = memo(function MessageRow({
   animateIn,
   selfId,
   reactions,
+  pinned,
   replyToMessage,
   nameOf,
   highlighted,
-  hovered,
   onToggleReaction,
+  onTogglePin,
   onReply,
   onEdit,
   onDelete,
@@ -288,13 +294,16 @@ const MessageRow = memo(function MessageRow({
   const jumboIds =
     !deleted && !message.attachmentName ? jumboAnimatedEmojiIds(message.body) : null;
 
-  function copyBody() {
+  async function copyBody() {
     const text = humanizeAnimatedEmoji(humanizeMentions(message.body ?? ""));
-    void navigator.clipboard.writeText(text).then(() => {
+    const ok = await copyText(text);
+    if (ok) {
       setCopied(true);
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_200);
-    });
+    } else {
+      toast.error("Copy failed", "Couldn't copy to clipboard — try selecting the text manually.");
+    }
   }
 
   function openPicker(e: React.MouseEvent<HTMLButtonElement>) {
@@ -390,7 +399,7 @@ const MessageRow = memo(function MessageRow({
           )}
           <div
             className={cx(
-              "flex items-end gap-1.5",
+              "group/message flex items-end gap-1.5",
               isOwn ? "flex-row-reverse" : "flex-row",
             )}
             data-message-id={message.id}
@@ -401,9 +410,9 @@ const MessageRow = memo(function MessageRow({
                   className={cx(
                     "absolute -top-3 z-10 flex items-center gap-0.5 rounded-lg border border-border/60 bg-bg-elevated p-0.5 shadow-md transition-opacity",
                     isOwn ? "right-1" : "left-1",
-                    hovered || pickerPos || confirmingDelete
+                    pickerPos || confirmingDelete
                       ? "opacity-100"
-                      : "pointer-events-none opacity-0",
+                      : "pointer-events-none opacity-0 group-hover/message:pointer-events-auto group-hover/message:opacity-100",
                   )}
                 >
                   <button
@@ -414,6 +423,18 @@ const MessageRow = memo(function MessageRow({
                     className="rounded p-1 hover:bg-bg-tertiary hover:text-text-primary transition-colors"
                   >
                     <SmilePlus size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    title={pinned ? "Unpin message" : "Pin message"}
+                    aria-label={pinned ? "Unpin message" : "Pin message"}
+                    onClick={() => onTogglePin(message.id)}
+                    className={cx(
+                      "rounded p-1 transition-colors hover:bg-bg-tertiary hover:text-text-primary",
+                      pinned && "text-accent",
+                    )}
+                  >
+                    <PinIcon size={14} />
                   </button>
                   <button
                     type="button"
@@ -535,7 +556,7 @@ const MessageRow = memo(function MessageRow({
               className={cx(
                 "mb-0.5 flex shrink-0 items-center gap-1 text-[10px] text-text-muted",
                 "transition-opacity",
-                hovered || pickerPos || confirmingDelete ? "opacity-100" : "opacity-0",
+                pickerPos || confirmingDelete ? "opacity-100" : "opacity-0 group-hover/message:opacity-100",
               )}
             >
               {timeOf(message.sentAt)}
@@ -609,7 +630,7 @@ type MessageListProps = {
   onJumpConsumed?: () => void;
 };
 
-export function MessageList({
+export const MessageList = memo(function MessageList({
   messages,
   roomId,
   memberIds,
@@ -621,20 +642,15 @@ export function MessageList({
   const sessionState = useRoomStore((s) => (roomId ? s.roomSessionState[roomId] : undefined));
   const reactionsByMessage = useChatStore((s) => (roomId ? s.reactionsByRoom[roomId] : undefined));
   const toggleReaction = useChatStore((s) => s.toggleReaction);
+  const pins = useChatStore((s) => (roomId ? s.pinsByRoom[roomId] : undefined));
+  const togglePin = useChatStore((s) => s.togglePin);
+  const [pinsOpen, setPinsOpen] = useState(false);
   const setReplyingTo = useChatStore((s) => s.setReplyingTo);
   const beginEdit = useChatStore((s) => s.beginEdit);
   const deleteMessage = useChatStore((s) => s.deleteMessage);
   const [highlightId, setHighlightId] = useState<string | null>(null);
-  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
   const [missedCount, setMissedCount] = useState(0);
-  // Delegated on the container: every mouseover recomputes which message is
-  // under the cursor, so a stale row self-corrects even if its own
-  // mouseleave was dropped (Chromium misses it on fast moves/re-renders).
-  const handleMouseOver = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const row = (e.target as HTMLElement).closest("[data-message-id]");
-    setHoveredId(row ? row.getAttribute("data-message-id") : null);
-  }, []);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const unreadBannerRef = useRef<HTMLLIElement>(null);
@@ -802,12 +818,39 @@ export function MessageList({
     return map;
   }, [messages]);
 
+  // Pins are per-author, so the room's set is the union — dedupe by messageId.
+  // `minePinned` is the subset the local user can actually unpin.
+  const { pinnedIds, minePinned } = useMemo(() => {
+    const all = new Set<string>();
+    const mine = new Set<string>();
+    for (const p of pins ?? []) {
+      all.add(p.messageId);
+      if (p.authorId === selfId) mine.add(p.messageId);
+    }
+    return { pinnedIds: all, minePinned: mine };
+  }, [pins, selfId]);
+
+  // Pinned rows in chronological order. A pin for a message not loaded in this
+  // room simply doesn't render — nothing to show yet.
+  const pinnedMessages = useMemo(
+    () => (messages ?? []).filter((m) => pinnedIds.has(m.id) && !m.deletedAt),
+    [messages, pinnedIds],
+  );
+
   const handleToggleReaction = useCallback(
     (messageId: string, emoji: string) => {
       if (!roomId) return;
       void toggleReaction(roomId, memberIds ?? [], messageId, emoji);
     },
     [roomId, memberIds, toggleReaction],
+  );
+
+  const handleTogglePin = useCallback(
+    (messageId: string) => {
+      if (!roomId) return;
+      void togglePin(roomId, memberIds ?? [], messageId);
+    },
+    [roomId, memberIds, togglePin],
   );
 
   const handleReply = useCallback(
@@ -852,6 +895,29 @@ export function MessageList({
     onJumpConsumed?.();
   }, [messages, jumpToMessageId, handleQuoteClick, onJumpConsumed]);
 
+  const rowLayouts = useMemo(() => {
+    if (!messages) return [];
+    return messages.map((message, i) => {
+      const prev = messages[i - 1];
+      const isOwn = message.authorId === self?.identityId;
+      let newDay = !prev;
+      if (prev) {
+        const d1 = new Date(prev.sentAt);
+        const d2 = new Date(message.sentAt);
+        newDay =
+          d1.getFullYear() !== d2.getFullYear() ||
+          d1.getMonth() !== d2.getMonth() ||
+          d1.getDate() !== d2.getDate();
+      }
+      const startsGroup =
+        newDay ||
+        !prev ||
+        prev.authorId !== message.authorId ||
+        message.sentAt - prev.sentAt > GROUP_GAP_MS;
+      return { isOwn, newDay, startsGroup };
+    });
+  }, [messages, self?.identityId]);
+
   if (messages === undefined) {
     return (
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
@@ -882,6 +948,53 @@ export function MessageList({
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
+      {pinnedMessages.length > 0 && (
+        <div className="shrink-0 border-b border-border bg-bg-secondary/60">
+          <button
+            type="button"
+            onClick={() => setPinsOpen((o) => !o)}
+            aria-expanded={pinsOpen}
+            className="flex w-full items-center gap-2 px-4 py-1.5 text-xs text-text-secondary transition-colors hover:text-text-primary"
+          >
+            <PinIcon size={12} className="text-accent" aria-hidden="true" />
+            {pinnedMessages.length} pinned message{pinnedMessages.length === 1 ? "" : "s"}
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className={cx("ml-auto transition-transform", pinsOpen && "rotate-180")}
+            />
+          </button>
+          {pinsOpen && (
+            <ul className="max-h-48 overflow-y-auto border-t border-border/60">
+              {pinnedMessages.map((m) => (
+                <li key={m.id} className="flex items-center gap-2 pr-2 hover:bg-bg-tertiary">
+                  <button
+                    type="button"
+                    onClick={() => handleQuoteClick(m.id)}
+                    className="min-w-0 flex-1 truncate px-4 py-1.5 text-left text-xs"
+                  >
+                    <span className="font-medium text-text-primary">{nameOf(m.authorId)}</span>{" "}
+                    <span className="text-text-secondary">
+                      {m.body ? humanizeMentions(m.body) : m.attachmentName ?? "Attachment"}
+                    </span>
+                  </button>
+                  {minePinned.has(m.id) && (
+                    <button
+                      type="button"
+                      title="Unpin"
+                      aria-label="Unpin"
+                      onClick={() => handleTogglePin(m.id)}
+                      className="rounded p-1 text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                    >
+                      <PinOff size={12} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <AnimatePresence>
         {awayFromBottom && (
           <motion.button
@@ -904,20 +1017,13 @@ export function MessageList({
         ref={containerRef}
         className="flex-1 overflow-y-auto px-4 py-4"
         role="log"
-        onMouseOver={handleMouseOver}
-        onMouseLeave={() => setHoveredId(null)}
       >
       <ul>
         {messages.map((message, i) => {
-          const prev = messages[i - 1];
-          const isOwn = message.authorId === self?.identityId;
-          const newDay =
-            !prev || new Date(prev.sentAt).toDateString() !== new Date(message.sentAt).toDateString();
-          const startsGroup =
-            newDay ||
-            !prev ||
-            prev.authorId !== message.authorId ||
-            message.sentAt - prev.sentAt > GROUP_GAP_MS;
+          const layout = rowLayouts[i];
+          const isOwn = layout.isOwn;
+          const newDay = layout.newDay;
+          const startsGroup = layout.startsGroup;
 
           const isFirstUnread = i === firstUnreadIndex;
 
@@ -941,13 +1047,14 @@ export function MessageList({
                 animateIn={didInitialRender.current}
                 selfId={selfId}
                 reactions={reactionsByMessage?.[message.id]}
+                pinned={pinnedIds.has(message.id)}
                 replyToMessage={
                   message.replyToId ? messageById.get(message.replyToId) : undefined
                 }
                 nameOf={nameOf}
                 highlighted={highlightId === message.id}
-                hovered={hoveredId === message.id}
                 onToggleReaction={handleToggleReaction}
+                onTogglePin={handleTogglePin}
                 onReply={handleReply}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
@@ -961,4 +1068,4 @@ export function MessageList({
       </div>
     </div>
   );
-}
+});

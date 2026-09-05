@@ -160,6 +160,55 @@ textarea,
   }
 }
 
+/* Watch-party audio mode: the gramophone's record spins, sound waves pulse from
+   its horn, and equalizer bars stand in for a spectrogram — all decorative,
+   with no live frequency data behind them. */
+@keyframes disc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.gramo-record {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: disc-spin 6s linear infinite;
+}
+/* The tonearm is drawn on the record; parking it is one rotation about the
+   pivot, so play/pause is a single class swap and the swing is interruptible. */
+.gramo-tonearm {
+  transform-box: view-box;
+  transform-origin: 120px 26px;
+  transition: transform 700ms cubic-bezier(0.34, 1.2, 0.4, 1);
+}
+.gramo-tonearm--parked {
+  transform: rotate(-73deg);
+}
+@keyframes eq {
+  from {
+    transform: scaleY(0.25);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq var(--eq-dur, 0.9s) ease-in-out var(--eq-delay, 0s) infinite alternate;
+}
+@media (prefers-reduced-motion: reduce) {
+  .gramo-record {
+    animation: none;
+  }
+  /* The arm still moves between rest and groove — only the swing goes away. */
+  .gramo-tonearm {
+    transition: none;
+  }
+  .eq-bar {
+    animation: none;
+    transform: scaleY(0.6);
+  }
+}
+
 /* Slim range track for controls that sit on video, where the surrounding
    surface is the film rather than a themed panel. The caller sets `--fill` to
    the filled fraction. */
