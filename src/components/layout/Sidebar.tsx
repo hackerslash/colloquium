@@ -133,6 +133,7 @@ export function Sidebar({
     const ok = await copyText(self.identityId);
     if (ok) {
       setCopied(true);
+      toast.success("ID copied to clipboard");
       clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopied(false), 1_500);
     } else {
