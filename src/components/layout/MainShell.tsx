@@ -92,6 +92,7 @@ export function MainShell() {
         onSelect={setSelection}
         onCreateGroup={() => setCreatingGroup(true)}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSearch={() => setSearchOpen(true)}
       />
       <main className="flex min-w-0 flex-1 flex-col relative overflow-hidden bg-bg-primary m-2 ml-0 rounded-[20px] shadow-soft border border-border/40">
         <AnimatePresence>
