@@ -456,6 +456,7 @@ export function Sidebar({
           type="button"
           onClick={() => void setSnooze(null)}
           title="Resume notifications"
+          aria-label="Resume notifications"
           className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-border bg-bg-secondary px-3 py-2 text-left transition-colors hover:border-accent/60"
         >
           <BellOff size={14} className="shrink-0 text-accent" aria-hidden="true" />
@@ -478,6 +479,7 @@ export function Sidebar({
         <button
           onClick={copyId}
           title="Copy your ID"
+          aria-label={self ? `Copy your ID: ${self.displayName}` : "Copy your ID"}
           className="min-w-0 flex-1 text-left"
         >
           <span className="block truncate text-[14px] font-medium text-text-primary transition-colors hover:text-accent">
