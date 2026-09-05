@@ -317,6 +317,7 @@ export function EmojiPicker({
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           placeholder="Search emojis…"
+          aria-label="Search emojis"
           className="w-full border-0 bg-transparent text-xs text-text-primary outline-none focus:outline-none focus:ring-0 focus:border-0 shadow-none placeholder:text-text-muted select-text"
           autoFocus
         />
