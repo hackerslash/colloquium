@@ -95,6 +95,7 @@ export function WelcomeScreen() {
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 placeholder="What should we call you?"
+                aria-label="Display name"
                 maxLength={32}
                 className="w-full rounded-[16px] border border-border bg-bg-secondary px-4 py-3.5 text-[15px] text-text-primary outline-none transition-all placeholder:text-text-muted focus:border-accent focus:bg-bg-primary focus:ring-1 focus:ring-accent"
               />
